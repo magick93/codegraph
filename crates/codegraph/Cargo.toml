@@ -67,6 +67,11 @@ hotpath = { version = "0.28", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+# Real-Postgres runtime pins that execute GENERATED SQL against a live database
+# (the #781 P1 include gate) connect with the same driver the cornucopia plane
+# runs on (`uuid` is load-bearing: the generated batch include binds a `uuid[]`
+# parameter through postgres-types' unconditional `&[T]` impl).
+tokio-postgres = { version = "0.7", features = ["with-uuid-1"] }
 codegraph-grafeo = { path = "../codegraph-grafeo" }
 tempfile = "3"
 anyhow = "1"

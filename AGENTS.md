@@ -4220,6 +4220,7 @@ cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture   # n
 cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture  # slow: compiles the emitted testkit crate
 cargo test -p codegraph --test worker_wasm_compile_tests -- --ignored --nocapture  # #550: worker plane wasm32 gate (needs the wasm32-unknown-unknown target; DB-free — stubbed cornucopia-queries)
 cargo test -p codegraph --test hooks_cornucopia_runtime_tests -- --ignored --nocapture  # #518: the generated cornucopia create path fires hooks + Abort rolls back over real Postgres
+cargo test -p codegraph --test cornucopia_include_runtime_tests -- --ignored --nocapture  # #781 P1: the generated include SQL as app_user under the RLS session bundle (tenancy + soft delete)
 cargo test -p codegraph --test review_api_suite -- --ignored --nocapture     # live acceptance gate: fixture regen + testkit api + pool mode + authz over HTTP
 
 # Full pipeline integration (requires protoc)

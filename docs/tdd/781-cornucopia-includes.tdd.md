@@ -533,13 +533,30 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
    leg is delegated to the #550 worker gate (the emitters have no `cfg(target_arch)`
    branches; the only wasm questions are `Send`-ness/object safety it already exercises;
    re-run green with the dot changes).
-2. **Real-Postgres runtime pin.** Extend `hooks_cornucopia_runtime_tests` (or a sibling
-   binary) with the shop fixture from `cornucopia_include_tests`: boot the assembled
-   tree against Postgres, seed two orgs, and assert (a) GET hydrates the scalar include,
-   (b) LIST keys the map by source id, (c) an unsupported shape answers 501, (d) a
-   cross-tenant `source_id` yields no include, (e) a soft-deleted target (policy present)
-   is excluded, (f) a soft-deleted source still hydrates (the `include_deleted` decision
-   stays with the CRUD read).
+2. **Real-Postgres runtime pin — LANDED.**
+   `crates/codegraph/tests/cornucopia_include_runtime_tests.rs` (ignored, the
+   `test-ops-integration` lane) generates the SAME shop fixture with the preview flag
+   ON, provisions a unique database through `test_framework::postgres::GateDb`, applies
+   the **emitted** table DDL + the emitted `_rls.sql` band (plus a test-owned bootstrap
+   for the session-role band a minimal profile does not emit: `app_user`/`api_key`
+   roles, `public.get_current_org_id()` verbatim from `api_key_migration.tera`, and a
+   tenancy-only `enforce_api_key_scope` stand-in), seeds two orgs, and executes the
+   **emitted** `--! include_*` statements with `:source_id`/`:source_ids` bound as `$1`
+   (`::uuid[]` preserved) inside a transaction carrying the emitted session bundle
+   (`set_config` × 5 + `SET LOCAL ROLE app_user`). Asserted: scalar GET/LIST hydration
+   with the batch keyed by SOURCE id; the reverse-FK collection (optional + required FK
+   arms) and its batch grouping; the dot hop's leaf; cross-tenant isolation for the
+   scalar/batch/dot shapes (an org-A source whose FK points at an org-B target yields
+   no row — teeth proven by dropping the session bundle, which fails that leg) plus the
+   reverse shape's per-ROW fence; and the soft-delete contract. §9's risk #1 is what
+   this gate exists for. **Soft-delete caveat, now recorded:** nothing on the mox-first
+   driver path ingests a `SoftDelete` policy (`policy_ingest::
+   ingest_policies_and_relationships` has no caller), so the fixture's SQL carries no
+   marker; the suite therefore pins the designed marker-less behaviour (a soft-deleted
+   target is still returned, a soft-deleted source still hydrates) AND executes the
+   emitter's marker suffix (`render_include_sql`) against the same statement to prove
+   its semantics on the migrated schema. The end-to-end marker arm needs an input that
+   produces the policy — a follow-up, not a guess.
 3. **wasm32 worker gate — LANDED.** `worker_wasm_compile_tests` runs the
    workers-topology cornucopia fixture with `codegen.cornucopia_include_hydration
    = true` (the test writes its `ProjectConfig` directly — no `profiles.toml`;
