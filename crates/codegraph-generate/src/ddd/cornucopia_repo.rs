@@ -9,6 +9,10 @@ use crate::error::Result;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
+use super::cornucopia_repo_include::{
+    IncludeAdapterPlan, IncludeLeafPlan, emit_include_adapter, emit_include_imports,
+    resolve_cornucopia_include_targets,
+};
 use super::repository_emitter::{
     ChildColumn, ChildTableInfo, EntityTree, RepositoryImplEmitter, emit_child_field_population,
     emit_entity_to_dto_field, finder_columns, finder_param_binds_as_text,
@@ -96,7 +100,67 @@ impl EntityGenerator for CornucopiaRepoGenerator {
                 .map(|plan| !plan.is_empty())
                 .unwrap_or(false);
 
-        let code = emit_adapter(&tree, domain, project, ux_sort);
+        // `?include=` hydration (issue #781 P1, default ON): resolve the
+        // SAME path set the handler plans against, keep the shapes the plane
+        // implements, and build each target's tree so the response mapping
+        // reuses `emit_response_expr`.
+        let include_plans_data =
+            resolve_cornucopia_include_targets(db, config, project, domain, schema_title).await;
+        let include_plans: Vec<IncludeAdapterPlan<'_>> = include_plans_data
+            .iter()
+            .filter_map(|entry| {
+                let path = &entry.path;
+                let target = &entry.target;
+                let seg = path.segments.first()?;
+                // The SAME classifier the handler and the SQL plane read: a
+                // shape this plane does not implement gets no adapter method
+                // (its request answers a guarded 501).
+                let shape =
+                    crate::api::include_plan::CornucopiaIncludeShape::classify(path).ok()?;
+                let alias_snake = path.alias.replace('.', "_");
+                let (leaf, combined_type, intermediate_query_fn, intermediate_batch_query_fn) =
+                    if shape == crate::api::include_plan::CornucopiaIncludeShape::Dot {
+                        let leaf_seg = path.segments.get(1)?;
+                        let leaf_tree = entry.leaf.as_ref()?;
+                        (
+                            Some(IncludeLeafPlan {
+                                tree: leaf_tree,
+                                domain: &leaf_seg.domain,
+                                module_name: &leaf_seg.module_name,
+                            }),
+                            Some(format!("{}CombinedResponse", seg.entity_name)),
+                            Some(format!(
+                                "include_{}_for_{}",
+                                seg.module_name, tree.table_name
+                            )),
+                            Some(format!(
+                                "include_{}_batch_for_{}",
+                                seg.module_name, tree.table_name
+                            )),
+                        )
+                    } else {
+                        (None, None, None, None)
+                    };
+                Some(IncludeAdapterPlan {
+                    query_fn: format!("include_{alias_snake}_for_{}", tree.table_name),
+                    batch_query_fn: format!("include_{alias_snake}_batch_for_{}", tree.table_name),
+                    fetch_method: &path.fetch_method,
+                    batch_fetch_method: &path.batch_fetch_method,
+                    response_type: &path.response_rust_type,
+                    target_domain: &seg.domain,
+                    target_module: &seg.module_name,
+                    target,
+                    shape,
+                    reverse_fk_is_required: seg.reverse_fk_is_required,
+                    leaf,
+                    combined_type,
+                    intermediate_query_fn,
+                    intermediate_batch_query_fn,
+                })
+            })
+            .collect();
+
+        let code = emit_adapter(&tree, domain, project, ux_sort, &include_plans);
 
         Ok(vec![GeneratedFile {
             path: self
@@ -119,7 +183,13 @@ fn query_module(tree: &EntityTree) -> String {
 }
 
 /// Emit the complete adapter file for one entity.
-fn emit_adapter(tree: &EntityTree, domain: &str, project: &ProjectConfig, ux_sort: bool) -> String {
+fn emit_adapter(
+    tree: &EntityTree,
+    domain: &str,
+    project: &ProjectConfig,
+    ux_sort: bool,
+    includes: &[IncludeAdapterPlan<'_>],
+) -> String {
     let entity_name = &tree.entity_name;
     let mut code = CodeWriter::new();
 
@@ -172,6 +242,7 @@ fn emit_adapter(tree: &EntityTree, domain: &str, project: &ProjectConfig, ux_sor
     if tree.has_update {
         wln!(code, "use super::dto_update::Update{entity_name}Request;");
     }
+    emit_include_imports(tree, domain, includes, &mut code);
     wln!(code);
     wln!(
         code,
@@ -243,10 +314,20 @@ fn emit_adapter(tree: &EntityTree, domain: &str, project: &ProjectConfig, ux_sor
     emit_adapter_design_finders(tree, &mut code);
 
     wln!(code, "}}");
+
+    // ── `?include=` hydration helpers (issue #781 P1) ───────────────────
+    //
+    // Inherent (not trait) methods, mirroring the SeaORM emitter's
+    // `fetch_*_for_*` surface: the provider-generic trait stays CRUD-only, and
+    // the handler hydrates through the query handler that owns the session.
+    if !includes.is_empty() {
+        emit_include_adapter(tree, includes, &mut code);
+    }
+
     code.into_string()
 }
 
-fn qmod(tree: &EntityTree) -> String {
+pub(crate) fn qmod(tree: &EntityTree) -> String {
     tree.table_name.clone()
 }
 
@@ -1411,7 +1492,7 @@ fn collect_child_table_names(
 /// Emit a response construction expression: child-table reads + the
 /// `{Entity}Response { ... }` struct literal. The caller supplies the prefix
 /// (`Ok(Some(`, `items.push(`, `let resp = `) and closing punctuation.
-fn emit_response_expr(
+pub(crate) fn emit_response_expr(
     tree: &EntityTree,
     code: &mut CodeWriter,
     row_var: &str,

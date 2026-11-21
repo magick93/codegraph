@@ -3823,6 +3823,7 @@ their runtime substitute.
 |-------|-----|-------|
 | mox plane (`mox_types` + ops) | `mox_plane_compile_tests` | native + wasm32, sea_orm-free (#517) |
 | SeaORM repository impl (trait + emitter + DTO shims; child tables, junctions, includes, **design finders**, **media child exclusion (#719)**) | `repository_compile_tests` | native, scratch crate (caught the #551 design-finder double-close — never compiled anywhere); the `media_repository_plane_compiles` leg carries a `[media]` through-app fixture pinning the #707 shape — request DTO pair omits the reference, response DTO keeps it, the child insert/replace loops skip the media child while reads hydrate it — and no wasm32 leg (SeaORM; cornucopia/wasm rides #550) |
+| cornucopia include plane (adapter include methods + `query.rs` wrappers + handler include blocks; DEFAULT ON since #781 P1 — the preview flag is deleted; every unimplemented SHAPE still fails closed per path with a named 501) | `cornucopia_include_compile_tests` | native, scratch crate over the stubbed `cornucopia-queries` (the `hooks_cornucopia_runtime_tests` harness pattern); the stub query surface is pinned EXACTLY to the emitted SQL `--! include_*` names and the handler's call set (a renamed query fails before compiling); teeth validated by row-shape (E0609) and bind-arity (E0061) mutations; wasm32 rides the #550 worker gate |
 | command + query (hooks-gated + ext-points-gated), push dispatcher (monolith leg), hooks SPI types | `command_compile_tests` | native, scratch crate; the cornucopia command/repo legs ride #550's wasm gate + the runtime pin |
 | worker crate (cornucopia command + repository impl + dispatcher wasm leg) | `worker_wasm_compile_tests -- --ignored` | native + wasm32 whole-worker (#550) |
 | gateway crate (integration catalog) | `workers_gateway_compile_tests -- --ignored` | #521 |
@@ -4195,6 +4196,7 @@ cargo test -p codegraph --test pherolang_fixture_sweep
 # Compile-pin policy (#551) — node-free PR-CI pins (scratch-crate cargo check)
 cargo test -p codegraph --test mox_plane_compile_tests   # 3, mox plane native + wasm32 (#517)
 cargo test -p codegraph --test repository_compile_tests  # 5, SeaORM repository impl + design finders + media DTO/repository (#719)
+cargo test -p codegraph --test cornucopia_include_compile_tests  # #781 P1 cornucopia include plane (#551 pin, stubbed cornucopia-queries)
 cargo test -p codegraph --test command_compile_tests     # 1, command/query + dispatcher + hooks types
 
 # Committed review fixture drift pin (#747) — node-free PR-CI; holds the
@@ -4218,6 +4220,7 @@ cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture   # n
 cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture  # slow: compiles the emitted testkit crate
 cargo test -p codegraph --test worker_wasm_compile_tests -- --ignored --nocapture  # #550: worker plane wasm32 gate (needs the wasm32-unknown-unknown target; DB-free — stubbed cornucopia-queries)
 cargo test -p codegraph --test hooks_cornucopia_runtime_tests -- --ignored --nocapture  # #518: the generated cornucopia create path fires hooks + Abort rolls back over real Postgres
+cargo test -p codegraph --test cornucopia_include_runtime_tests -- --ignored --nocapture  # #781 P1: the generated include SQL as app_user under the RLS session bundle (tenancy + soft delete)
 cargo test -p codegraph --test review_api_suite -- --ignored --nocapture     # live acceptance gate: fixture regen + testkit api + pool mode + authz over HTTP
 
 # Full pipeline integration (requires protoc)
@@ -5920,10 +5923,28 @@ extensibility, mox, service_op). Rust owns the decisions:
 - `HandlerContext` (`api/handler/mod.rs`) is the plan IR: pre-rendered path extractors
   (five shapes + child-op-add), guard-presence flags, include default fields, and the
   guard/invariant/media blocks (#338/#666).
-- `api/include_plan.rs` owns `?include=` hydration: `IncludeSupport::{SeaOrm, Cornucopia,
-  Unsupported}`. A non-SeaORM provider renders a GUARDED 501 naming the provider and
-  issue #781 (a request without `?include=` still succeeds) and the utoipa include doc is
-  provider-honest. NEVER return 200 with silently empty include data (#781 P0).
+- `api/include_plan.rs` owns `?include=` hydration: `IncludeSupport::{SeaOrm,
+  CornucopiaHydration, Unsupported}`. Both real providers hydrate (cornucopia is
+  DEFAULT ON since #781 P1): SeaORM renders transaction-scoped repository fetches,
+  cornucopia renders per-path query-handler calls (`CornucopiaIncludeShape::classify`
+  accepts a single-segment scalar `refers`, a single-segment reverse-FK collection and
+  one hop of dot notation). Every other SHAPE fails closed with a GUARDED 501 naming
+  the requested alias (a request without `?include=` still succeeds) — never a
+  provider-level 501, never a 200 with silently empty include data. `Unsupported` is
+  retained for a provider that cannot hydrate at all (no production provider; reachable
+  via `build_include_plan_with_support`). **Includes exclude soft-deleted related
+  rows for auditable entities; soft-deleted sources still hydrate** (issue #784):
+  one derivation — `ddd/repository_emitter/include_soft_delete.rs::
+  include_soft_delete_marker`, returning `Some("deleted_at")` exactly when
+  `EntityTree.is_auditable`, the read plane's own decision (NOT the policy-derived
+  `soft_delete_column`, which the mox-first path never populates) — feeds the SeaORM
+  filter (`.filter(Column::DeletedAt.is_null())` on the scalar/array/batch target
+  loads AND both dot hops) and the cornucopia marker (`AND "deleted_at" IS NULL`),
+  pinned by
+  `both_providers_derive_the_include_marker_from_one_predicate`. Arrays yield
+  `Some(vec![])` when every related row is excluded; a provable array include's
+  hurl contract gains the deterministic POST→DELETE→GET-empty leg. Full record:
+  `docs/tdd/784-soft-delete-includes.tdd.md`.
 - `ddd/service_ops/render/` owns every service-op execution body, dispatched exhaustively
   on `ExecutionKind` (seam / read / delete / update / child_op / create / projection_read /
   body). The handler generator re-renders every route ONCE after its invariant/guard
@@ -6069,6 +6090,12 @@ entries in `domains.toml` are explicit paths; everything else comes from
 auto-discovery (config children with `parent`/`parent_ref`, graph
 entity-refs, parent candidates). Heaviest consumer: hr-specs (its
 ~4,000-test e2e suite is the acceptance gate for include changes).
+
+**Soft delete (issue #784)**: includes exclude soft-deleted related rows for
+auditable entities; soft-deleted sources still hydrate. One derivation —
+`include_soft_delete_marker` over `EntityTree.is_auditable` — feeds both the
+SeaORM include fetches and the cornucopia include SQL (both dot hops
+included); arrays yield `Some(vec![])`, never `None`.
 
 ### Resolution gates (evaluation order)
 

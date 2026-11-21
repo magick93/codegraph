@@ -46,6 +46,14 @@ pub struct QueryContext {
     /// Mox derived feature names populated at SELECT time (issue #508).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mox_derived_names: Vec<String>,
+    /// Pre-rendered cornucopia `?include=` hydration methods (issue #781 P1,
+    /// default ON). Empty unless the provider is cornucopia and the entity
+    /// models at least one implemented include shape.
+    #[serde(default)]
+    pub include_query_methods: String,
+    /// The `use …;` lines the include methods need (target response DTOs).
+    #[serde(default)]
+    pub include_response_imports: String,
 }
 
 pub struct QueryGenerator {
@@ -221,6 +229,22 @@ impl EntityGenerator for QueryGenerator {
             })
             .filter(|name| !dto_names.contains(name.as_str()))
             .collect();
+
+        // `?include=` hydration wrappers (issue #781 P1, default ON):
+        // cornucopia-only, pre-rendered — the query handler owns the client,
+        // the transaction, and the RLS session vars, exactly like the tree /
+        // CRUD methods above.
+        let (include_query_methods, include_response_imports) = cornucopia_include_query_surface(
+            db,
+            config,
+            project,
+            &domain,
+            schema_title,
+            &entity_name,
+            &module_name,
+        )
+        .await;
+
         let ctx = QueryContext {
             has_read: operations.contains(&"read".to_string()),
             has_create: operations.contains(&"create".to_string()),
@@ -237,7 +261,180 @@ impl EntityGenerator for QueryGenerator {
             tree_include,
             ux_sort,
             mox_derived_names,
+            include_query_methods,
+            include_response_imports,
         };
+
+        /// Build the cornucopia `?include=` query-handler surface (issue #781 P1).
+        ///
+        /// Returns `(methods, imports)`:
+        ///
+        /// * `methods` — one GET wrapper + one LIST wrapper per IMPLEMENTED include
+        ///   path, rendered at the `impl {Entity}QueryHandler` level. Each opens the
+        ///   client + transaction, installs the RLS session vars, calls the adapter
+        ///   fetch on that transaction, and commits — the tree handler's call shape,
+        ///   so the session context (and therefore RLS) is exactly the same as every
+        ///   other cornucopia read.
+        /// * `imports` — the `use crate::domain::{target}::dto_response::{Resp};`
+        ///   lines the method signatures need (deduped, self-targets skipped because
+        ///   the header already imports them).
+        ///
+        /// Empty pair unless the provider is cornucopia and the entity models
+        /// at least one implemented include shape (issue #781 P1, default ON).
+        #[allow(clippy::too_many_arguments)]
+        async fn cornucopia_include_query_surface(
+            db: &dyn GraphQuerier,
+            config: &DomainConfig,
+            project: &ProjectConfig,
+            domain: &str,
+            schema_title: &str,
+            entity_name: &str,
+            module_name: &str,
+        ) -> (String, String) {
+            if !project.is_cornucopia() {
+                return (String::new(), String::new());
+            }
+            let entity_cfg = config
+                .domains
+                .get(domain)
+                .and_then(|d| d.get_entity_config(schema_title));
+            let paths = crate::api::include_path::resolve_include_paths_for_entity(
+                db,
+                config,
+                domain,
+                schema_title,
+                entity_cfg,
+                project.is_workers_topology(),
+            )
+            .await
+            .unwrap_or_default();
+            // The SAME per-path verdict the handler and the emitters read: a shape
+            // the plane does not implement gets no wrapper (its request answers 501).
+            let support = crate::api::include_plan::include_support_for(project);
+            let supported = support.supported_paths(&paths);
+            if supported.is_empty() {
+                return (String::new(), String::new());
+            }
+
+            let error_type = format!("{}Error", codegraph_naming::to_pascal_case(domain));
+            let mut methods = String::new();
+            let mut imports = String::new();
+            let mut imported: std::collections::HashSet<String> =
+                std::collections::HashSet::from([format!("{entity_name}Response")]);
+
+            for path in supported {
+                let Some(seg) = path.segments.first() else {
+                    continue;
+                };
+                // The SAME classifier the handler and the SQL/adapter planes
+                // read: it decides whether the wrapper returns a single value
+                // or the collection of the reverse-FK shape.
+                let Ok(shape) = crate::api::include_plan::CornucopiaIncludeShape::classify(path)
+                else {
+                    continue;
+                };
+                let resp = &path.response_rust_type;
+                if shape == crate::api::include_plan::CornucopiaIncludeShape::Dot {
+                    // The combined response type lives in THIS entity's
+                    // `dto_included` (it carries the first hop's base fields
+                    // plus the leaf), so it is a sibling import — not the
+                    // target's `dto_response`.
+                    if imported.insert(resp.clone()) {
+                        imports.push_str(&format!("use super::dto_included::{resp};\n"));
+                    }
+                } else {
+                    let same_module = seg.domain == domain && seg.module_name == module_name;
+                    if !same_module && imported.insert(resp.clone()) && resp.ends_with("Response") {
+                        imports.push_str(&format!(
+                            "use crate::domain::{}::{}::dto_response::{};\n",
+                            seg.domain, seg.module_name, resp
+                        ));
+                    }
+                }
+                // The GET return type tracks the DTO include field: a scalar
+                // path is `Option<{Target}Response>`, an array path is the
+                // whole `Vec<{Target}Response>` (the handler wraps it in
+                // `Some`), and a dot path is the combined response the handler
+                // merges (the LIST map values follow the same split — the dot
+                // batch is `HashMap<Uuid, Combined>` with no `Option`, the
+                // SeaORM dot batch's contract).
+                let (get_ret, map_ret) = if shape.is_array() {
+                    (
+                        format!("Vec<{resp}>"),
+                        format!("std::collections::HashMap<Uuid, Vec<{resp}>>"),
+                    )
+                } else if shape == crate::api::include_plan::CornucopiaIncludeShape::Dot {
+                    (
+                        format!("Option<{resp}>"),
+                        format!("std::collections::HashMap<Uuid, {resp}>"),
+                    )
+                } else {
+                    (
+                        format!("Option<{resp}>"),
+                        format!("std::collections::HashMap<Uuid, Option<{resp}>>"),
+                    )
+                };
+                methods.push_str(&format!(
+                    "\n    /// Eager-load `{}` for one {entity_name} row (issue #781 P1).\n",
+                    path.alias
+                ));
+                methods.push_str(&format!(
+            "    pub async fn {}(&self, source_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<{get_ret}, {error_type}> {{\n",
+            path.fetch_method
+        ));
+                push_cornucopia_query_tx(
+                    &mut methods,
+                    &error_type,
+                    &path.fetch_method,
+                    "&tx, source_id",
+                );
+                methods.push_str("        Ok(result)\n    }\n");
+
+                methods.push_str(&format!(
+            "\n    /// Eager-load `{}` for many {entity_name} rows, keyed by source id (issue #781 P1).\n",
+            path.alias
+        ));
+                methods.push_str(&format!(
+            "    pub async fn {}(&self, source_ids: &[Uuid], api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<{map_ret}, {error_type}> {{\n",
+            path.batch_fetch_method
+        ));
+                push_cornucopia_query_tx(
+                    &mut methods,
+                    &error_type,
+                    &path.batch_fetch_method,
+                    "&tx, source_ids",
+                );
+                methods.push_str("        Ok(result)\n    }\n");
+            }
+
+            (methods, imports)
+        }
+
+        /// The client/transaction/session preamble + fetch + commit shared by both
+        /// include wrappers.
+        fn push_cornucopia_query_tx(out: &mut String, error_type: &str, method: &str, args: &str) {
+            out.push_str("        let mut client = self.client_source.client().await\n");
+            out.push_str(&format!(
+                "            .map_err(|e| {error_type}::from_repo_err(e))?;\n"
+            ));
+            out.push_str("        let tx = client.transaction().await\n");
+            out.push_str(&format!(
+                "            .map_err(|e| {error_type}::from_repo_err(e))?;\n"
+            ));
+            out.push_str(
+        "        set_rls_session_vars(&tx, api_key_id, organization_id, user_id, &role).await?;\n",
+    );
+            out.push_str(&format!(
+                "        let result = self.repo.{method}({args}).await\n"
+            ));
+            out.push_str(&format!(
+                "            .map_err(|e| {error_type}::from_repo_err(e))?;\n"
+            ));
+            out.push_str("        tx.commit().await\n");
+            out.push_str(&format!(
+                "            .map_err(|e| {error_type}::from_repo_err(e))?;\n"
+            ));
+        }
 
         let content = render_template_with_project(tera, "ddd/query.tera", &ctx, project)?;
         Ok(vec![GeneratedFile {

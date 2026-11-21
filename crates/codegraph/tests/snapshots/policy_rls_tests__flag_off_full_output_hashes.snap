@@ -1,5 +1,6 @@
 ---
 source: crates/codegraph/tests/policy_rls_tests.rs
+assertion_line: 293
 expression: hashes
 ---
 ".codegraph-manifest.json": 9fd51e3d4e66fbc059eea669c712525e08d5e0393ccdb3071a43a26d76241eeb
@@ -519,7 +520,7 @@ src/domain/recruiting/application/event.rs: 4391278fdc93ce04a4c294f637033fae86f9
 src/domain/recruiting/application/mod.rs: 812cc775834f7a997cefa7ed0a7f702f59991680f06da03b89c4184ec1ad80a8
 src/domain/recruiting/application/query.rs: ab0045731774790a386333b40f1d3e55dced28b2c0804fe47e5a862db8c606c5
 src/domain/recruiting/application/repository.rs: 8185efe60dad5813cfbfde5dc12fb02069add40784ea10a859a113d0c4df333a
-src/domain/recruiting/application/repository_impl.rs: a0130a36bbc7f8915a480b720d356c7e5cc147b100d8e94a5816eb8b13922078
+src/domain/recruiting/application/repository_impl.rs: bde53141c5be85554998ecc2ef72970e7146458f8e34a43b83bb63af6a5aacab
 src/domain/recruiting/candidate/command.rs: db5d5bda4e5b0991e2942b3978d10e63b2fee648bfd257fa3aaf9c244f91d373
 src/domain/recruiting/candidate/dto_create.rs: 3adbb59f4c8a7dd132301becd7491a409c3f7aa036dc1c20bf1d55a06311524e
 src/domain/recruiting/candidate/dto_included.rs: ed488c172a23546844d2f92064db9b67b6b5cdc02c1d4e08eac02b292a6e4fe9
@@ -529,7 +530,7 @@ src/domain/recruiting/candidate/event.rs: 0a6abdafe018a48d4b4ef9304ced1be964a902
 src/domain/recruiting/candidate/mod.rs: 812cc775834f7a997cefa7ed0a7f702f59991680f06da03b89c4184ec1ad80a8
 src/domain/recruiting/candidate/query.rs: cdb8e2fbd134f0e795ac7a1cc7be11ff85d1ba5d358f559ee0e13b943bdac0ad
 src/domain/recruiting/candidate/repository.rs: 631602eb6adb1bee5da17843b987347a0ae9a3072a301ff707153b2530411dc1
-src/domain/recruiting/candidate/repository_impl.rs: 4f6f655ad7f7923d7a71c2b9ca94d1366ec553790f109084b2ee81c5d97498a1
+src/domain/recruiting/candidate/repository_impl.rs: 6f77fce4dfbaa3c57439a500f248b85024d661d835b1fdf13704252bc7a45b4c
 src/domain/recruiting/errors.rs: 25b6325e72fe38e54e004f2004cf754fb2897d7afc0f11b02dc992ccfb032b81
 src/domain/recruiting/mod.rs: 20fa5f1e7481bea694bd9da38436c35623d62104be606bf2452527eac715570e
 src/domain/rsvp/errors.rs: 152ecf6cb8b3d54ecb1b80b7353266804c5b911099662d58381eafd92eb1c670

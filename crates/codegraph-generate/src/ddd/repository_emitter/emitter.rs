@@ -543,13 +543,32 @@ impl RepositoryImplEmitter {
             // child response struct names to the import resolution below — the
             // include-fetch child reads reference them.
             let mut include_target_trees: Vec<Option<EntityTree>> = Vec::new();
+            let mut include_intermediate_trees: Vec<Option<EntityTree>> = Vec::new();
             for path in ctx.include_paths {
                 let last = path.segments.last().unwrap();
                 let ttree = self
                     .query_entity_tree(ctx.db, &last.schema_title, &last.domain, ctx.config, None)
                     .await
                     .ok();
+                // The dot shape filters the INTERMEDIATE hop too (issue
+                // #784): segments[0]'s tree carries its auditable decision.
+                // `None` for single-segment paths — no second walk.
+                let itree = if path.segments.len() > 1 {
+                    let first = &path.segments[0];
+                    self.query_entity_tree(
+                        ctx.db,
+                        &first.schema_title,
+                        &first.domain,
+                        ctx.config,
+                        None,
+                    )
+                    .await
+                    .ok()
+                } else {
+                    None
+                };
                 include_target_trees.push(ttree);
+                include_intermediate_trees.push(itree);
             }
 
             let mut include_type_names: Vec<String> = Vec::new();
@@ -796,6 +815,7 @@ impl RepositoryImplEmitter {
                 code,
                 ctx.include_paths,
                 &include_target_trees,
+                &include_intermediate_trees,
                 &ctx.segments.dto_fields,
                 &ctx.segments.col_fields,
                 &ctx.segments.is_structured,

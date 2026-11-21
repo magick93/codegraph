@@ -1068,6 +1068,7 @@ async fn build_entity_contract(
         has("create"),
         has("read"),
         has("list"),
+        api_version,
     )
     .await?;
 
