@@ -6116,7 +6116,11 @@ included); arrays yield `Some(vec![])`, never `None`.
 
 - One single fetch (GET-by-id) + one batch fetch (list) per single-segment
   path; `emit_dot_fetch_method` (combined intermediate+leaf response) per
-  dot path.
+  dot path — the intermediate is addressed through the SOURCE's FK
+  (source-by-PK → FK read → intermediate-by-FK, issue #789; the earlier
+  `Id.eq(source_id)` addressing keyed the intermediate on the source's PK
+  and answered empty on every dot include), pinned by the
+  `dot_include_fetch_compiles` compile leg.
 - LIST endpoints wire dot paths through `emit_dot_batch_fetch_method`
   (per-source-id loop over the dot fetch) and merge each leaf field into
   `included.<segments[0]>[<source_id]>` so sibling dot paths accumulate
