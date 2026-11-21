@@ -101,14 +101,16 @@ Deliberate choices:
 * **Columns/hints come from the target's own `EntityTree`** (the same tree
   `find_by_id` renders from), so renames, codelist-ref column renames, append-only
   `updated_at` suppression and range/numeric text casts are identical by construction.
-* **Soft delete** filters on the target tree's `soft_delete_column` when it has one
-  (a `SoftDelete` policy), exactly like `get_{entity}`/`list_{entity}`. When the tree
-  carries no marker (the default auditable entity — the marker comes from the policy
-  node, not from auditable-ness), no filter is invented: the table may not have the
-  column. There is no per-include `include_deleted` request parameter (the SeaORM
-  include fetch has none either); a relation of a soft-deleted source still hydrates,
-  because the `include_deleted` decision belongs to the CRUD read that produced the
-  source row.
+* **Soft delete** — SUPERSEDED by #784 (see `docs/tdd/784-soft-delete-includes.tdd.md`):
+  the marker now derives from the read plane's auditable decision
+  (`EntityTree.is_auditable`, via `include_soft_delete_marker`), NOT from the
+  policy-derived `soft_delete_column` this section originally described. The
+  original text recorded the #784 finding: the marker keyed on a `SoftDelete`
+  policy node the mox-first driver path never ingests, so it was unreachable
+  exactly where the tables ARE auditable. The filter shape is unchanged —
+  `AND "deleted_at" IS NULL` on the target hop (and both dot hops) — and a
+  soft-deleted source still hydrates: the `include_deleted` decision belongs
+  to the CRUD read that produced the source row.
 * **`LIMIT 1`** because a scalar FK can only match one row; a stale FK is `Ok(None)`.
 
 ### 1.3 Single-segment scalar — LIST (`include_{alias}_batch_for_{source} (source_ids)`)
@@ -564,15 +566,15 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
    arms) and its batch grouping; the dot hop's leaf; cross-tenant isolation for the
    scalar/batch/dot shapes (an org-A source whose FK points at an org-B target yields
    no row — teeth proven by dropping the session bundle, which fails that leg) plus the
-   reverse shape's per-ROW fence; and the soft-delete contract. §9's risk #1 is what
-   this gate exists for. **Soft-delete caveat, now recorded:** nothing on the mox-first
-   driver path ingests a `SoftDelete` policy (`policy_ingest::
-   ingest_policies_and_relationships` has no caller), so the fixture's SQL carries no
-   marker; the suite therefore pins the designed marker-less behaviour (a soft-deleted
-   target is still returned, a soft-deleted source still hydrates) AND executes the
-   emitter's marker suffix (`render_include_sql`) against the same statement to prove
-   its semantics on the migrated schema. The end-to-end marker arm needs an input that
-   produces the policy — a follow-up, not a guess.
+   reverse shape's per-ROW fence; and the soft-delete contract. **Soft-delete caveat,
+   FIXED by #784:** nothing on the mox-first driver path ingests a `SoftDelete` policy
+   (`policy_ingest::ingest_policies_and_relationships` has no caller), so the
+   policy-derived marker was unreachable — the suite originally pinned the marker-less
+   behaviour (a soft-deleted target still returned) and proved the emitter's marker
+   suffix by hand-applying it. #784 re-derived the marker from the read plane's
+   auditable decision; the suite now pins the marker ON every emitted statement and
+   asserts the soft-deleted target/intermediate/leaf are EXCLUDED while a soft-deleted
+   source still hydrates.
 3. **wasm32 worker gate — LANDED.** `worker_wasm_compile_tests` runs the
    workers-topology cornucopia fixture (the test writes its `ProjectConfig`
    directly — no `profiles.toml`; the include plane is default ON, so it sets

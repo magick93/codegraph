@@ -5932,7 +5932,19 @@ extensibility, mox, service_op). Rust owns the decisions:
   the requested alias (a request without `?include=` still succeeds) — never a
   provider-level 501, never a 200 with silently empty include data. `Unsupported` is
   retained for a provider that cannot hydrate at all (no production provider; reachable
-  via `build_include_plan_with_support`).
+  via `build_include_plan_with_support`). **Includes exclude soft-deleted related
+  rows for auditable entities; soft-deleted sources still hydrate** (issue #784):
+  one derivation — `ddd/repository_emitter/include_soft_delete.rs::
+  include_soft_delete_marker`, returning `Some("deleted_at")` exactly when
+  `EntityTree.is_auditable`, the read plane's own decision (NOT the policy-derived
+  `soft_delete_column`, which the mox-first path never populates) — feeds the SeaORM
+  filter (`.filter(Column::DeletedAt.is_null())` on the scalar/array/batch target
+  loads AND both dot hops) and the cornucopia marker (`AND "deleted_at" IS NULL`),
+  pinned by
+  `both_providers_derive_the_include_marker_from_one_predicate`. Arrays yield
+  `Some(vec![])` when every related row is excluded; a provable array include's
+  hurl contract gains the deterministic POST→DELETE→GET-empty leg. Full record:
+  `docs/tdd/784-soft-delete-includes.tdd.md`.
 - `ddd/service_ops/render/` owns every service-op execution body, dispatched exhaustively
   on `ExecutionKind` (seam / read / delete / update / child_op / create / projection_read /
   body). The handler generator re-renders every route ONCE after its invariant/guard
@@ -6078,6 +6090,12 @@ entries in `domains.toml` are explicit paths; everything else comes from
 auto-discovery (config children with `parent`/`parent_ref`, graph
 entity-refs, parent candidates). Heaviest consumer: hr-specs (its
 ~4,000-test e2e suite is the acceptance gate for include changes).
+
+**Soft delete (issue #784)**: includes exclude soft-deleted related rows for
+auditable entities; soft-deleted sources still hydrate. One derivation —
+`include_soft_delete_marker` over `EntityTree.is_auditable` — feeds both the
+SeaORM include fetches and the cornucopia include SQL (both dot hops
+included); arrays yield `Some(vec![])`, never `None`.
 
 ### Resolution gates (evaluation order)
 
