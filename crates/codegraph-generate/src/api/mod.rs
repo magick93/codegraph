@@ -3,6 +3,7 @@ pub mod contract;
 pub mod handler;
 pub mod hurl_contract;
 pub mod include_path;
+pub mod include_plan;
 pub mod links;
 pub mod media;
 pub mod openapi;
