@@ -1,0 +1,212 @@
+{% if has_list %}
+
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ListParams {
+    #[serde(default = "default_page")]
+    pub page: u64,
+    #[serde(default = "default_page_size")]
+    pub page_size: u64,
+{% if ux_sort_fields %}
+    /// Sort results by a sortable field, e.g. `?sort=name&order=desc`.
+    /// Absent (the default) keeps the repository's `created_at DESC`
+    /// ordering. Ignored when combined with `?q=` (full-text ranking wins).
+    #[serde(default)]
+    pub sort: Option<String>,
+    /// Sort direction for `sort`: `asc` (default) or `desc`. Requires `sort`.
+    #[serde(default)]
+    pub order: Option<String>,
+{% endif %}{% if status_field %}
+    /// Filter by workflow status (e.g. ?status=draft).
+    #[serde(default)]
+    pub status: Option<String>,
+{% endif %}
+{% if has_fts %}
+    /// Full-text search query. Supports natural syntax: quoted phrases, OR, -exclude.
+    #[serde(default)]
+    pub q: Option<String>,
+{% endif %}
+    /// JSON:API field filters, e.g. `?filter[worker_id]=value`.
+    #[serde(default)]
+    #[param(ignore)]
+    pub filter: std::collections::HashMap<String, String>,
+{% if has_include %}
+{{ include_doc | default(value="") }}
+    /// Comma-separated relationship paths, max depth 3.
+    #[serde(default)]
+    #[param(ignore)]
+    pub include: Option<String>,
+{% endif %}
+}
+
+fn default_page() -> u64 { 0 }
+fn default_page_size() -> u64 { 20 }
+
+/// Allowed filter keys for this entity (includes nested child/grandchild fields via dot notation).
+const ALLOWED_FILTER_KEYS: &[&str] = &[
+{% for ff in filter_fields %}
+    "{{ ff.field_name }}",
+{% endfor %}
+{% for nf in nested_filter_fields %}
+    "{{ nf.filter_key }}",
+{% endfor %}
+];
+{% if ux_sort_fields %}
+/// Sortable fields for this entity (issue #306): the `?sort=` allow-list,
+/// derived from the ux plan (`Quantity`/`Money`/`TimePoint`/`Text`
+/// dimensions minus rule opt-outs). Anything else is a 400.
+const ALLOWED_SORT_FIELDS: &[&str] = &[
+{% for f in ux_sort_fields %}
+    "{{ f }}",
+{% endfor %}
+];
+{% endif %}{% if has_include %}
+/// Allowed include paths for eager-loading related entities.
+const ALLOWED_INCLUDE_KEYS: &[&str] = &[
+{% for path in include_paths %}
+    "{{ path.alias }}",
+{% endfor %}
+];
+{% endif %}
+
+/// List {{ entity_name }} with pagination and JSON:API filters.
+#[utoipa::path(
+    get,
+{% if role == "child" %}
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}",
+    params(
+        ("{{ parent_param_name }}" = Uuid, Path, description = "{{ parent_entity }} ID"),
+        ListParams,
+    ),
+{% else %}
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}",
+    params(ListParams),
+{% endif %}
+    tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_list",
+    responses(
+        (status = 200, description = "OK", body = Vec<{{ entity_name }}Response>),
+    )
+)]
+#[tracing::instrument(skip(state, headers), fields(domain = "{{ domain }}", entity = "{{ module_name }}"))]
+pub async fn list(
+    State(state): State<AppState>,
+    Extension(api_key_info): Extension<ApiKeyInfo>,
+    headers: HeaderMap,
+{{ path_extractor_collection }}
+    crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<ListParams>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let correlation_id = extract_correlation_id(&headers);
+{% if ux_sort_fields %}
+    // Validate ?sort=/?order= against the entity's sortable-field
+    // allow-list (issue #306). No params ⇒ the repository's default
+    // `created_at DESC` ordering, unchanged.
+    let ux_sort: Option<(String, bool)> = match params.sort.as_deref() {
+        None => {
+            if params.order.is_some() {
+                return Err(AppError::bad_request(format!(
+                    "order requires sort; valid sortable fields: {}",
+                    ALLOWED_SORT_FIELDS.join(", ")
+                ))
+                .with_correlation_id(correlation_id));
+            }
+            None
+        }
+        Some(sort) => {
+            if !ALLOWED_SORT_FIELDS.contains(&sort) {
+                return Err(AppError::bad_request(format!(
+                    "Unknown sort field: {sort}. Valid sortable fields: {}",
+                    ALLOWED_SORT_FIELDS.join(", ")
+                ))
+                .with_correlation_id(correlation_id));
+            }
+            let descending = match params.order.as_deref() {
+                None | Some("asc") => false,
+                Some("desc") => true,
+                Some(other) => {
+                    return Err(AppError::bad_request(format!(
+                        "Invalid order: {other}. Valid values: asc, desc"
+                    ))
+                    .with_correlation_id(correlation_id));
+                }
+            };
+            Some((sort.to_string(), descending))
+        }
+    };
+{% endif %}{% if has_fts %}
+    // When ?q= is provided, delegate to full-text search with ranking
+    if let Some(ref q) = params.q {
+        if !q.is_empty() {
+            let (results, total) = state.{{ domain }}_{{ module_name }}_queries.search(q, params.page, params.page_size{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+                .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to search {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?;
+            return Ok(Json(serde_json::json!({
+                "data": results,
+                "total": total,
+                "page": params.page,
+                "page_size": params.page_size,
+                "meta": { "correlation_id": correlation_id.to_string() }
+            })));
+        }
+    }
+{% endif %}
+    // Validate filter keys and build typed filter map.
+    let mut filters = std::collections::HashMap::new();
+    for (key, value) in &params.filter {
+        if !ALLOWED_FILTER_KEYS.contains(&key.as_str()) {
+            return Err(AppError::bad_request(format!("Unknown filter key: {key}"))
+                .with_correlation_id(correlation_id));
+        }
+        filters.insert(key.clone(), value.clone());
+    }
+{% if status_field %}
+    if let Some(ref status) = params.status {
+        filters.insert("{{ status_field }}".to_string(), status.clone());
+    }
+{% endif %}
+{% if role == "child" %}
+    // Scope results to the parent entity
+    filters.insert("{{ parent_ref }}".to_string(), parent_id.to_string());
+{% endif %}
+    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.list_filtered(params.page, params.page_size, &filters{% if is_auditable %}, false{% endif %}{% if ux_sort_fields %}, ux_sort{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to list {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?;
+{% if has_include %}
+    let include_paths: Vec<String> = params.include
+        .as_ref()
+        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+        .unwrap_or_default();
+    // Validate the requested paths ONCE, before the provider block (issue
+    // #778 wave 2): same ALLOWED_INCLUDE_KEYS allow-list the SeaORM branch
+    // used to check inside `if !include_paths.is_empty()` and the cornucopia
+    // branch checked in its own copy — an empty list loops zero times.
+    for path in &include_paths {
+        if !ALLOWED_INCLUDE_KEYS.contains(&path.as_str()) {
+            return Err(AppError::bad_request(format!("Unknown include path: {path}"))
+                .with_correlation_id(correlation_id));
+        }
+    }
+{{ include_list_block | default(value="") }}
+    Ok(Json(serde_json::json!({
+        "data": results,
+        "total": total,
+        "page": params.page,
+        "page_size": params.page_size,
+        "included": included,
+        "meta": { "correlation_id": correlation_id.to_string() }
+    })))
+{% else %}
+    Ok(Json(serde_json::json!({
+        "data": results,
+        "total": total,
+        "page": params.page,
+        "page_size": params.page_size,
+        "meta": { "correlation_id": correlation_id.to_string() }
+    })))
+{% endif %}
+}
+{% endif %}
