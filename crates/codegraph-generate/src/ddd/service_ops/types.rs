@@ -353,6 +353,42 @@ impl ExecutionKind {
     }
 }
 
+/// The handler-template names a pre-rendered execution block splices
+/// (issue #778).
+///
+/// The `delete` arm addresses the entity's command slot and spells its
+/// error prose with the very names the handler template's own context
+/// carries (`domain`, `module_name`, `param_name`, `entity_name`, the
+/// domain-types crate), and the `update` arm additionally branches on the
+/// handler's `role == "child"` (the parent-scoped reload) and
+/// `is_auditable` (the query plane's `include_deleted` argument). Those
+/// judgements are made where the routes are built, so
+/// [`ServiceOpRoute::execution_block`] bakes them in. They are
+/// generation-time render facts, not model facts: the whole struct is
+/// `#[serde(skip)]` on the route, so it never reaches the template context
+/// (the template holds its own bindings of the same names).
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct ExecutionRenderFacts {
+    /// The route's domain key (`payroll`) — the AppState slot prefix and the
+    /// `{Domain}Error` type.
+    pub domain: String,
+    /// The bound entity's Rust type name (`PayRunType`) — the prose.
+    pub entity_name: String,
+    /// The bound entity's module stem (its `pg_table_name`).
+    pub entity_table: String,
+    /// The handler's path-parameter binding (`pay_run_id`).
+    pub id_param: String,
+    /// The generated domain-types crate (`domain_types`).
+    pub domain_types_crate: String,
+    /// `true` when the handler route is nested under a parent — the
+    /// template's `role == "child"`, whose reload is the parent-scoped
+    /// `find_by_id_scoped(id, parent_id)`.
+    pub nested_child: bool,
+    /// `true` when the entity's query/command planes take the
+    /// `include_deleted` argument — the template's `is_auditable`.
+    pub auditable: bool,
+}
+
 /// One service operation lowered to a route on one entity.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ServiceOpRoute {
@@ -415,6 +451,16 @@ pub struct ServiceOpRoute {
     /// through the #662 plan instead, so this stays empty there.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub raise_responses: Vec<crate::ddd::body_lower::BodyRaiseResponse>,
+    /// The handler-template names this route's execution block renders with
+    /// (issue #778). Generation-time only: [`Self::execution_block`] bakes
+    /// them in, so they stay out of the serialized template context.
+    #[serde(skip)]
+    pub render_facts: ExecutionRenderFacts,
+    /// Pre-rendered execution body for the handler template (issue #778).
+    /// Empty until the per-kind lowering fills it; the template renders it
+    /// verbatim once wired.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub execution_block: String,
 }
 
 /// The compact injected-scope guard facts the hurl contract's planner

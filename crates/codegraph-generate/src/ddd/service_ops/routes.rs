@@ -11,10 +11,11 @@ use super::execution::{RouteShape, execution_for, seam};
 use super::policy::{
     PolicySurface, render_authorize_fn_with_injected, render_authorize_fn_with_states,
 };
+use super::render::render_execution_block;
 use super::transitions::short_class_name;
 use super::types::{
-    ChildAction, ChildParentLoad, ExecutionKind, FreshFixtureGuard, InjectedGuard, ServiceOpRoute,
-    fields_for,
+    ChildAction, ChildParentLoad, ExecutionKind, ExecutionRenderFacts, FreshFixtureGuard,
+    InjectedGuard, ServiceOpRoute, fields_for,
 };
 use super::when_lower::{InjectedMachine, InjectedScope};
 
@@ -301,6 +302,21 @@ pub async fn routes_for_entity(
     let auditable = crate::api::handler::resolve_is_auditable(db, entity_title, config, domain)
         .await
         .map_err(|e| e.to_string())?;
+    // Issue #778: the handler-template names (and judgements) a pre-rendered
+    // execution block splices are the handler generator's OWN inputs — the
+    // `id_param` comment above, plus the nested-child scoped reload and the
+    // auditable query arity, exactly as the handler's `role`/`is_auditable`
+    // decide them. So the `delete`/`update` arms render the same command
+    // slots, reload and prose the template would.
+    let render_facts = ExecutionRenderFacts {
+        domain: domain.to_string(),
+        entity_name: schema.rust_type_name.clone(),
+        entity_table: module_name.clone(),
+        id_param: id_param.clone(),
+        domain_types_crate: body.domain_types_crate.clone(),
+        nested_child: scoped.is_some(),
+        auditable,
+    };
 
     // The design surface gates the execution legs: delegation targets must
     // survive the #449 op-set mapping (delete → commands.delete, findById
@@ -512,7 +528,7 @@ pub async fn routes_for_entity(
                 let covered = covered_statuses(&execution);
                 let raise_responses =
                     throws_responses(&raises, &op.name, &service.name, &throws, &covered)?;
-                routes.push(ServiceOpRoute {
+                let mut route = ServiceOpRoute {
                     service: service.name.clone(),
                     op_name: op.name.clone(),
                     fn_name: format!("service_op_{snake}"),
@@ -526,7 +542,13 @@ pub async fn routes_for_entity(
                     invariant_block: None,
                     throws,
                     raise_responses,
-                });
+                    render_facts: render_facts.clone(),
+                    execution_block: String::new(),
+                };
+                // Issue #778: the pre-rendered execution body (seam/read/
+                // delete here; the remaining arms stay template-owned).
+                route.execution_block = render_execution_block(&route);
+                routes.push(route);
             }
         }
     }
@@ -552,6 +574,7 @@ pub async fn routes_for_entity(
             dto_casing: body.dto_casing,
             authored_parent: authored_routing.as_ref(),
             surface_ops: &surface_ops,
+            render_facts: &render_facts,
         },
         &mut seen,
         &mut routes,
@@ -1591,6 +1614,9 @@ struct ChildOpCtx<'a> {
     dto_casing: crate::project_config::DtoKeyCasing,
     authored_parent: Option<&'a crate::ddd::aggregate::AuthoredParent>,
     surface_ops: &'a [String],
+    /// The handler-template names a pre-rendered execution block splices
+    /// (issue #778) — the CHILD's own, since the ctx entity IS the child.
+    render_facts: &'a ExecutionRenderFacts,
 }
 
 /// Collect the aggregate child operations (issue #661) that resolve to THIS
@@ -1620,6 +1646,7 @@ async fn child_op_routes(
         dto_casing,
         authored_parent,
         surface_ops,
+        render_facts,
     } = ctx;
     // ── Aggregate child operations (issue #661) ─────────────────────────
     //
@@ -1840,7 +1867,7 @@ async fn child_op_routes(
                 let covered = covered_statuses(&execution);
                 let raise_responses =
                     throws_responses(raises, &op.name, &design.class, &throws, &covered)?;
-                routes.push(ServiceOpRoute {
+                let mut route = ServiceOpRoute {
                     // The declaration site: a child op's `service` names the
                     // aggregate ROOT design whose `children` block declared
                     // it (there is no `service` in the artifact).
@@ -1857,7 +1884,13 @@ async fn child_op_routes(
                     invariant_block: None,
                     throws,
                     raise_responses,
-                });
+                    render_facts: render_facts.clone(),
+                    execution_block: String::new(),
+                };
+                // Issue #778: the pre-rendered execution body (a child op
+                // whose lowering is a seam/read/delete renders here too).
+                route.execution_block = render_execution_block(&route);
+                routes.push(route);
             }
         }
     }

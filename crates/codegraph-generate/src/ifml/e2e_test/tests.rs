@@ -1392,6 +1392,8 @@ async fn collection_add_plans_ok_then_not_found_legs() {
         invariant_block: None,
         throws: Vec::new(),
         raise_responses: Vec::new(),
+        render_facts: Default::default(),
+        execution_block: String::new(),
     };
     let legs = super::assembly::plan_action_legs(&db, "PayRunLineType", &route).await;
     let kinds: Vec<ActionActKind> = legs.iter().map(|(kind, _)| *kind).collect();

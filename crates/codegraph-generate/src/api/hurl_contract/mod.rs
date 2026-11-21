@@ -1340,6 +1340,8 @@ entities = ["TaskType"]
             invariant_block: None,
             throws: Vec::new(),
             raise_responses: Vec::new(),
+            render_facts: Default::default(),
+            execution_block: String::new(),
         };
         let legs = actions::child_action_legs(
             &route,
@@ -1388,6 +1390,8 @@ entities = ["TaskType"]
             invariant_block: None,
             throws: Vec::new(),
             raise_responses: Vec::new(),
+            render_facts: Default::default(),
+            execution_block: String::new(),
         };
         let legs = actions::state_aware_legs(
             &[route],
@@ -1440,6 +1444,8 @@ entities = ["TaskType"]
             invariant_block: None,
             throws: Vec::new(),
             raise_responses: Vec::new(),
+            render_facts: Default::default(),
+            execution_block: String::new(),
         };
         let legs = actions::child_action_legs(
             &route,

@@ -78,6 +78,7 @@
 mod execution;
 mod policy;
 mod projection;
+pub mod render;
 mod routes;
 mod transitions;
 mod types;
