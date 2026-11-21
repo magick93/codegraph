@@ -204,7 +204,9 @@ fn search_sql_filters_when_auditable() {
 
     let search = statement_block(&sql, "search_customer");
     assert!(
-        search.contains("WHERE search_tsv @@ websearch_to_tsquery('english', :q) AND \"deleted_at\" IS NULL"),
+        search.contains(
+            "WHERE search_tsv @@ websearch_to_tsquery('english', :q) AND \"deleted_at\" IS NULL"
+        ),
         "the default search must exclude soft-deleted rows:\n{search}"
     );
     let search_all = statement_block(&sql, "search_customer_including_deleted");
@@ -310,7 +312,8 @@ fn crud_and_include_sql_share_one_marker() {
 
         // The CRUD plane, through the derivation site.
         let crud = render(&target);
-        let crud_filtered = statement_block(&crud, "list_customer").contains("\"deleted_at\" IS NULL");
+        let crud_filtered =
+            statement_block(&crud, "list_customer").contains("\"deleted_at\" IS NULL");
 
         // The include plane, through its own call of the same predicate.
         let facts = IncludeQueryFacts {
