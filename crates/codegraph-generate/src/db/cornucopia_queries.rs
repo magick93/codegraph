@@ -1814,3 +1814,9 @@ fn write_tree_workers_query(sql: &mut String, tree: &EntityTree) {
 #[cfg(test)]
 #[path = "cornucopia_queries_tests.rs"]
 mod include_query_tests;
+
+// Issue #788: the CRUD plane's soft-delete contract (a sibling module — the
+// file itself sits at the #751 line budget).
+#[cfg(test)]
+#[path = "cornucopia_crud_soft_delete_tests.rs"]
+mod crud_soft_delete_tests;
