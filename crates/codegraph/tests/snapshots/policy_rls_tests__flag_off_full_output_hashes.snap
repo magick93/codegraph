@@ -1,6 +1,5 @@
 ---
 source: crates/codegraph/tests/policy_rls_tests.rs
-assertion_line: 293
 expression: hashes
 ---
 ".codegraph-manifest.json": 9fd51e3d4e66fbc059eea669c712525e08d5e0393ccdb3071a43a26d76241eeb
@@ -332,8 +331,8 @@ src/api/openapi/mod.rs: dd3897944b04b4eabc4a418b3b164a1fad76db26c04645a34cbe92c2
 src/api/openapi/recruiting.rs: a27bbe59eeb117620a1c3b7aa46622fdaed1d43a10688746700965ee31072fe6
 src/api/openapi/rsvp.rs: f69ab885c1638a0e6c8aad802e2447726a5e75d3a25a0d193abfdeaa39e031ca
 src/api/openapi/security.rs: 7e2c6e0f24f748ee753e9a01fba7871eefe8ff975dc2a04b7121c05c9313c1c0
-src/api/recruiting/application_handler.rs: 5e4efcc43e0f296b88332d16b65ac3cffee12aff4f415d153c0249d01940fba6
-src/api/recruiting/candidate_handler.rs: ebaafab60ddb4f4f3ddfe3192ac4cb381e037c886b369adb2b843a8c4a2c78e8
+src/api/recruiting/application_handler.rs: 4fadd02c983d11ebc3201bffe9d37f5c04f7a670123e2779f4ccdbf1a4dd6aca
+src/api/recruiting/candidate_handler.rs: 09bb56fe8af15287f75ec62963fed595e193114ca032c742fabd8cecfec59ee7
 src/api/recruiting/candidate_workflow.rs: 4c82adfc461fcf809fffdef522b169d52f73ddcd736b1ca36dc0e10b4c625d1d
 src/api/recruiting/mod.rs: 30bb9721f63e3589a58d8cb2b1c935fec090efcb9c31c15a74c4c396c3228211
 src/api/recruiting/router.rs: e72948ef8139362ff607791ab254884f6045cd494b6ff18f6398498cf5c8fa14

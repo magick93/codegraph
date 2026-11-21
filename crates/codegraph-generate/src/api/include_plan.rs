@@ -363,8 +363,12 @@ fn render_list_sea_orm(paths: &[ResolvedIncludePath], ctx: &IncludePlanCtx<'_>) 
 /// SQL-first repositories, so `included` stays all-`None`. Ported verbatim
 /// from `handler.tera` (the comment lines are the contract the wiring task
 /// keeps byte-identical).
-const CORNUCOPIA_GET_BLOCK: &str = "\
-    // Cornucopia provider: include fetch methods are not implemented on the
+///
+/// NB: the literal must NOT use a `"\` line continuation for its first line —
+/// Rust strips the following line's indentation, which would emit the comment
+/// at column 0.
+const CORNUCOPIA_GET_BLOCK: &str =
+    "    // Cornucopia provider: include fetch methods are not implemented on the
     // SQL-first repositories yet; `included` stays all-None (validation of
     // the requested paths above still applies).
     // TODO(worker-cornucopia-includes): resolve includes through the
@@ -374,8 +378,8 @@ const CORNUCOPIA_GET_BLOCK: &str = "\
 /// historical comment marker (`handler.tera`). The template's
 /// `ALLOWED_INCLUDE_KEYS` loop is NOT reproduced (validation is hoisted out
 /// of the provider branch by the wiring task).
-const CORNUCOPIA_LIST_BLOCK: &str = "\
-    // Cornucopia provider: batch include fetches are not implemented on the
+const CORNUCOPIA_LIST_BLOCK: &str =
+    "    // Cornucopia provider: batch include fetches are not implemented on the
     // SQL-first repositories yet; includes stay empty (path validation above
     // still applies).
     // TODO(worker-cornucopia-includes): resolve includes through the
@@ -750,6 +754,10 @@ mod tests {
         let paths = vec![path("person", vec![segment("person", false)])];
         let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
         assert_eq!(plan.support, IncludeSupport::Cornucopia);
+        // The comment starts at the handler-fn-body indent (4 spaces) — the
+        // blocks are inserted verbatim into a generated fn body.
+        assert!(plan.get_block.starts_with("    // Cornucopia provider"));
+        assert!(plan.list_block.starts_with("    // Cornucopia provider"));
         assert!(
             plan.get_block.contains(
                 "// Cornucopia provider: include fetch methods are not implemented on the"

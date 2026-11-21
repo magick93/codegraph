@@ -391,57 +391,7 @@ pub async fn get_by_id(
         {%- endfor %}
     };
     
-{% if project.persistence_provider == "sea_orm" %}
-    use sea_orm::TransactionTrait;
-    let tx = state.db.begin().await
-        .map_err(|e| AppError::internal(format!("Failed to begin transaction: {e}"))
-            .with_correlation_id(correlation_id))?;
-    let repo = crate::domain::{{ domain }}::{{ module_name }}::repository_impl::{{ entity_name }}RepositoryImpl;
-    for path in &include_paths {
-        match path.as_str() {
-        {% for ipath in include_paths %}
-            "{{ ipath.alias }}" => {
-{% if ipath.segments | length == 1 %}
-{% if ipath.segments[0].is_array %}
-                included.{{ ipath.segments[0].module_name }} = Some(repo.{{ ipath.fetch_method }}(&tx, id).await
-                    .map_err(|e| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
-                        .with_correlation_id(correlation_id))?);
-{% else %}
-                included.{{ ipath.segments[0].module_name }} = repo.{{ ipath.fetch_method }}(&tx, id).await
-                    .map_err(|e| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
-                        .with_correlation_id(correlation_id))?;
-{% endif %}
-{% else %}
-                // Dot-notation path: merge into combined response
-                let leaf_resp = repo.{{ ipath.fetch_method }}(&tx, id).await
-                    .map_err(|e| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
-                        .with_correlation_id(correlation_id))?;
-                if let Some(val) = leaf_resp {
-                    if let Some(ref mut combined) = included.{{ ipath.segments[0].module_name }} {
-                        combined.{{ ipath.segments[1].module_name }} = val.{{ ipath.segments[1].module_name }};
-                    } else {
-                        included.{{ ipath.segments[0].module_name }} = Some({{ ipath.response_rust_type }} {
-                            {{ ipath.segments[1].module_name }}: val.{{ ipath.segments[1].module_name }},
-                            ..Default::default()
-                        });
-                    }
-                }
-{% endif %}
-            }
-        {% endfor %}
-            _ => {}
-        }
-    }
-    tx.commit().await
-        .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}"))
-            .with_correlation_id(correlation_id))?;
-{% else %}
-    // Cornucopia provider: include fetch methods are not implemented on the
-    // SQL-first repositories yet; `included` stays all-None (validation of
-    // the requested paths above still applies).
-    // TODO(worker-cornucopia-includes): resolve includes through the
-    // cornucopia query layer (later epic step).
-{% endif %}
+{{ include_get_block | default(value="") }}
     
     Ok(Json({{ entity_name }}WithIncludeResponse {
         data: linked,
@@ -795,81 +745,17 @@ pub async fn list(
         .as_ref()
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
         .unwrap_or_default();
-{% if project.persistence_provider == "sea_orm" %}
-    let included = if !include_paths.is_empty() {
-        use sea_orm::TransactionTrait;
-        let tx = state.db.begin().await
-            .map_err(|e| AppError::internal(format!("Failed to begin transaction for includes: {e}"))
-                .with_correlation_id(correlation_id))?;
-        let repo = crate::domain::{{ domain }}::{{ module_name }}::repository_impl::{{ entity_name }}RepositoryImpl;
-        let ids: Vec<Uuid> = results.iter().map(|r| r.id).collect();
-        let mut included_map = std::collections::HashMap::<String, serde_json::Value>::new();
-        for path in &include_paths {
-            if !ALLOWED_INCLUDE_KEYS.contains(&path.as_str()) {
-                return Err(AppError::bad_request(format!("Unknown include path: {path}"))
-                    .with_correlation_id(correlation_id));
-            }
-        }
-        {% for ipath in include_paths %}
-        {% if ipath.segments | length == 1 %}
-        if include_paths.contains(&"{{ ipath.alias }}".to_string()) {
-            included_map.insert(
-                "{{ ipath.segments[0].module_name }}".to_string(),
-                serde_json::to_value(repo.{{ ipath.batch_fetch_method }}(&tx, &ids).await
-                    .map_err(|e| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
-                        .with_correlation_id(correlation_id))?).unwrap_or_default(),
-            );
-        }
-        {% else %}
-        // Dot-notation path: batch-fetch the combined struct per source id and
-        // merge each leaf field into `included.<segments[0]>[<source_id>]` so
-        // sibling dot paths sharing the first segment accumulate instead of
-        // clobbering each other.
-        if include_paths.contains(&"{{ ipath.alias }}".to_string()) {
-            let batch = repo.{{ ipath.batch_fetch_method }}(&tx, &ids).await
-                .map_err(|e| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
-                    .with_correlation_id(correlation_id))?;
-            let entry = included_map
-                .entry("{{ ipath.segments[0].module_name }}".to_string())
-                .or_insert_with(|| serde_json::json!({}));
-            if let Some(by_source) = entry.as_object_mut() {
-                for (source_id, combined) in batch {
-                    let leaf = serde_json::json!(combined.{{ ipath.segments[1].module_name }});
-                    let leaf_entry = by_source
-                        .entry(source_id.to_string())
-                        .or_insert_with(|| serde_json::json!({}));
-                    if let Some(leaf_obj) = leaf_entry.as_object_mut() {
-                        leaf_obj.insert(
-                            "{{ ipath.segments[1].module_name }}".to_string(),
-                            leaf,
-                        );
-                    }
-                }
-            }
-        }
-        {% endif %}
-        {% endfor %}
-        tx.commit().await
-            .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}"))
-                .with_correlation_id(correlation_id))?;
-        included_map
-    } else {
-        std::collections::HashMap::new()
-    };
-{% else %}
-    // Cornucopia provider: batch include fetches are not implemented on the
-    // SQL-first repositories yet; includes stay empty (path validation above
-    // still applies).
-    // TODO(worker-cornucopia-includes): resolve includes through the
-    // cornucopia query layer (later epic step).
+    // Validate the requested paths ONCE, before the provider block (issue
+    // #778 wave 2): same ALLOWED_INCLUDE_KEYS allow-list the SeaORM branch
+    // used to check inside `if !include_paths.is_empty()` and the cornucopia
+    // branch checked in its own copy — an empty list loops zero times.
     for path in &include_paths {
         if !ALLOWED_INCLUDE_KEYS.contains(&path.as_str()) {
             return Err(AppError::bad_request(format!("Unknown include path: {path}"))
                 .with_correlation_id(correlation_id));
         }
     }
-    let included = std::collections::HashMap::<String, serde_json::Value>::new();
-{% endif %}
+{{ include_list_block | default(value="") }}
     Ok(Json(serde_json::json!({
         "data": results,
         "total": total,

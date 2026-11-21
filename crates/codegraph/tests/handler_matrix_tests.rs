@@ -34,6 +34,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use codegraph::generate::ProjectConfig;
+use codegraph::generate::api::include_path::{IncludeSegment, ResolvedIncludePath};
+use codegraph::generate::api::include_plan::{IncludePlanCtx, build_include_plan};
 use codegraph::generate::profile::PersistenceProvider;
 use codegraph::generate::render_template_with_project;
 use codegraph::generate::template_engine::create_tera;
@@ -157,36 +159,55 @@ fn grandchild_base() -> Value {
 
 /// One `ResolvedIncludePath` segment (the template reads `module_name`,
 /// `is_array` and, for the merge branch, `response_rust_type`).
-fn include_segment(module: &str, entity: &str, is_array: bool) -> Value {
-    json!({
-        "entity_name": entity,
-        "schema_title": format!("{entity}Type"),
-        "module_name": module,
-        "domain": "common",
-        "table": format!("\"common\".\"{module}\""),
-        "fk_column": format!("{module}_id"),
-        "reverse_fk_column": "task_id",
-        "fk_is_required": false,
-        "reverse_fk_is_required": false,
-        "is_array": is_array,
-        "child_table_override": null,
-    })
+fn include_segment(module: &str, entity: &str, is_array: bool) -> IncludeSegment {
+    IncludeSegment {
+        entity_name: entity.to_string(),
+        schema_title: format!("{entity}Type"),
+        module_name: module.to_string(),
+        domain: "common".to_string(),
+        table: format!("\"common\".\"{module}\""),
+        fk_column: format!("{module}_id"),
+        reverse_fk_column: "task_id".to_string(),
+        fk_is_required: false,
+        reverse_fk_is_required: false,
+        is_array,
+        child_table_override: None,
+    }
 }
 
 fn include_path(
     alias: &str,
-    segments: Vec<Value>,
+    segments: Vec<IncludeSegment>,
     response_rust_type: &str,
     fetch_method: &str,
     batch_fetch_method: &str,
-) -> Value {
-    json!({
-        "alias": alias,
-        "segments": segments,
-        "response_rust_type": response_rust_type,
-        "fetch_method": fetch_method,
-        "batch_fetch_method": batch_fetch_method,
-    })
+) -> ResolvedIncludePath {
+    ResolvedIncludePath {
+        alias: alias.to_string(),
+        segments,
+        response_rust_type: response_rust_type.to_string(),
+        fetch_method: fetch_method.to_string(),
+        batch_fetch_method: batch_fetch_method.to_string(),
+    }
+}
+
+/// Mirror PRODUCTION for the two pre-rendered hydration blocks: they come
+/// from the real [`build_include_plan`] over the same resolved paths, never
+/// hand-copied (issue #778 wave 2).
+fn apply_include_blocks(ctx: &mut Value, paths: &[ResolvedIncludePath], project: &ProjectConfig) {
+    let plan = build_include_plan(
+        paths,
+        &IncludePlanCtx {
+            entity_name: ctx["entity_name"].as_str().expect("entity_name"),
+            domain: ctx["domain"].as_str().expect("domain"),
+            module_name: ctx["module_name"].as_str().expect("module_name"),
+            role: ctx["role"].as_str().expect("role"),
+            is_auditable: ctx["is_auditable"].as_bool().unwrap_or(false),
+        },
+        project,
+    );
+    ctx["include_get_block"] = json!(plan.get_block);
+    ctx["include_list_block"] = json!(plan.list_block);
 }
 
 fn cornucopia_project() -> ProjectConfig {
@@ -821,7 +842,7 @@ fn cases() -> Vec<Case> {
     let mut ctx = root_base();
     full_crud(&mut ctx);
     ctx["has_include"] = json!(true);
-    ctx["include_paths"] = json!([
+    let paths = vec![
         include_path(
             "person",
             vec![include_segment("person", "Person", false)],
@@ -836,14 +857,17 @@ fn cases() -> Vec<Case> {
             "fetch_attachments_for_task",
             "fetch_attachments_batch_for_task",
         ),
-    ]);
+    ];
+    ctx["include_paths"] = json!(paths);
     // `included_default_fields` mirrors `HandlerContext`: the unique
     // first-segment module names, in first-occurrence order.
     ctx["included_default_fields"] = json!(["person", "attachment"]);
+    let project = ProjectConfig::default();
+    apply_include_blocks(&mut ctx, &paths, &project);
     out.push(Case {
         name: "root_include_single_segment",
         ctx,
-        project: ProjectConfig::default(),
+        project,
     });
 
     // 10. root + `?include=` with two dot-notation paths sharing the first
@@ -851,7 +875,7 @@ fn cases() -> Vec<Case> {
     let mut ctx = root_base();
     full_crud(&mut ctx);
     ctx["has_include"] = json!(true);
-    ctx["include_paths"] = json!([
+    let paths = vec![
         include_path(
             "assignee.person",
             vec![
@@ -872,13 +896,16 @@ fn cases() -> Vec<Case> {
             "fetch_assignee_organization_for_task",
             "fetch_assignee_organization_batch_for_task",
         ),
-    ]);
+    ];
+    ctx["include_paths"] = json!(paths);
     // Sibling dot paths share the `assignee` first segment: ONE default field.
     ctx["included_default_fields"] = json!(["assignee"]);
+    let project = ProjectConfig::default();
+    apply_include_blocks(&mut ctx, &paths, &project);
     out.push(Case {
         name: "root_include_dot_siblings",
         ctx,
-        project: ProjectConfig::default(),
+        project,
     });
 
     // 11. cornucopia provider + `?include=`: pins the CURRENT
@@ -886,18 +913,21 @@ fn cases() -> Vec<Case> {
     let mut ctx = root_base();
     full_crud(&mut ctx);
     ctx["has_include"] = json!(true);
-    ctx["include_paths"] = json!([include_path(
+    let paths = vec![include_path(
         "person",
         vec![include_segment("person", "Person", false)],
         "PersonResponse",
         "fetch_person_for_task",
         "fetch_person_batch_for_task",
-    ),]);
+    )];
+    ctx["include_paths"] = json!(paths);
     ctx["included_default_fields"] = json!(["person"]);
+    let project = cornucopia_project();
+    apply_include_blocks(&mut ctx, &paths, &project);
     out.push(Case {
         name: "cornucopia_include",
         ctx,
-        project: cornucopia_project(),
+        project,
     });
 
     // 12. child: nested under its parent, one ancestor path param, full CRUD,

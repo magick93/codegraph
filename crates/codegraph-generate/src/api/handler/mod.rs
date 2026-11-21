@@ -16,6 +16,7 @@ use crate::type_registry::TypeRegistryHandle;
 use codegraph_config::{DomainConfig, EntityConfig};
 
 use super::include_path::{ResolvedIncludePath, resolve_include_paths_for_topology};
+use super::include_plan::{IncludePlanCtx, build_include_plan};
 use super::router::{ChildInfo, CrossRefInfo};
 
 use super::api_model::{resolve_entity_operations, resolve_path_segment};
@@ -198,6 +199,18 @@ pub struct HandlerContext {
     /// omitted and the handler stays byte-identical.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub included_default_fields: Vec<String>,
+    /// Pre-rendered `?include=` hydration block for GET-by-id (issue #778
+    /// wave 2): the provider-selected Rust lines the template renders inside
+    /// the `has_include` block, produced by
+    /// [`crate::api::include_plan::build_include_plan`]. Empty when the entity
+    /// has no include surface, so the key is omitted and the handler stays
+    /// byte-identical.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub include_get_block: String,
+    /// Pre-rendered `?include=` hydration block for LIST (issue #778 wave 2),
+    /// including the `let included = …` binding. Empty = no include surface.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub include_list_block: String,
     /// Resolved `use` import statements for types referenced by this handler.
     /// Populated through this run's type registry instead of hard-coded
     /// template paths.
@@ -663,6 +676,22 @@ impl EntityGenerator for HandlerGenerator {
         let guard_presence = GuardPresence::from_guards(&eligibility_guards);
         let included_default_fields = included_default_fields(&include_paths);
 
+        // `?include=` hydration blocks (issue #778 wave 2): the provider
+        // decision and the rendered hydration lines live in Rust, so the
+        // template renders one pre-computed fragment per endpoint. Empty
+        // when the entity has no include surface.
+        let include_plan = build_include_plan(
+            &include_paths,
+            &IncludePlanCtx {
+                entity_name: &entity_name,
+                domain: &domain,
+                module_name: &module_name,
+                role: &topo.role,
+                is_auditable,
+            },
+            project,
+        );
+
         let ctx = HandlerContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -708,6 +737,8 @@ impl EntityGenerator for HandlerGenerator {
             has_include,
             include_paths: include_paths.clone(),
             included_default_fields,
+            include_get_block: include_plan.get_block,
+            include_list_block: include_plan.list_block,
             handler_imports,
             is_auditable,
             ux_sort_fields,
