@@ -7,12 +7,20 @@
 //! hydration block so the template renders one already-computed fragment.
 //!
 //! The SeaORM blocks are a verbatim port of the template's SeaORM branches
-//! (including comments and the dot-notation accumulation merge). The
-//! Cornucopia blocks are a verbatim port of the template's current
-//! Cornucopia branches (hydration is not implemented on the SQL-first
-//! repositories; the comment + empty data stay so a later wiring task is
-//! byte-identical). [`IncludeSupport::Unsupported`] instead fails closed with
-//! a 501 that names the provider and issue #781 — it is not wired yet.
+//! (including comments and the dot-notation accumulation merge).
+//!
+//! ## Cornucopia: fail closed (issue #781 P0)
+//!
+//! The cornucopia SQL-first repositories do not implement include hydration,
+//! so [`build_include_plan`] returns [`IncludeSupport::Unsupported`] for a
+//! cornucopia project: a request that ASKS for `?include=` answers a 501
+//! naming the provider and issue #781 instead of silently returning empty
+//! include data. The guard is `if !include_paths.is_empty()` — a request
+//! without includes proceeds normally (the handler region is emitted whenever
+//! the ENTITY models include paths, not only when the request asks for them).
+//! [`IncludeSupport::Cornucopia`] remains reachable through
+//! [`build_include_plan_with_support`] and keeps the historical empty-data
+//! shape (no production path produces it any more).
 //!
 //! ## What the blocks do NOT contain
 //!
@@ -48,11 +56,14 @@ use crate::project_config::ProjectConfig;
 pub enum IncludeSupport {
     /// The SeaORM repository plane: per-id fetch on GET, batch fetch on LIST.
     SeaOrm,
-    /// The cornucopia SQL-first plane: hydration is not implemented yet, so
-    /// the block keeps the historical empty-data shape.
+    /// The cornucopia SQL-first plane: hydration is not implemented yet. No
+    /// production path produces this verdict any more (issue #781 makes
+    /// cornucopia `Unsupported`); the historical empty-data block is kept for
+    /// callers that inject the verdict explicitly.
     Cornucopia,
-    /// The provider cannot hydrate `?include=` at all: the rendered block
-    /// fails closed with a 501 naming the provider and issue #781.
+    /// The provider cannot hydrate `?include=` at all: a request that asks
+    /// for includes fails closed with a 501 naming the provider and issue
+    /// #781. A request WITHOUT includes proceeds normally.
     Unsupported { reason: String },
 }
 
@@ -76,6 +87,12 @@ pub struct IncludePlan {
     /// The exact Rust lines the LIST handler renders for include hydration.
     /// Empty when no include paths are modelled.
     pub list_block: String,
+    /// The Rust doc-comment LINE (leading `    /// ` included) that replaces
+    /// the `?include=` description on the shared query-params struct. Empty
+    /// when no include paths are modelled. SeaORM keeps the historical
+    /// "eager-load …" line byte-for-byte; an unsupported provider states
+    /// that includes are modelled but answer 501 (issue #781).
+    pub include_doc: String,
 }
 
 /// The handler context the hydration blocks are rendered against.
@@ -97,18 +114,27 @@ pub struct IncludePlanCtx<'a> {
 
 /// Build the include plan for one entity, deriving provider support from
 /// `project` (`PersistenceProvider` has exactly two variants today).
+///
+/// Cornucopia is UNSUPPORTED (issue #781 P0): its SQL-first repositories have
+/// no include fetch plane, so asking for `?include=` must fail closed rather
+/// than silently return empty data.
 pub fn build_include_plan(
     paths: &[ResolvedIncludePath],
     ctx: &IncludePlanCtx<'_>,
     project: &ProjectConfig,
 ) -> IncludePlan {
     let support = if project.is_cornucopia() {
-        IncludeSupport::Cornucopia
+        IncludeSupport::Unsupported {
+            reason: CORNUCOPIA_UNSUPPORTED_REASON.to_string(),
+        }
     } else {
         IncludeSupport::SeaOrm
     };
     build_include_plan_with_support(support, paths, ctx)
 }
+
+/// The cornucopia verdict's reason (rendered into the 501 message).
+const CORNUCOPIA_UNSUPPORTED_REASON: &str = "the cornucopia SQL-first persistence provider does not implement `?include=` hydration (issue #781)";
 
 /// [`build_include_plan`] with an explicit support verdict — the entry point
 /// for a provider the caller cannot lower (see [`IncludeSupport::Unsupported`]).
@@ -124,11 +150,13 @@ pub fn build_include_plan_with_support(
             support,
             get_block: String::new(),
             list_block: String::new(),
+            include_doc: String::new(),
         };
     }
     IncludePlan {
         get_block: render_get_block(paths, ctx, &support),
         list_block: render_list_block(paths, ctx, &support),
+        include_doc: include_doc_for(&support).to_string(),
         support,
     }
 }
@@ -145,7 +173,7 @@ fn render_get_block(
     match support {
         IncludeSupport::SeaOrm => render_get_sea_orm(paths, ctx),
         IncludeSupport::Cornucopia => CORNUCOPIA_GET_BLOCK.to_string(),
-        IncludeSupport::Unsupported { reason } => render_unsupported_block(reason),
+        IncludeSupport::Unsupported { reason } => render_unsupported_get_block(reason),
     }
 }
 
@@ -243,7 +271,7 @@ fn render_list_block(
     match support {
         IncludeSupport::SeaOrm => render_list_sea_orm(paths, ctx),
         IncludeSupport::Cornucopia => CORNUCOPIA_LIST_BLOCK.to_string(),
-        IncludeSupport::Unsupported { reason } => render_unsupported_block(reason),
+        IncludeSupport::Unsupported { reason } => render_unsupported_list_block(reason),
     }
 }
 
@@ -388,22 +416,75 @@ const CORNUCOPIA_LIST_BLOCK: &str =
 
 /// A fail-closed 501 (issue #781): a provider that cannot hydrate includes
 /// must never answer with silently-empty include data.
-fn render_unsupported_block(reason: &str) -> String {
-    let message = format!("?include= hydration is not supported: {reason} (issue #781)",);
+///
+/// The block lives in the handler's `has_include` region, which is emitted
+/// whenever the ENTITY models include paths — so it must be GUARDED on the
+/// request actually asking for some: a request without `?include=` proceeds
+/// normally.
+fn render_unsupported_get_block(reason: &str) -> String {
+    let mut out = render_unsupported_guard(reason);
+    out.push_str("\n    }");
+    out
+}
+
+/// The LIST arm: same guard, then the empty map the Ok envelope always
+/// references (a request with includes never reaches it — it returned 501).
+fn render_unsupported_list_block(reason: &str) -> String {
+    let mut out = render_unsupported_guard(reason);
+    out.push_str("\n    }");
+    out.push_str(
+        "\n    let included = std::collections::HashMap::<String, serde_json::Value>::new();",
+    );
+    out
+}
+
+/// The shared guarded 501 body: `if !include_paths.is_empty() { … return
+/// Err(501) … }` at the handler-fn-body indent, WITHOUT the closing brace
+/// (the caller appends it, plus any provider-specific tail).
+fn render_unsupported_guard(reason: &str) -> String {
+    // The reason names issue #781 already for the cornucopia verdict; keep
+    // the reference exactly once for both paths.
+    let message = if reason.contains("#781") {
+        format!("?include= hydration is not supported: {reason}")
+    } else {
+        format!("?include= hydration is not supported: {reason} (issue #781)")
+    };
     let mut out = String::new();
-    out.push_str("    // `?include=` hydration is not supported by this persistence provider\n");
-    out.push_str("    // (issue #781): fail closed instead of silently returning empty data.\n");
-    out.push_str("    return Err(AppError {\n");
-    out.push_str("        status: axum::http::StatusCode::NOT_IMPLEMENTED,\n");
-    out.push_str("        code: \"NOT_IMPLEMENTED\",\n");
+    out.push_str("    if !include_paths.is_empty() {\n");
+    out.push_str(
+        "        // `?include=` hydration is not supported by this persistence provider\n",
+    );
+    out.push_str(
+        "        // (issue #781): fail closed instead of silently returning empty data.\n",
+    );
+    out.push_str("        // A request without includes proceeds normally.\n");
+    out.push_str("        return Err(AppError {\n");
+    out.push_str("            status: axum::http::StatusCode::NOT_IMPLEMENTED,\n");
+    out.push_str("            code: \"NOT_IMPLEMENTED\",\n");
     out.push_str(&format!(
-        "        message: {}.to_string(),\n",
+        "            message: {}.to_string(),\n",
         rust_string_literal(&message)
     ));
-    out.push_str("        details: None,\n");
-    out.push_str("        correlation_id: Some(correlation_id),\n");
-    out.push_str("    });");
+    out.push_str("            details: None,\n");
+    out.push_str("            correlation_id: Some(correlation_id),\n");
+    out.push_str("        });");
     out
+}
+
+/// The `?include=` doc-comment line rendered into the query-params struct.
+///
+/// * SeaORM / the historical cornucopia arm: the pre-#781 line, byte-exact.
+/// * Unsupported: honest — includes are modelled but the deployment's
+///   persistence provider cannot serve them, so requests answer 501.
+fn include_doc_for(support: &IncludeSupport) -> &'static str {
+    match support {
+        IncludeSupport::SeaOrm | IncludeSupport::Cornucopia => {
+            "    /// Eager-load related entities, e.g. `?include=person,deployment.position`."
+        }
+        IncludeSupport::Unsupported { .. } => {
+            "    /// Includes are modelled for this entity but are not supported by this deployment's persistence provider; a request that sends `?include=` answers 501 (issue #781)."
+        }
+    }
 }
 
 // =============================================================================
@@ -746,28 +827,75 @@ mod tests {
         let plan = sea_orm_plan(&[]);
         assert!(plan.get_block.is_empty());
         assert!(plan.list_block.is_empty());
+        assert!(plan.include_doc.is_empty());
         assert_eq!(plan.support, IncludeSupport::SeaOrm);
     }
 
+    /// Issue #781 P0: a cornucopia project's include surface FAILS CLOSED.
     #[test]
-    fn cornucopia_keeps_the_current_empty_data_blocks() {
+    fn cornucopia_project_fails_closed_with_a_guarded_501() {
         let paths = vec![path("person", vec![segment("person", false)])];
         let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
-        assert_eq!(plan.support, IncludeSupport::Cornucopia);
+        assert!(!plan.support.is_supported());
+        match &plan.support {
+            IncludeSupport::Unsupported { reason } => {
+                assert!(reason.contains("cornucopia"), "{reason}");
+                assert!(reason.contains("issue #781"), "{reason}");
+                assert!(reason.contains("does not implement"), "{reason}");
+            }
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+        // Both arms are GUARDED on the request asking for includes: a request
+        // without `?include=` must proceed normally.
+        for block in [&plan.get_block, &plan.list_block] {
+            assert!(
+                block.starts_with("    if !include_paths.is_empty() {\n"),
+                "{block}"
+            );
+            assert!(block.contains("        return Err(AppError {"), "{block}");
+            assert!(
+                block.contains("status: axum::http::StatusCode::NOT_IMPLEMENTED,"),
+                "{block}"
+            );
+            assert!(block.contains("code: \"NOT_IMPLEMENTED\","), "{block}");
+            assert!(
+                block.contains("correlation_id: Some(correlation_id),"),
+                "{block}"
+            );
+            assert!(block.contains("A request without includes proceeds normally."));
+            // No silent empty-data shape left on either arm.
+            assert!(!block.contains("TODO(worker-cornucopia-includes)"));
+        }
+        // The GET arm ends at the guard's closing brace (the template's
+        // `included` initialiser + Ok envelope follow).
+        assert!(plan.get_block.ends_with("\n    }"), "{}", plan.get_block);
+        // The LIST arm defines the empty map the Ok envelope always reads.
+        assert!(
+            plan.list_block.ends_with(
+                "\n    let included = std::collections::HashMap::<String, serde_json::Value>::new();"
+            ),
+            "{}",
+            plan.list_block
+        );
+    }
+
+    #[test]
+    fn explicit_cornucopia_verdict_keeps_the_historical_empty_blocks() {
+        let paths = vec![path("person", vec![segment("person", false)])];
+        let plan = build_include_plan_with_support(IncludeSupport::Cornucopia, &paths, &ctx());
+        assert!(
+            matches!(plan.support, IncludeSupport::Cornucopia),
+            "historical arm is not the 501 arm"
+        );
         // The comment starts at the handler-fn-body indent (4 spaces) — the
         // blocks are inserted verbatim into a generated fn body.
         assert!(plan.get_block.starts_with("    // Cornucopia provider"));
         assert!(plan.list_block.starts_with("    // Cornucopia provider"));
-        assert!(
-            plan.get_block.contains(
-                "// Cornucopia provider: include fetch methods are not implemented on the"
-            )
-        );
+        assert!(plan.get_block.contains("`included` stays all-None"));
         assert!(
             plan.get_block
                 .contains("// TODO(worker-cornucopia-includes): resolve includes through the")
         );
-        assert!(plan.get_block.contains("`included` stays all-None"));
         // No SeaORM fetch code leaks into the cornucopia blocks.
         assert!(!plan.get_block.contains("sea_orm"));
         assert!(!plan.list_block.contains("sea_orm"));
@@ -777,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_renders_a_fail_closed_501() {
+    fn unsupported_renders_a_guarded_fail_closed_501() {
         let paths = vec![path("person", vec![segment("person", false)])];
         let support = IncludeSupport::Unsupported {
             reason: "persistence provider `diesel` has no include fetch plane".to_string(),
@@ -785,11 +913,51 @@ mod tests {
         let plan = build_include_plan_with_support(support.clone(), &paths, &ctx());
         assert_eq!(plan.support, support);
         for block in [&plan.get_block, &plan.list_block] {
+            assert!(block.contains("    if !include_paths.is_empty() {"));
             assert!(block.contains("status: axum::http::StatusCode::NOT_IMPLEMENTED,"));
             assert!(block.contains("code: \"NOT_IMPLEMENTED\","));
+            // An injected reason that does not name the issue gets the
+            // reference appended exactly once (the comment above is separate).
             assert!(block.contains("(issue #781)"));
+            let message_line = block
+                .lines()
+                .find(|line| line.trim_start().starts_with("message:"))
+                .expect("message line");
+            assert_eq!(message_line.matches("#781").count(), 1, "{message_line}");
             assert!(block.contains("persistence provider `diesel` has no include fetch plane"));
             assert!(block.contains("correlation_id: Some(correlation_id),"));
         }
+        assert!(plan.list_block.ends_with(
+            "let included = std::collections::HashMap::<String, serde_json::Value>::new();"
+        ));
+    }
+
+    // ── Doc line (issue #781) ───────────────────────────────────────────
+
+    #[test]
+    fn sea_orm_doc_line_is_the_historical_text() {
+        let paths = vec![path("person", vec![segment("person", false)])];
+        let plan = sea_orm_plan(&paths);
+        assert_eq!(
+            plan.include_doc,
+            "    /// Eager-load related entities, e.g. `?include=person,deployment.position`."
+        );
+    }
+
+    #[test]
+    fn unsupported_doc_line_is_honest_about_the_501() {
+        let paths = vec![path("person", vec![segment("person", false)])];
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
+        assert!(
+            plan.include_doc
+                .starts_with("    /// Includes are modelled for this entity")
+        );
+        assert!(
+            plan.include_doc
+                .contains("not supported by this deployment's persistence provider")
+        );
+        assert!(plan.include_doc.contains("answers 501 (issue #781)"));
+        // The historical "eager-load" claim is gone.
+        assert!(!plan.include_doc.contains("Eager-load related entities"));
     }
 }

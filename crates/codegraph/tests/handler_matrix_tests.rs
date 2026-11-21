@@ -193,7 +193,8 @@ fn include_path(
 
 /// Mirror PRODUCTION for the two pre-rendered hydration blocks: they come
 /// from the real [`build_include_plan`] over the same resolved paths, never
-/// hand-copied (issue #778 wave 2).
+/// hand-copied (issue #778 wave 2). The provider verdict also selects the
+/// `?include=` doc line (issue #781).
 fn apply_include_blocks(ctx: &mut Value, paths: &[ResolvedIncludePath], project: &ProjectConfig) {
     let plan = build_include_plan(
         paths,
@@ -208,6 +209,7 @@ fn apply_include_blocks(ctx: &mut Value, paths: &[ResolvedIncludePath], project:
     );
     ctx["include_get_block"] = json!(plan.get_block);
     ctx["include_list_block"] = json!(plan.list_block);
+    ctx["include_doc"] = json!(plan.include_doc);
 }
 
 fn cornucopia_project() -> ProjectConfig {
@@ -908,8 +910,10 @@ fn cases() -> Vec<Case> {
         project,
     });
 
-    // 11. cornucopia provider + `?include=`: pins the CURRENT
-    //     empty-`included` branch (deliberately changes in a later task).
+    // 11. cornucopia provider + `?include=`: issue #781 P0 — the include
+    //     surface FAILS CLOSED (guarded 501 + the honest doc line) instead of
+    //     silently returning empty include data. A no-include request still
+    //     succeeds (the `if !include_paths.is_empty()` guard).
     let mut ctx = root_base();
     full_crud(&mut ctx);
     ctx["has_include"] = json!(true);

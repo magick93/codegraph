@@ -211,6 +211,13 @@ pub struct HandlerContext {
     /// including the `let included = …` binding. Empty = no include surface.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub include_list_block: String,
+    /// Pre-rendered `?include=` doc-comment LINE (indent + `///` included) for
+    /// the shared query-params struct (issue #781). SeaORM keeps the
+    /// historical "eager-load …" text; an unsupported persistence provider
+    /// states that includes are modelled but answer 501. Empty = no include
+    /// surface, so the key is omitted and the handler stays byte-identical.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub include_doc: String,
     /// Resolved `use` import statements for types referenced by this handler.
     /// Populated through this run's type registry instead of hard-coded
     /// template paths.
@@ -739,6 +746,7 @@ impl EntityGenerator for HandlerGenerator {
             included_default_fields,
             include_get_block: include_plan.get_block,
             include_list_block: include_plan.list_block,
+            include_doc: include_plan.include_doc,
             handler_imports,
             is_auditable,
             ux_sort_fields,

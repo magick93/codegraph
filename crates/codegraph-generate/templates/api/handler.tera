@@ -590,7 +590,7 @@ pub struct ListParams {
     #[param(ignore)]
     pub filter: std::collections::HashMap<String, String>,
 {% if has_include %}
-    /// Eager-load related entities, e.g. `?include=person,deployment.position`.
+{{ include_doc | default(value="") }}
     /// Comma-separated relationship paths, max depth 3.
     #[serde(default)]
     #[param(ignore)]
