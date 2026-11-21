@@ -50,8 +50,10 @@ Generated Rust
 Invariants now enforced by construction:
 
 - No `set_global` in the handler templates.
-- No `project.persistence_provider` read in the handler templates (includes go through
-  `IncludePlan`; tree still legitimately uses the shared query layer on both providers).
+- No `project.persistence_provider` read for `?include=` (hydration goes through
+  `IncludePlan`). One provider branch remains, in `tree.tera`: both implementations call
+  the shared query/repository layer, and it is a call-shape difference, not a decision —
+  pre-rendering it is an optional follow-up.
 - Every `ExecutionKind` renders from `ddd/service_ops/render/`; the dispatch is exhaustive
   (a new variant is a compile error, not a silent empty body).
 - `handler.tera` is 19 lines; every fragment is under the 500-line template budget.
