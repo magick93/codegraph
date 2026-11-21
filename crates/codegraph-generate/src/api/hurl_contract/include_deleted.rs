@@ -98,6 +98,9 @@ HTTP 404"
 /// (`resolve_is_auditable` — the same decision that gates the query layer's
 /// `include_deleted` parameter and the handler's forwarding), so the
 /// contract cannot pin a leg the emitted code would answer differently.
+// The arg list mirrors `include::include_sections` (the sibling plane's
+// identical shape, same allow).
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn include_deleted_sections(
     db: &dyn codegraph_core::traits::GraphQuerier,
     config: &codegraph_config::DomainConfig,

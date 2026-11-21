@@ -1594,6 +1594,11 @@ mod ux_sort_handler_template_tests {
             "handler_imports": [],
             "is_auditable": false,
             "ux_sort_fields": ux_sort_fields,
+            // The `?include_deleted=` gate artifacts (issue #792) are
+            // pre-rendered from Rust: the real serializer always emits the
+            // keys (empty when inactive), so the key must exist here.
+            "include_deleted_helper_fn": "",
+            "include_deleted_guard_block": "",
         })
     }
 

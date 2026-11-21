@@ -35,7 +35,7 @@ async fn render_handler(mock: &codegraph_core::mock::MockEngine, config: &Domain
             mock,
             "WorkerType",
             "hr",
-            &config,
+            config,
             &tera,
             &test_project_config(),
         )
