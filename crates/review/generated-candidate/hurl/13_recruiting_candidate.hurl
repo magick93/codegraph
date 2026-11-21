@@ -41,6 +41,23 @@ Authorization: Bearer {{api_key}}
 
 HTTP 404
 
+# ?include=application — GET hydrates the relation (issue #781 probe)
+GET {{base_url}}/api/v1/recruiting/candidate/{{candidate_id}}?include=application
+Authorization: Bearer {{api_key}}
+
+HTTP 200
+[Asserts]
+jsonpath "$.included.application" != null
+
+# ?include=application — LIST hydrates the batch map
+GET {{base_url}}/api/v1/recruiting/candidate?page=0&page_size=10&include=application
+Authorization: Bearer {{api_key}}
+
+HTTP 200
+[Asserts]
+jsonpath "$.included" exists
+jsonpath "$.included.application" exists
+
 # PUT roundtrip
 PUT {{base_url}}/api/v1/recruiting/candidate/{{candidate_id}}
 Authorization: Bearer {{api_key}}

@@ -1,0 +1,58 @@
+{% if has_delete %}
+
+/// Delete {{ entity_name }} by ID.
+#[utoipa::path(
+    delete,
+{% if role == "child" %}
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }",
+    params(
+        ("{{ parent_param_name }}" = Uuid, Path, description = "{{ parent_entity }} ID"),
+        ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
+    ),
+{% else %}
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }",
+    params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
+{% endif %}
+    tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_delete",
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 404, description = "Not found"),
+{% if delete_guarded %}        (status = 403, description = "Denied by an eligibility rule"),
+{% endif %}    )
+)]
+#[tracing::instrument(skip(state, headers), fields(domain = "{{ domain }}", entity = "{{ module_name }}"))]
+pub async fn delete(
+    State(state): State<AppState>,
+    Extension(api_key_info): Extension<ApiKeyInfo>,
+    headers: HeaderMap,
+{{ path_extractor_item }}
+) -> Result<StatusCode, AppError> {
+    let correlation_id = extract_correlation_id(&headers);
+{% if role == "child" %}
+    // Verify ownership before delete: entity must belong to the parent
+    {{ delete_ownership_prefix | default(value="") }}state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?
+        .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found under parent {parent_id}"))
+            .with_correlation_id(correlation_id))?;
+{% endif %}
+{{ delete_guard_block | default(value="") }}    state.{{ domain }}_{{ module_name }}_commands.delete(id, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+            let msg = e.to_string();
+            // Repository errors render as "NOT_FOUND: ..." while some paths
+            // say "Entity not found" — treat any not-found phrasing as 404
+            // (an RLS-blocked delete affects 0 rows and must not surface as
+            // a 500).
+            if msg.to_lowercase().contains("not found") {
+                AppError::not_found(format!("{{ entity_name }} {id} not found"))
+            } else {
+                AppError::internal(format!("Failed to delete {{ entity_name }}: {e}"))
+            }
+        }
+            .with_correlation_id(correlation_id))?;
+{{ media_cleanup_block }}    Ok(StatusCode::NO_CONTENT)
+}
+{% endif %}

@@ -153,7 +153,7 @@ pub(crate) use crate::ddd::body_params::payload_field_rust_type;
 pub use crate::ddd::body_params::{BodyParam, Refusal, body_params};
 
 /// One declared raise a body can answer with (docs + hurl planning).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BodyRaiseDoc {
     /// The HTTP status the raise answers with.
     pub status: u16,
@@ -162,7 +162,7 @@ pub struct BodyRaiseDoc {
 }
 
 /// One documented 4xx response of a bodied action (utoipa/docs).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BodyRaiseResponse {
     /// The HTTP status the raise answers with.
     pub status: u16,
@@ -171,7 +171,7 @@ pub struct BodyRaiseResponse {
 }
 
 /// The lowered executable region of one action handler.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BodyPlan {
     /// Pre-rendered Rust statements (consumed verbatim by `handler.tera`).
     pub block: String,
@@ -181,10 +181,10 @@ pub struct BodyPlan {
     pub raises: Vec<BodyRaiseDoc>,
     /// The machine transition applied when the body does not manage the
     /// state field (the #590 P0 patch arm).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<ServiceOpState>,
     /// The machine state field the BODY assigns (`TODO(#662)` boundary).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_manages_state: Option<String>,
     /// `true` when the body persists through `self.save(..)`.
     pub saves: bool,

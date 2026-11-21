@@ -15,7 +15,8 @@ use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::type_registry::TypeRegistryHandle;
 use codegraph_config::{DomainConfig, EntityConfig};
 
-use super::include_path::{ResolvedIncludePath, resolve_include_paths_for_topology};
+use super::include_path::ResolvedIncludePath;
+use super::include_plan::{IncludePlanCtx, build_include_plan};
 use super::router::{ChildInfo, CrossRefInfo};
 
 use super::api_model::{resolve_entity_operations, resolve_path_segment};
@@ -83,6 +84,174 @@ pub async fn routable_mox_ops(
         .collect()
 }
 
+/// Per-operation guard presence (issue #338): whether the handler carries an
+/// eligibility guard for each write/read operation. Derived from
+/// [`crate::ddd::rules::EligibilityGuard`]s once, in Rust, so the handler
+/// template's utoipa 403 documentation needs no guard-loop programming.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GuardPresence {
+    pub create: bool,
+    pub read: bool,
+    pub update: bool,
+    pub delete: bool,
+}
+
+impl GuardPresence {
+    /// True for an operation iff at least one guard gates it.
+    pub fn from_guards(guards: &[crate::ddd::rules::EligibilityGuard]) -> Self {
+        let gates = |op: &str| {
+            guards
+                .iter()
+                .any(|guard| guard.operations.iter().any(|gated| gated == op))
+        };
+        Self {
+            create: gates("create"),
+            read: gates("read"),
+            update: gates("update"),
+            delete: gates("delete"),
+        }
+    }
+}
+
+/// The `{Entity}IncludedData` default fields for the `?include=` initialiser:
+/// the unique `segments[0].module_name` values in FIRST-OCCURRENCE order.
+/// Sibling dot-notation paths share a first segment, so the field is
+/// initialised exactly once; an empty input yields an empty list (no include
+/// surface). A defensively empty `segments` is skipped.
+pub fn included_default_fields(include_paths: &[ResolvedIncludePath]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    include_paths
+        .iter()
+        .filter_map(|path| path.segments.first())
+        .map(|segment| segment.module_name.clone())
+        .filter(|field| seen.insert(field.clone()))
+        .collect()
+}
+
+/// Pre-rendered `axum::extract::Path` parameter bindings (issue #778 wave 1 /
+/// T1.3).
+///
+/// Each string is the EXACT rendered bytes of the role/depth conditional block
+/// it replaces — INCLUDING the blank lines those control-tag lines emitted —
+/// so splicing it onto its own template line keeps the surrounding parameter
+/// list byte-identical. A shape with no binding at all (a root collection
+/// endpoint: `create`/`list`/`search`) is the empty string, so the template
+/// splices nothing and the site keeps its single blank line.
+///
+/// The whitespace convention is therefore: non-root shapes render one blank
+/// line per removed control-tag line before the binding (two, for a shape
+/// nested inside an outer `role` + inner `depth` pair) plus the binding line
+/// itself; an item shape binds at root too (one leading blank line), while a
+/// collection shape never does.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PathExtractors {
+    /// Item routes binding the record `id`: `get_by_id`, `update`, `delete`.
+    pub item: String,
+    /// Item routes binding the entity's own path parameter (the service-op
+    /// handlers, `{Entity}` path params substituted).
+    pub item_named: String,
+    /// Collection routes binding the parent id: `create`, `list`.
+    pub collection: String,
+    /// Collection routes that ignore the parent id: `search`.
+    pub collection_unused: String,
+    /// Item routes whose parent id is unused: `tree`.
+    pub item_unused_parent: String,
+    /// The child-op `add` arm's collection extractor. It sits one nesting
+    /// level deeper than [`Self::collection`] (inside the operation's
+    /// payload/kind branch), whose own control tags already emit the leading
+    /// blank line, so this segment carries exactly one fewer.
+    pub child_op_add: String,
+}
+
+/// Build the handler's pre-rendered `Path(…)` bindings for `role` (the config
+/// topology role), `depth` (`ancestor_path_params`: 0 root, 1 child,
+/// 2+ grandchild) and the entity's `param_name`.
+pub fn path_extractors(role: &str, depth: usize, param_name: &str) -> PathExtractors {
+    let child = role == "child";
+    let grandchild = child && depth >= 2;
+
+    // One binding line, 4-space indent + trailing newline.
+    let line = |names: &str, ty: &str| format!("    Path({names}): Path<{ty}>,\n");
+
+    let item_line = if grandchild {
+        line("(_grandparent_id, parent_id, id)", "(Uuid, Uuid, Uuid)")
+    } else if child {
+        line("(parent_id, id)", "(Uuid, Uuid)")
+    } else {
+        line("id", "Uuid")
+    };
+    let named_line = if grandchild {
+        line(
+            &format!("(_grandparent_id, parent_id, {param_name})"),
+            "(Uuid, Uuid, Uuid)",
+        )
+    } else if child {
+        line(&format!("(parent_id, {param_name})"), "(Uuid, Uuid)")
+    } else {
+        line(param_name, "Uuid")
+    };
+    let collection_line = if grandchild {
+        line("(_grandparent_id, parent_id)", "(Uuid, Uuid)")
+    } else {
+        line("parent_id", "Uuid")
+    };
+    let collection_unused_line = if grandchild {
+        line("(_grandparent_id, _parent_id)", "(Uuid, Uuid)")
+    } else {
+        line("_parent_id", "Uuid")
+    };
+    let item_unused_parent_line = if grandchild {
+        line("(_grandparent_id, _parent_id, id)", "(Uuid, Uuid, Uuid)")
+    } else if child {
+        line("(_parent_id, id)", "(Uuid, Uuid)")
+    } else {
+        line("id", "Uuid")
+    };
+
+    // A shape nested inside the outer `role` if AND the inner `depth` if
+    // renders two leading blank lines (one per removed tag line) and the
+    // inner `{% endif %}` line's trailing blank; a root item shape renders
+    // one leading blank line only.
+    let nested = |binding: String| format!("\n\n{binding}\n");
+    let item_root = |binding: String| format!("\n{binding}");
+
+    PathExtractors {
+        item: if child {
+            nested(item_line)
+        } else {
+            item_root(item_line)
+        },
+        item_named: if child {
+            nested(named_line)
+        } else {
+            item_root(named_line)
+        },
+        // Root collection endpoints have no parent binding at all.
+        collection: if child {
+            nested(collection_line.clone())
+        } else {
+            String::new()
+        },
+        collection_unused: if child {
+            nested(collection_unused_line)
+        } else {
+            String::new()
+        },
+        item_unused_parent: if child {
+            nested(item_unused_parent_line)
+        } else {
+            item_root(item_unused_parent_line)
+        },
+        // The child-op `add` arm's own control tags supply the outer blank
+        // line; only the inner tag line's blank plus the binding remain.
+        child_op_add: if child {
+            item_root(collection_line)
+        } else {
+            String::new()
+        },
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct HandlerContext {
     pub entity_name: String,
@@ -113,6 +282,18 @@ pub struct HandlerContext {
     pub grandparent_param_name: Option<String>,
     /// Path segment for the grandparent entity (depth-2 children only, e.g. `"workers"`).
     pub grandparent_path_segment: Option<String>,
+    /// Pre-rendered `axum::extract::Path` parameter bindings (issue #778 wave
+    /// 1), derived once from [`Self::role`],
+    /// [`Self::ancestor_path_params`] and [`Self::param_name`] by
+    /// [`path_extractors`]. Each string is whitespace-exact — see
+    /// [`PathExtractors`] for the convention — and EMPTY where the shape has
+    /// no binding (root collection endpoints).
+    pub path_extractor_item: String,
+    pub path_extractor_item_named: String,
+    pub path_extractor_collection: String,
+    pub path_extractor_collection_unused: String,
+    pub path_extractor_item_unused_parent: String,
+    pub path_extractor_child_op_add: String,
     /// Domain of the grandparent entity (depth-2 children only).
     /// Skipped when None: tera 2's `default` only fires on undefined keys.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -147,6 +328,32 @@ pub struct HandlerContext {
     pub has_include: bool,
     /// Resolved include paths for `?include=` query parameter.
     pub include_paths: Vec<ResolvedIncludePath>,
+    /// `{Entity}IncludedData`'s default-field list: the unique
+    /// `segments[0].module_name` values of [`Self::include_paths`] in
+    /// first-occurrence order (sibling dot-paths sharing a first segment
+    /// initialise the field once). Empty = no include surface, so the key is
+    /// omitted and the handler stays byte-identical.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub included_default_fields: Vec<String>,
+    /// Pre-rendered `?include=` hydration block for GET-by-id (issue #778
+    /// wave 2): the provider-selected Rust lines the template renders inside
+    /// the `has_include` block, produced by
+    /// [`crate::api::include_plan::build_include_plan`]. Empty when the entity
+    /// has no include surface, so the key is omitted and the handler stays
+    /// byte-identical.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub include_get_block: String,
+    /// Pre-rendered `?include=` hydration block for LIST (issue #778 wave 2),
+    /// including the `let included = …` binding. Empty = no include surface.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub include_list_block: String,
+    /// Pre-rendered `?include=` doc-comment LINE (indent + `///` included) for
+    /// the shared query-params struct (issue #781). SeaORM keeps the
+    /// historical "eager-load …" text; an unsupported persistence provider
+    /// states that includes are modelled but answer 501. Empty = no include
+    /// surface, so the key is omitted and the handler stays byte-identical.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub include_doc: String,
     /// Resolved `use` import statements for types referenced by this handler.
     /// Populated through this run's type registry instead of hard-coded
     /// template paths.
@@ -178,6 +385,15 @@ pub struct HandlerContext {
     /// is monolith (the rules module is not worker-routed).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub eligibility_guards: Vec<crate::ddd::rules::EligibilityGuard>,
+    /// Guard presence flags (issue #338): true iff ANY entry of
+    /// [`Self::eligibility_guards`] gates `create` / `read` / `update` /
+    /// `delete`. These are the presence flags the template's utoipa 403
+    /// documentation reads — the derivation lives here so the template does
+    /// no guard-loop programming of its own.
+    pub create_guarded: bool,
+    pub read_guarded: bool,
+    pub update_guarded: bool,
+    pub delete_guarded: bool,
     /// Pre-rendered guard code blocks (issue #338), whitespace-exact so
     /// the template renders them inline; empty strings when inactive.
     /// `*_ownership_prefix` binds the existing ownership load (`let
@@ -560,6 +776,26 @@ impl EntityGenerator for HandlerGenerator {
                     // block, which attaches only here).
                     route.raise_responses.retain(|raise| raise.status != 409);
                 }
+                // The create-shaped arm splices the same two handler-level
+                // blocks the CRUD create handler carries (the #338
+                // create-eligibility guards and the #666 slice-4d create
+                // invariants) — they are rendered from `guard_blocks` /
+                // `invariant_blocks`, which the routes plane cannot see.
+                if matches!(
+                    route.execution,
+                    crate::ddd::service_ops::ExecutionKind::Create { .. }
+                ) {
+                    route.create_guard_block = guard_blocks.create_guard_block.clone();
+                    route.create_invariant_block = invariant_blocks.create_block.clone();
+                }
+            }
+            // Issue #778: the execution blocks are pre-rendered from the
+            // route, so every route is re-rendered ONCE here — after the
+            // post-pass attached the invariant/guard slots above, before
+            // `service_ops` moves into the template context.
+            for route in service_ops.iter_mut() {
+                route.execution_block =
+                    crate::ddd::service_ops::render::render_execution_block(route);
             }
         }
 
@@ -597,6 +833,30 @@ impl EntityGenerator for HandlerGenerator {
             .clone()
             .unwrap_or_else(|| guard_blocks.update_ownership_prefix.clone());
 
+        // Template decisions resolved in Rust (issue #778 wave 1): the guard
+        // presence flags the utoipa 403 docs read, the `?include=`
+        // initialiser's deduped field list, and the `Path(…)` parameter
+        // bindings (derived from the resolved topology + path parameter).
+        let guard_presence = GuardPresence::from_guards(&eligibility_guards);
+        let included_default_fields = included_default_fields(&include_paths);
+        let path_extractors = path_extractors(&topo.role, ancestor_path_params, &param_name);
+
+        // `?include=` hydration blocks (issue #778 wave 2): the provider
+        // decision and the rendered hydration lines live in Rust, so the
+        // template renders one pre-computed fragment per endpoint. Empty
+        // when the entity has no include surface.
+        let include_plan = build_include_plan(
+            &include_paths,
+            &IncludePlanCtx {
+                entity_name: &entity_name,
+                domain: &domain,
+                module_name: &module_name,
+                role: &topo.role,
+                is_auditable,
+            },
+            project,
+        );
+
         let ctx = HandlerContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -623,6 +883,12 @@ impl EntityGenerator for HandlerGenerator {
             grandparent_param_name,
             grandparent_path_segment,
             grandparent_domain,
+            path_extractor_item: path_extractors.item,
+            path_extractor_item_named: path_extractors.item_named,
+            path_extractor_collection: path_extractors.collection,
+            path_extractor_collection_unused: path_extractors.collection_unused,
+            path_extractor_item_unused_parent: path_extractors.item_unused_parent,
+            path_extractor_child_op_add: path_extractors.child_op_add,
             children: topo.children,
             cross_refs: topo.cross_refs,
             status_field,
@@ -641,6 +907,10 @@ impl EntityGenerator for HandlerGenerator {
                 .unwrap_or(false),
             has_include,
             include_paths: include_paths.clone(),
+            included_default_fields,
+            include_get_block: include_plan.get_block,
+            include_list_block: include_plan.list_block,
+            include_doc: include_plan.include_doc,
             handler_imports,
             is_auditable,
             ux_sort_fields,
@@ -650,6 +920,10 @@ impl EntityGenerator for HandlerGenerator {
             delete_guard_block: guard_blocks.delete_guard_block,
             read_guard_block: guard_blocks.read_guard_block,
             create_guard_block: guard_blocks.create_guard_block,
+            create_guarded: guard_presence.create,
+            read_guarded: guard_presence.read,
+            update_guarded: guard_presence.update,
+            delete_guarded: guard_presence.delete,
             create_invariant_block: invariant_blocks.create_block,
             update_invariant_block: invariant_blocks.update_block,
             media_cleanup_block,
@@ -1180,45 +1454,18 @@ async fn resolve_include_paths(
     entity_cfg: Option<&EntityConfig>,
     project: &ProjectConfig,
 ) -> Result<Vec<ResolvedIncludePath>> {
-    // Resolve include paths from config. Skip non-root entities unless they
-    // have explicit allow_include configuration.
-    let has_explicit_include = entity_cfg
-        .and_then(|ec| ec.allow_include.as_ref())
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-    let is_root = entity_cfg
-        .and_then(|ec| ec.role.as_deref())
-        .map(|r| r == "root")
-        .unwrap_or(true);
-    let include_paths = if has_explicit_include || is_root {
-        if let Some(ec) = entity_cfg {
-            resolve_include_paths_for_topology(
-                db,
-                config,
-                domain,
-                schema_title,
-                ec.allow_include.as_ref(),
-                project.is_workers_topology(),
-            )
-            .await?
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
-    // Deduplicate include paths by alias to prevent duplicate struct fields
-    // in the generated handler code (auto-discover can produce the same child
-    // entity through multiple FK relationships).
-    let include_paths = {
-        let mut seen = std::collections::HashSet::new();
-        include_paths
-            .into_iter()
-            .filter(|path| seen.insert(path.alias.clone()))
-            .collect::<Vec<_>>()
-    };
-    Ok(include_paths)
+    // ONE gate, shared with the generated hurl contract's `?include=` legs
+    // (issue #781): the contract must assert exactly the surface this handler
+    // hydrates.
+    super::include_path::resolve_include_paths_for_entity(
+        db,
+        config,
+        domain,
+        schema_title,
+        entity_cfg,
+        project.is_workers_topology(),
+    )
+    .await
 }
 
 pub(crate) async fn resolve_is_auditable(
@@ -1273,7 +1520,10 @@ mod ux_sort_handler_template_tests {
     use super::*;
     use serde_json::json;
 
+    /// Bare context is a ROOT read+list handler, so its pre-rendered `Path(…)`
+    /// bindings are the root shapes (see [`path_extractors`]).
     fn base_ctx(ux_sort_fields: Vec<&str>) -> serde_json::Value {
+        let extractors = path_extractors("root", 0, "task_id");
         json!({
             "entity_name": "Task",
             "module_name": "task",
@@ -1288,6 +1538,12 @@ mod ux_sort_handler_template_tests {
             "has_list": true,
             "role": "root",
             "param_name": "task_id",
+            "path_extractor_item": extractors.item,
+            "path_extractor_item_named": extractors.item_named,
+            "path_extractor_collection": extractors.collection,
+            "path_extractor_collection_unused": extractors.collection_unused,
+            "path_extractor_item_unused_parent": extractors.item_unused_parent,
+            "path_extractor_child_op_add": extractors.child_op_add,
             "children": [],
             "cross_refs": [],
             "status_field": null,
@@ -1443,5 +1699,224 @@ mod ux_sort_handler_template_tests {
                 "read-only handler must not emit {needle:?}:\n{out}"
             );
         }
+    }
+}
+
+/// Template decisions resolved in Rust (issue #778 wave 1): the guard
+/// presence flags and the `?include=` default-field dedup. These are
+/// derivation tests — the template oracle (handler matrix) pins the rendered
+/// bytes; this module pins the Rust values the template reads.
+#[cfg(test)]
+mod template_decisions_tests {
+    use super::*;
+
+    fn guard(operations: &[&str]) -> crate::ddd::rules::EligibilityGuard {
+        crate::ddd::rules::EligibilityGuard {
+            rule_name: "PositiveTotal".to_string(),
+            fn_name: "task_positive_total".to_string(),
+            call_path: "crate::domain::common::rules::task_positive_total".to_string(),
+            operations: operations.iter().map(|op| op.to_string()).collect(),
+        }
+    }
+
+    fn include_path(alias: &str, modules: &[&str]) -> ResolvedIncludePath {
+        ResolvedIncludePath {
+            alias: alias.to_string(),
+            segments: modules
+                .iter()
+                .map(|module| super::super::include_path::IncludeSegment {
+                    entity_name: module.to_string(),
+                    schema_title: format!("{module}Type"),
+                    module_name: module.to_string(),
+                    domain: "common".to_string(),
+                    table: format!("\"common\".\"{module}\""),
+                    fk_column: format!("{module}_id"),
+                    reverse_fk_column: "task_id".to_string(),
+                    fk_is_required: false,
+                    reverse_fk_is_required: false,
+                    is_array: false,
+                    child_table_override: None,
+                })
+                .collect(),
+            response_rust_type: format!("{alias}Response"),
+            fetch_method: format!("fetch_{alias}"),
+            batch_fetch_method: format!("fetch_{alias}_batch"),
+        }
+    }
+
+    #[test]
+    fn guard_presence_flags_every_gated_operation() {
+        let presence =
+            GuardPresence::from_guards(&[guard(&["create", "read", "update", "delete"])]);
+        assert_eq!(
+            presence,
+            GuardPresence {
+                create: true,
+                read: true,
+                update: true,
+                delete: true,
+            }
+        );
+    }
+
+    #[test]
+    fn guard_presence_is_empty_without_guards() {
+        assert_eq!(GuardPresence::from_guards(&[]), GuardPresence::default());
+        assert!(!GuardPresence::default().create);
+        assert!(!GuardPresence::default().read);
+        assert!(!GuardPresence::default().update);
+        assert!(!GuardPresence::default().delete);
+    }
+
+    #[test]
+    fn guard_presence_unions_across_guards_and_ignores_unguarded_operations() {
+        // Two rules, disjoint gates; `list`/`search` never guard (row
+        // filtering is a documented follow-up) and must not leak a flag.
+        let presence = GuardPresence::from_guards(&[
+            guard(&["read", "list"]),
+            guard(&["update", "delete", "search"]),
+        ]);
+        assert_eq!(
+            presence,
+            GuardPresence {
+                create: false,
+                read: true,
+                update: true,
+                delete: true,
+            }
+        );
+    }
+
+    #[test]
+    fn included_default_fields_dedup_sibling_paths_in_first_occurrence_order() {
+        // Two dot paths share the `assignee` first segment; the third is a
+        // scalar path. One field per first segment, declaration order.
+        let fields = included_default_fields(&[
+            include_path("assignee.person", &["assignee", "person"]),
+            include_path("assignee.organization", &["assignee", "organization"]),
+            include_path("attachments", &["attachment"]),
+        ]);
+        assert_eq!(
+            fields,
+            vec!["assignee".to_string(), "attachment".to_string()]
+        );
+    }
+
+    #[test]
+    fn included_default_fields_are_empty_without_paths() {
+        assert!(included_default_fields(&[]).is_empty());
+        // Defensive: a path with no segments contributes no field.
+        let no_segments = ResolvedIncludePath {
+            segments: Vec::new(),
+            ..include_path("broken", &["task"])
+        };
+        assert!(included_default_fields(&[no_segments]).is_empty());
+    }
+
+    // ── Pre-rendered `Path(…)` bindings (T1.3) ─────────────────────────
+
+    /// The exact strings the template's removed conditional blocks produced,
+    /// trailing blank lines included (the oracle pins the rendered bytes; these
+    /// pin the derivation).
+    #[test]
+    fn path_extractors_item_shape_per_depth() {
+        let root = path_extractors("root", 0, "task_id");
+        assert_eq!(root.item, "\n    Path(id): Path<Uuid>,\n");
+
+        let child = path_extractors("child", 1, "note_id");
+        assert_eq!(
+            child.item,
+            "\n\n    Path((parent_id, id)): Path<(Uuid, Uuid)>,\n\n"
+        );
+
+        let grandchild = path_extractors("child", 2, "revision_id");
+        assert_eq!(
+            grandchild.item,
+            "\n\n    Path((_grandparent_id, parent_id, id)): Path<(Uuid, Uuid, Uuid)>,\n\n"
+        );
+
+        // A non-`child` role takes the root branch, exactly like the template.
+        assert_eq!(
+            path_extractors("value_object", 2, "task_id").item,
+            root.item
+        );
+    }
+
+    #[test]
+    fn path_extractors_named_item_substitutes_the_path_parameter() {
+        assert_eq!(
+            path_extractors("root", 0, "task_id").item_named,
+            "\n    Path(task_id): Path<Uuid>,\n"
+        );
+        assert_eq!(
+            path_extractors("child", 1, "task_note_id").item_named,
+            "\n\n    Path((parent_id, task_note_id)): Path<(Uuid, Uuid)>,\n\n"
+        );
+        assert_eq!(
+            path_extractors("child", 2, "task_note_revision_id").item_named,
+            "\n\n    Path((_grandparent_id, parent_id, task_note_revision_id)): Path<(Uuid, Uuid, Uuid)>,\n\n"
+        );
+    }
+
+    #[test]
+    fn path_extractors_collection_is_empty_at_root() {
+        // Root collection endpoints (`create`/`list`) bind no path at all, so
+        // the template splices nothing and keeps its single blank line.
+        let root = path_extractors("root", 0, "task_id");
+        assert_eq!(root.collection, "");
+        assert_eq!(root.collection_unused, "");
+
+        let child = path_extractors("child", 1, "task_note_id");
+        assert_eq!(child.collection, "\n\n    Path(parent_id): Path<Uuid>,\n\n");
+        assert_eq!(
+            path_extractors("child", 2, "task_note_id").collection,
+            "\n\n    Path((_grandparent_id, parent_id)): Path<(Uuid, Uuid)>,\n\n"
+        );
+    }
+
+    #[test]
+    fn path_extractors_collection_unused_per_depth() {
+        let child = path_extractors("child", 1, "task_note_id");
+        assert_eq!(
+            child.collection_unused,
+            "\n\n    Path(_parent_id): Path<Uuid>,\n\n"
+        );
+        assert_eq!(
+            path_extractors("child", 2, "task_note_id").collection_unused,
+            "\n\n    Path((_grandparent_id, _parent_id)): Path<(Uuid, Uuid)>,\n\n"
+        );
+    }
+
+    #[test]
+    fn path_extractors_item_unused_parent_per_depth() {
+        assert_eq!(
+            path_extractors("root", 0, "task_id").item_unused_parent,
+            "\n    Path(id): Path<Uuid>,\n"
+        );
+        assert_eq!(
+            path_extractors("child", 1, "task_note_id").item_unused_parent,
+            "\n\n    Path((_parent_id, id)): Path<(Uuid, Uuid)>,\n\n"
+        );
+        assert_eq!(
+            path_extractors("child", 2, "task_note_id").item_unused_parent,
+            "\n\n    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,\n\n"
+        );
+    }
+
+    #[test]
+    fn path_extractors_child_op_add_carries_one_fewer_blank_line() {
+        // The child-op `add` arm sits one nesting level deeper, so its own
+        // control tags emit the outer blank line: the segment carries one
+        // leading blank line, not two.
+        assert_eq!(
+            path_extractors("child", 1, "task_note_id").child_op_add,
+            "\n    Path(parent_id): Path<Uuid>,\n"
+        );
+        assert_eq!(
+            path_extractors("child", 2, "task_note_id").child_op_add,
+            "\n    Path((_grandparent_id, parent_id)): Path<(Uuid, Uuid)>,\n"
+        );
+        // Never emitted for a root entity (the op plane nests the arm).
+        assert_eq!(path_extractors("root", 0, "task_id").child_op_add, "");
     }
 }

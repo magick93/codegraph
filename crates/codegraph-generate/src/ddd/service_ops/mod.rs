@@ -78,6 +78,7 @@
 mod execution;
 mod policy;
 mod projection;
+pub mod render;
 mod routes;
 mod transitions;
 mod types;
@@ -94,9 +95,9 @@ pub use projection::projection_shape_candidate_public;
 pub(crate) use routes::bind_entity;
 pub use routes::{BodyRenderContext, routes_for_entity};
 pub use types::{
-    BoundaryPayloadPlan, ChildAction, ChildParentLoad, ExecutionKind, FreshFixtureGuard,
-    InjectedGuard, ServiceOpRoute, ServiceOpState, ServiceOpTransition, StateName, TriggerName,
-    WireKey,
+    BoundaryPayloadPlan, ChildAction, ChildParentLoad, ExecutionKind, ExecutionRenderFacts,
+    FreshFixtureGuard, InjectedGuard, ServiceOpRoute, ServiceOpState, ServiceOpTransition,
+    StateName, TriggerName, WireKey,
 };
 pub use validation::{
     body_refusals, child_parent_load_refusals, dead_surface_warnings, guard_refusals,

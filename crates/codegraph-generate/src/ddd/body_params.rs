@@ -29,7 +29,7 @@ impl BodyParam {
 }
 
 /// One action-body parameter, extracted from the POST body by the handler.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BodyParam {
     /// The authored parameter name — also the action-body JSON key.
     pub name: String,

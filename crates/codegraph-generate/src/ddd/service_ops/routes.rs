@@ -11,10 +11,11 @@ use super::execution::{RouteShape, execution_for, seam};
 use super::policy::{
     PolicySurface, render_authorize_fn_with_injected, render_authorize_fn_with_states,
 };
+use super::render::render_execution_block;
 use super::transitions::short_class_name;
 use super::types::{
-    ChildAction, ChildParentLoad, ExecutionKind, FreshFixtureGuard, InjectedGuard, ServiceOpRoute,
-    fields_for,
+    ChildAction, ChildParentLoad, ExecutionKind, ExecutionRenderFacts, FreshFixtureGuard,
+    InjectedGuard, ServiceOpRoute, fields_for,
 };
 use super::when_lower::{InjectedMachine, InjectedScope};
 
@@ -44,6 +45,13 @@ pub struct BodyRenderContext {
     /// instead of once per call. `None` (tests, plan-less callers) rebuilds —
     /// correct, just not memoized.
     pub boundary_cache: Option<crate::ddd::dto_boundaries::BoundaryIndexCache>,
+    /// The project's ux-rules document (issue #306), when the feature is on.
+    /// [`crate::ux::sort::resolve_ux_sort_plan`] reads NOTHING else from the
+    /// project, so the context carries just this and the collection
+    /// projection read's `list_filtered` arity is resolved through the one
+    /// resolver the query plane uses — never a second inference. `None`
+    /// (ux off, plan-less callers) ⇒ no route takes the sort argument.
+    pub ux: Option<codegraph_config::UxRules>,
 }
 
 impl Default for BodyRenderContext {
@@ -56,6 +64,7 @@ impl Default for BodyRenderContext {
             dto_casing: DtoKeyCasing::default(),
             workers_topology: false,
             boundary_cache: None,
+            ux: None,
         }
     }
 }
@@ -69,6 +78,7 @@ impl BodyRenderContext {
             dto_casing: project.codegen.dto_key_casing,
             workers_topology: project.is_workers_topology(),
             boundary_cache: None,
+            ux: project.ux.ux.clone(),
         }
     }
 
@@ -315,6 +325,40 @@ pub async fn routes_for_entity(
     let machine = design_surface
         .as_ref()
         .and_then(|s| s.machine_for(entity_title));
+    // Issue #306/#768: the collection projection read calls the entity's
+    // `list_filtered`, whose arity grows a `sort: Option<(String, bool)>`
+    // argument exactly when the QUERY plane took it — `list` plus a non-empty
+    // sort plan. Resolved through the query plane's own resolver
+    // (`resolve_ux_sort_plan` reads only `project.ux.ux`), so the two planes
+    // cannot drift; a ux-less project pays nothing.
+    let ux_sort_fields = match &body.ux {
+        Some(_) if surface_ops.iter().any(|op| op == "list") => {
+            let mut project = crate::ProjectConfig::default();
+            project.ux.ux = body.ux.clone();
+            !crate::ux::sort::resolve_ux_sort_plan(db, config, &project, entity_title, domain)
+                .await
+                .map_err(|e| e.to_string())?
+                .fields
+                .is_empty()
+        }
+        _ => false,
+    };
+    // Issue #778: the handler-template names (and judgements) a pre-rendered
+    // execution block splices are the handler generator's OWN inputs — the
+    // `id_param` comment above, plus the nested-child scoped reload and the
+    // auditable query arity, exactly as the handler's `role`/`is_auditable`
+    // decide them. So the `delete`/`update` arms render the same command
+    // slots, reload and prose the template would.
+    let render_facts = ExecutionRenderFacts {
+        domain: domain.to_string(),
+        entity_name: schema.rust_type_name.clone(),
+        entity_table: module_name.clone(),
+        id_param: id_param.clone(),
+        domain_types_crate: body.domain_types_crate.clone(),
+        nested_child: scoped.is_some(),
+        auditable,
+        ux_sort_fields,
+    };
     let machine_states: Vec<String> = machine
         .as_ref()
         .map(|m| m.states().into_iter().map(str::to_string).collect())
@@ -512,7 +556,7 @@ pub async fn routes_for_entity(
                 let covered = covered_statuses(&execution);
                 let raise_responses =
                     throws_responses(&raises, &op.name, &service.name, &throws, &covered)?;
-                routes.push(ServiceOpRoute {
+                let mut route = ServiceOpRoute {
                     service: service.name.clone(),
                     op_name: op.name.clone(),
                     fn_name: format!("service_op_{snake}"),
@@ -524,9 +568,20 @@ pub async fn routes_for_entity(
                     authorize_async: !injected.is_empty(),
                     injected_guard,
                     invariant_block: None,
+                    // The create arm's two post-pass blocks (the handler
+                    // generator attaches them like `invariant_block`; the
+                    // pre-wiring routes carry none).
+                    create_guard_block: String::new(),
+                    create_invariant_block: String::new(),
                     throws,
                     raise_responses,
-                });
+                    render_facts: render_facts.clone(),
+                    execution_block: String::new(),
+                };
+                // Issue #778: the pre-rendered execution body (seam/read/
+                // delete here; the remaining arms stay template-owned).
+                route.execution_block = render_execution_block(&route);
+                routes.push(route);
             }
         }
     }
@@ -552,6 +607,7 @@ pub async fn routes_for_entity(
             dto_casing: body.dto_casing,
             authored_parent: authored_routing.as_ref(),
             surface_ops: &surface_ops,
+            render_facts: &render_facts,
         },
         &mut seen,
         &mut routes,
@@ -1591,6 +1647,9 @@ struct ChildOpCtx<'a> {
     dto_casing: crate::project_config::DtoKeyCasing,
     authored_parent: Option<&'a crate::ddd::aggregate::AuthoredParent>,
     surface_ops: &'a [String],
+    /// The handler-template names a pre-rendered execution block splices
+    /// (issue #778) — the CHILD's own, since the ctx entity IS the child.
+    render_facts: &'a ExecutionRenderFacts,
 }
 
 /// Collect the aggregate child operations (issue #661) that resolve to THIS
@@ -1620,6 +1679,7 @@ async fn child_op_routes(
         dto_casing,
         authored_parent,
         surface_ops,
+        render_facts,
     } = ctx;
     // ── Aggregate child operations (issue #661) ─────────────────────────
     //
@@ -1840,7 +1900,7 @@ async fn child_op_routes(
                 let covered = covered_statuses(&execution);
                 let raise_responses =
                     throws_responses(raises, &op.name, &design.class, &throws, &covered)?;
-                routes.push(ServiceOpRoute {
+                let mut route = ServiceOpRoute {
                     // The declaration site: a child op's `service` names the
                     // aggregate ROOT design whose `children` block declared
                     // it (there is no `service` in the artifact).
@@ -1855,9 +1915,20 @@ async fn child_op_routes(
                     authorize_async: false,
                     injected_guard: None,
                     invariant_block: None,
+                    // The create arm's two post-pass blocks (the handler
+                    // generator attaches them like `invariant_block`; the
+                    // pre-wiring routes carry none).
+                    create_guard_block: String::new(),
+                    create_invariant_block: String::new(),
                     throws,
                     raise_responses,
-                });
+                    render_facts: render_facts.clone(),
+                    execution_block: String::new(),
+                };
+                // Issue #778: the pre-rendered execution body (a child op
+                // whose lowering is a seam/read/delete renders here too).
+                route.execution_block = render_execution_block(&route);
+                routes.push(route);
             }
         }
     }

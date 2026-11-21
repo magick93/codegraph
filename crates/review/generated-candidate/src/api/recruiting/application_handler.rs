@@ -319,7 +319,6 @@ pub async fn get_by_id(
         candidate: None,
     };
     
-
     use sea_orm::TransactionTrait;
     let tx = state.db.begin().await
         .map_err(|e| AppError::internal(format!("Failed to begin transaction: {e}"))
@@ -327,24 +326,17 @@ pub async fn get_by_id(
     let repo = crate::domain::recruiting::application::repository_impl::ApplicationRepositoryImpl;
     for path in &include_paths {
         match path.as_str() {
-        
             "candidate" => {
-
-
                 included.candidate = Some(repo.fetch_candidate_for_application(&tx, id).await
                     .map_err(|e| AppError::internal(format!("Failed to include candidate: {e}"))
                         .with_correlation_id(correlation_id))?);
-
-
             }
-        
             _ => {}
         }
     }
     tx.commit().await
         .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}"))
             .with_correlation_id(correlation_id))?;
-
     
     Ok(Json(ApplicationWithIncludeResponse {
         data: linked,
@@ -551,7 +543,16 @@ pub async fn list(
         .as_ref()
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
         .unwrap_or_default();
-
+    // Validate the requested paths ONCE, before the provider block (issue
+    // #778 wave 2): same ALLOWED_INCLUDE_KEYS allow-list the SeaORM branch
+    // used to check inside `if !include_paths.is_empty()` and the cornucopia
+    // branch checked in its own copy — an empty list loops zero times.
+    for path in &include_paths {
+        if !ALLOWED_INCLUDE_KEYS.contains(&path.as_str()) {
+            return Err(AppError::bad_request(format!("Unknown include path: {path}"))
+                .with_correlation_id(correlation_id));
+        }
+    }
     let included = if !include_paths.is_empty() {
         use sea_orm::TransactionTrait;
         let tx = state.db.begin().await
@@ -560,14 +561,6 @@ pub async fn list(
         let repo = crate::domain::recruiting::application::repository_impl::ApplicationRepositoryImpl;
         let ids: Vec<Uuid> = results.iter().map(|r| r.id).collect();
         let mut included_map = std::collections::HashMap::<String, serde_json::Value>::new();
-        for path in &include_paths {
-            if !ALLOWED_INCLUDE_KEYS.contains(&path.as_str()) {
-                return Err(AppError::bad_request(format!("Unknown include path: {path}"))
-                    .with_correlation_id(correlation_id));
-            }
-        }
-        
-        
         if include_paths.contains(&"candidate".to_string()) {
             included_map.insert(
                 "candidate".to_string(),
@@ -576,8 +569,6 @@ pub async fn list(
                         .with_correlation_id(correlation_id))?).unwrap_or_default(),
             );
         }
-        
-        
         tx.commit().await
             .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}"))
                 .with_correlation_id(correlation_id))?;
@@ -585,7 +576,6 @@ pub async fn list(
     } else {
         std::collections::HashMap::new()
     };
-
     Ok(Json(serde_json::json!({
         "data": results,
         "total": total,

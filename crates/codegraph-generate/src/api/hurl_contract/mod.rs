@@ -38,6 +38,7 @@ use serde::Serialize;
 
 mod actions;
 mod derive_fold;
+mod include;
 mod invariants;
 
 use invariants::{InvariantContractFacts, invariant_contract_facts};
@@ -140,6 +141,14 @@ struct EntityContractCtx {
     /// every entity without invariants — byte-identical contract.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     invariant_sections: Vec<ContractSection>,
+    /// `?include=` contract legs (issue #781 P2): one GET leg and/or LIST leg
+    /// per PROVABLE include path, rendered after the GET-by-id block; an
+    /// omission comment for a path the contract cannot prove, and one
+    /// comment line (no legs) for a provider that answers a guarded 501.
+    /// Empty for every entity with no include surface — byte-identical
+    /// contract.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    include_sections: Vec<ContractSection>,
     /// `true` when the contract's update values PROVABLY violate an
     /// invariant: the PUT roundtrip then pins 409 + INVARIANT_VIOLATION
     /// (the write never starts) instead of the 200 roundtrip.
@@ -340,6 +349,7 @@ impl DomainGenerator for HurlContractGenerator {
                 api_version,
                 &nn,
                 config,
+                project,
                 self.rules_guards,
             )
             .await?;
@@ -921,6 +931,7 @@ async fn build_entity_contract(
     api_version: &str,
     nn: &str,
     config: &DomainConfig,
+    project: &ProjectConfig,
     rules_guards: bool,
 ) -> Result<EntityContractCtx> {
     // The config-declared nesting chain (empty for roots): each hop's
@@ -957,6 +968,7 @@ async fn build_entity_contract(
     entity_url.push_str(&format!("/{segment}"));
 
     let capture_name = format!("{module}_id");
+    let capture_ref = ["{{".to_string(), capture_name.clone(), "}}".to_string()].concat();
 
     let mut fk_parent_sections = Vec::new();
     for hop in &nesting {
@@ -1038,6 +1050,27 @@ async fn build_entity_contract(
         }
     };
 
+    // `?include=` contract legs (issue #781 P2). Resolved through the SAME
+    // entity gate the handler hydrates from, so the contract can only assert
+    // a surface the handler serves. Silent for every entity with no include
+    // surface: byte-identical contract.
+    let list_url = format!("{entity_url}?page=0&page_size=10");
+    let include_sections = include::include_sections(
+        db,
+        config,
+        project,
+        domain,
+        schema,
+        &entity_url,
+        &capture_ref,
+        &list_url,
+        &create_body,
+        has("create"),
+        has("read"),
+        has("list"),
+    )
+    .await?;
+
     Ok(EntityContractCtx {
         domain: domain.to_string(),
         module: module.clone(),
@@ -1047,22 +1080,23 @@ async fn build_entity_contract(
         has_read: has("read"),
         has_update: has("update"),
         has_delete: has("delete"),
-        list_url: format!("{entity_url}?page=0&page_size=10"),
+        list_url: list_url.clone(),
         item_url_base: entity_url.clone(),
-        create_url: entity_url,
+        create_url: entity_url.clone(),
         auth_header: "Authorization: Bearer {{api_key}}".to_string(),
         fk_parent_sections,
         create_body: create_body.clone(),
         capture_name: capture_name.clone(),
-        capture_ref: ["{{".to_string(), capture_name, "}}".to_string()].concat(),
+        capture_ref: capture_ref.clone(),
         create_asserts: r#"jsonpath "$.data.id" exists"#,
         echo_asserts,
-        minimal_body: create_body,
+        minimal_body: create_body.clone(),
         update_body,
         update_asserts,
         invariant_sections: invariant_facts.create_sections,
         update_invariant_denied: invariant_facts.update_denied,
         update_invariant_note: invariant_facts.update_note,
+        include_sections,
     })
 }
 
@@ -1340,6 +1374,10 @@ entities = ["TaskType"]
             invariant_block: None,
             throws: Vec::new(),
             raise_responses: Vec::new(),
+            create_guard_block: String::new(),
+            create_invariant_block: String::new(),
+            render_facts: Default::default(),
+            execution_block: String::new(),
         };
         let legs = actions::child_action_legs(
             &route,
@@ -1388,6 +1426,10 @@ entities = ["TaskType"]
             invariant_block: None,
             throws: Vec::new(),
             raise_responses: Vec::new(),
+            create_guard_block: String::new(),
+            create_invariant_block: String::new(),
+            render_facts: Default::default(),
+            execution_block: String::new(),
         };
         let legs = actions::state_aware_legs(
             &[route],
@@ -1440,6 +1482,10 @@ entities = ["TaskType"]
             invariant_block: None,
             throws: Vec::new(),
             raise_responses: Vec::new(),
+            create_guard_block: String::new(),
+            create_invariant_block: String::new(),
+            render_facts: Default::default(),
+            execution_block: String::new(),
         };
         let legs = actions::child_action_legs(
             &route,
