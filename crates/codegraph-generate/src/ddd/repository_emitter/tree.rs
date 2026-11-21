@@ -4,6 +4,7 @@ use crate::code_writer::{CodeWriter, wln};
 use super::child::{emit_child_reads, include_hydration_children};
 use super::dto::{emit_child_field_population, emit_entity_to_dto_field};
 use super::helpers::q;
+use super::include_soft_delete::include_soft_delete_marker;
 use super::junction::{emit_junction_field_population, emit_junction_reads};
 use super::{EntityTree, RepositoryImplEmitter};
 
@@ -228,6 +229,7 @@ impl RepositoryImplEmitter {
         code: &mut CodeWriter,
         include_paths: &[ResolvedIncludePath],
         include_target_trees: &[Option<EntityTree>],
+        include_intermediate_trees: &[Option<EntityTree>],
         include_segment_dto_fields: &[Vec<Vec<String>>],
         include_segment_col_fields: &[Vec<Vec<String>>],
         include_segment_is_structured: &[Vec<Vec<bool>>],
@@ -238,6 +240,11 @@ impl RepositoryImplEmitter {
     ) {
         for (idx, path) in include_paths.iter().enumerate() {
             let target_tree = include_target_trees.get(idx).and_then(|t| t.as_ref());
+            // The dot shape's intermediate hop (segments[0]) — the leaf is the
+            // LAST segment's tree above. `None` for single-segment paths.
+            let intermediate_tree = include_intermediate_trees
+                .get(idx)
+                .and_then(|t| t.as_ref());
             let per_seg_dto = include_segment_dto_fields
                 .get(idx)
                 .map(|v| v.as_slice())
@@ -361,6 +368,8 @@ impl RepositoryImplEmitter {
                     tree,
                     code,
                     path,
+                    intermediate_tree,
+                    target_tree,
                     intermediate_dto,
                     intermediate_col,
                     intermediate_structured,
@@ -560,6 +569,17 @@ impl RepositoryImplEmitter {
                 target_module,
                 reverse_fk_pascal
             );
+            // Issue #784: an auditable target excludes its soft-deleted rows
+            // — the same predicate the CRUD read plane applies. Excluding
+            // every row yields the empty collection (`Some(vec![])` on the
+            // handler plane), never an error.
+            if target_tree.and_then(include_soft_delete_marker).is_some() {
+                wln!(
+                    code,
+                    "            .filter(crate::entity::{}::Column::DeletedAt.is_null())",
+                    target_module
+                );
+            }
             wln!(code, "            .all(db)");
             wln!(code, "            .await?;");
             wln!(
@@ -634,6 +654,16 @@ impl RepositoryImplEmitter {
                 "            .filter(crate::entity::{}::Column::Id.eq(fk_value))",
                 target_module
             );
+            // Issue #784: an auditable target excludes its soft-deleted row —
+            // the fetch answers `None` (the include field stays null) instead
+            // of surfacing a deleted row.
+            if target_tree.and_then(include_soft_delete_marker).is_some() {
+                wln!(
+                    code,
+                    "            .filter(crate::entity::{}::Column::DeletedAt.is_null())",
+                    target_module
+                );
+            }
             wln!(code, "            .one(db)");
             wln!(code, "            .await?;");
             wln!(code, "        let target = match target {{");
@@ -772,6 +802,16 @@ impl RepositoryImplEmitter {
                 target_module,
                 reverse_fk_pascal
             );
+            // Issue #784: an auditable target excludes its soft-deleted rows
+            // from the batch map too — a source whose whole collection is
+            // deleted keeps its (empty) group.
+            if target_tree.and_then(include_soft_delete_marker).is_some() {
+                wln!(
+                    code,
+                    "            .filter(crate::entity::{}::Column::DeletedAt.is_null())",
+                    target_module
+                );
+            }
             wln!(code, "            .all(db)");
             wln!(code, "            .await?;");
             wln!(
@@ -871,6 +911,15 @@ impl RepositoryImplEmitter {
                 "            .filter(crate::entity::{}::Column::Id.is_in(fk_values))",
                 target_module
             );
+            // Issue #784: an auditable target excludes its soft-deleted rows
+            // from the batch map too (the source's slot answers `None`).
+            if target_tree.and_then(include_soft_delete_marker).is_some() {
+                wln!(
+                    code,
+                    "            .filter(crate::entity::{}::Column::DeletedAt.is_null())",
+                    target_module
+                );
+            }
             wln!(code, "            .all(db)");
             wln!(code, "            .await?;");
             // A plain for-loop (not .map) so target child-table hydration can
@@ -946,6 +995,8 @@ impl RepositoryImplEmitter {
         _tree: &EntityTree,
         code: &mut CodeWriter,
         path: &ResolvedIncludePath,
+        intermediate_tree: Option<&EntityTree>,
+        leaf_tree: Option<&EntityTree>,
         intermediate_dto: &[String],
         intermediate_col: &[String],
         intermediate_structured: &[bool],
@@ -996,15 +1047,27 @@ impl RepositoryImplEmitter {
                 intermediate_module,
                 rev_fk_pascal
             );
-            wln!(code, "            .one(db)");
         } else {
             wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::Id.eq(source_id))",
                 intermediate_module
             );
-            wln!(code, "            .one(db)");
         }
+        // Issue #784: a soft-deleted INTERMEDIATE hides its leaf — the fetch
+        // answers `None` for the whole combined response, mirroring the
+        // cornucopia dot SQL's `"i"."deleted_at" IS NULL` hop.
+        if intermediate_tree
+            .and_then(include_soft_delete_marker)
+            .is_some()
+        {
+            wln!(
+                code,
+                "            .filter(crate::entity::{}::Column::DeletedAt.is_null())",
+                intermediate_module
+            );
+        }
+        wln!(code, "            .one(db)");
         wln!(code, "            .await?;");
         wln!(code, "        let intermediate = match intermediate {{");
         wln!(code, "            Some(s) => s,");
@@ -1037,6 +1100,16 @@ impl RepositoryImplEmitter {
             "            .filter(crate::entity::{}::Column::Id.eq(fk_value))",
             leaf_module
         );
+        // Issue #784: a soft-deleted LEAF leaves the combined response's leaf
+        // field `None` instead of surfacing the deleted row — mirroring the
+        // cornucopia dot SQL's `"l"."deleted_at" IS NULL` hop.
+        if leaf_tree.and_then(include_soft_delete_marker).is_some() {
+            wln!(
+                code,
+                "            .filter(crate::entity::{}::Column::DeletedAt.is_null())",
+                leaf_module
+            );
+        }
         wln!(code, "            .one(db)");
         wln!(code, "            .await?;");
 

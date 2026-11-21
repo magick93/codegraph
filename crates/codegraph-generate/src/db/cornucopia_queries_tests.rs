@@ -501,9 +501,10 @@ fn dot_include_batch_keys_the_source_and_applies_both_markers() {
 fn include_sql_marker_follows_the_auditable_decision_not_the_policy_field() {
     let pg = std::collections::HashMap::new();
 
-    // The mox-first auditable shape: no `SoftDelete` policy, auditable table.
+    // The mox-first auditable shape: no `SoftDelete` policy field, auditable
+    // table (the read plane's decision).
     let mut auditable = tree("Person", "person", vec![], None, false);
-    assert!(auditable.is_auditable);
+    auditable.is_auditable = true;
     let sql = render_include_sql(&worker(), &facts("person", "person_id", &auditable, &pg));
     assert!(
         sql.contains("\n  AND \"deleted_at\" IS NULL\nLIMIT 1;"),
@@ -555,4 +556,79 @@ fn dot_include_sql_markers_follow_the_auditable_decision_per_hop() {
         !sql.contains("\"l\".\"deleted_at\""),
         "the live leaf carries no marker:\n{sql}"
     );
+}
+
+/// Both providers derive the include marker from ONE predicate
+/// (`include_soft_delete_marker`, the read plane's auditable decision): for
+/// the same tree the SeaORM emission carries `Column::DeletedAt.is_null()`
+/// exactly when the cornucopia SQL carries `"deleted_at" IS NULL` — neither
+/// plane can drift from the derivation or from each other (issue #784).
+#[test]
+fn both_providers_derive_the_include_marker_from_one_predicate() {
+    use crate::api::include_path::{IncludeSegment, ResolvedIncludePath};
+    use crate::code_writer::CodeWriter;
+
+    for auditable in [true, false] {
+        let mut target = tree("Person", "person", vec![], None, false);
+        target.is_auditable = auditable;
+        let pg = std::collections::HashMap::new();
+
+        // The cornucopia plane.
+        let sql = render_include_sql(&worker(), &facts("person", "person_id", &target, &pg));
+        let cornucopia_filtered = sql.contains("\"deleted_at\" IS NULL");
+
+        // The SeaORM plane: the same tree as the single-segment target.
+        let path = ResolvedIncludePath {
+            alias: "person".into(),
+            segments: vec![IncludeSegment {
+                entity_name: "Person".into(),
+                schema_title: "PersonType".into(),
+                module_name: "person".into(),
+                domain: "common".into(),
+                table: "\"common\".\"person\"".into(),
+                fk_column: "person_id".into(),
+                reverse_fk_column: "person_id".into(),
+                fk_is_required: false,
+                reverse_fk_is_required: false,
+                is_array: false,
+                child_table_override: None,
+            }],
+            response_rust_type: "PersonResponse".into(),
+            fetch_method: "fetch_person_for_worker".into(),
+            batch_fetch_method: "fetch_person_batch_for_worker".into(),
+        };
+        let source = tree("Worker", "worker", vec![], None, false);
+        let per_seg = vec![vec!["organization_id".to_string()]];
+        let mut code = CodeWriter::new();
+        RepositoryImplEmitter.emit_include_fetch_methods(
+            &source,
+            &mut code,
+            std::slice::from_ref(&path),
+            &[Some(target)],
+            &[None],
+            &[per_seg.clone()],
+            &[per_seg.clone()],
+            &[vec![vec![false]]],
+            &[vec![vec![false]]],
+            &[vec![vec![None]]],
+            &[vec![vec![false]]],
+            &[vec![vec!["Uuid".to_string()]]],
+        );
+        let rust = code.into_string();
+        let seaorm_filtered = rust.contains("common_person::Column::DeletedAt.is_null()");
+
+        assert_eq!(
+            seaorm_filtered, auditable,
+            "the SeaORM fetch filter must track auditable:\n{rust}"
+        );
+        assert_eq!(
+            cornucopia_filtered, auditable,
+            "the cornucopia SQL marker must track auditable:\n{sql}"
+        );
+        // The parity clause: neither plane drifts from the other.
+        assert_eq!(
+            cornucopia_filtered, seaorm_filtered,
+            "one derivation feeds both providers (issue #784)"
+        );
+    }
 }

@@ -11,6 +11,7 @@ use codegraph_config::DomainConfig;
 
 use crate::ddd::repository_emitter::{
     ChildTableInfo, EntityTree, JunctionTableInfo, RepositoryImplEmitter, TreeColumn,
+    include_soft_delete_marker,
 };
 
 /// Generates annotated Cornucopia SQL files for an entity's CRUD surface.
@@ -1021,9 +1022,13 @@ async fn pg_types_for_entity(
 /// NULL never match `= ANY(...)`, so the optional arm's `None` is
 /// unreachable-by-construction (but required by the type).
 ///
-/// Soft-delete: the TARGET's marker column filters in both queries (matching
-/// the SeaORM include fetch, which runs under the default scope — there is no
-/// per-include `include_deleted` request parameter).
+/// Soft-delete: the TARGET's auditable decision filters in both queries
+/// (`include_soft_delete_marker`, issue #784 — the read plane's own
+/// predicate, NOT the policy-derived `soft_delete_column` the mox-first path
+/// never populates), matching the SeaORM include fetch. There is no
+/// per-include `include_deleted` request parameter; a relation of a
+/// soft-deleted source still hydrates, because the `include_deleted`
+/// decision belongs to the CRUD read that produced the source row.
 fn render_include_sql(tree: &EntityTree, facts: &IncludeQueryFacts<'_>) -> String {
     let src_table = format!("\"{}\".\"{}\"", tree.schema_name, tree.table_name);
     let target = facts.target;
@@ -1039,7 +1044,7 @@ fn render_include_sql(tree: &EntityTree, facts: &IncludeQueryFacts<'_>) -> Strin
         .collect();
     let cols = row_col_list(&row_cols, facts.target_pg_types, target.append_only);
     let hints = row_hints(&row_cols, target.append_only);
-    let soft_delete = target.soft_delete_column.as_deref();
+    let soft_delete = include_soft_delete_marker(target);
 
     match facts.shape {
         crate::api::include_plan::CornucopiaIncludeShape::SingleArray => {
@@ -1095,16 +1100,18 @@ fn render_include_sql(tree: &EntityTree, facts: &IncludeQueryFacts<'_>) -> Strin
                 .collect();
             let cols = prefixed_row_col_list("l", &leaf_cols, leaf_pg_types, leaf.append_only);
             let hints = row_hints(&leaf_cols, leaf.append_only);
-            // Both hops' soft-delete markers apply: the intermediate row must
-            // be visible (the GET probe's target fetch already filters it, but
-            // the leaf query must not resurrect a deleted intermediate), and
-            // the leaf itself is filtered like every other read.
+            // Both hops' soft-delete markers apply (issue #784, derived from
+            // the read plane's auditable decision — one derivation for both
+            // providers): the intermediate row must be visible (the GET
+            // probe's target fetch already filters it, but the leaf query
+            // must not resurrect a deleted intermediate), and the leaf
+            // itself is filtered like every other read.
             let mut marker_conds: Vec<String> = Vec::new();
-            if let Some(sd) = target.soft_delete_column.as_deref() {
-                marker_conds.push(format!("\"i\".\"{sd}\" IS NULL"));
+            if include_soft_delete_marker(target).is_some() {
+                marker_conds.push("\"i\".\"deleted_at\" IS NULL".to_string());
             }
-            if let Some(sd) = leaf.soft_delete_column.as_deref() {
-                marker_conds.push(format!("\"l\".\"{sd}\" IS NULL"));
+            if include_soft_delete_marker(leaf).is_some() {
+                marker_conds.push("\"l\".\"deleted_at\" IS NULL".to_string());
             }
             let single_markers: String = marker_conds
                 .iter()

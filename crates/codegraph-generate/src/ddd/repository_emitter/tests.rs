@@ -399,6 +399,7 @@ fn emit_single_include(dto_type: Option<&str>, col_type: &str, nullable: bool) -
         &mut code,
         std::slice::from_ref(&path),
         &[None],
+        &[None],
         &[vec![vec!["organization_id".to_string()]]],
         &[vec![vec!["organization_id".to_string()]]],
         &[vec![vec![false]]],
@@ -487,6 +488,11 @@ fn emit_include_with_target(path: &ResolvedIncludePath, target_tree: Option<Enti
         &mut code,
         std::slice::from_ref(path),
         &[target_tree],
+        // The dot intermediate tree — resolved by the emitter loop for
+        // multi-segment paths; the KATs for that hop pin it via
+        // `dot_include_fetch_filters_the_intermediate_when_auditable`
+        // (built with its own tree below).
+        &[None],
         &[per_seg_dto],
         &[per_seg_col],
         &[per_seg_structured],
@@ -614,5 +620,46 @@ fn dot_include_fetch_invents_no_leaf_filter_when_leaf_not_auditable() {
     assert!(
         !out.contains("DeletedAt"),
         "a non-auditable leaf must carry no soft-delete filter:\n{out}"
+    );
+}
+
+/// The dot path's INTERMEDIATE load excludes soft-deleted intermediate rows
+/// when the intermediate is auditable (issue #784): a deleted intermediate
+/// hides its leaf — `Ok(None)` for the whole combined response, mirroring the
+/// cornucopia dot SQL's `"i"."deleted_at" IS NULL` hop.
+#[test]
+fn dot_include_fetch_filters_the_intermediate_when_auditable() {
+    let tree = sort_test_tree(false);
+    let path = dot_include_path();
+    let per_seg_dto: Vec<Vec<String>> = path
+        .segments
+        .iter()
+        .map(|_| vec!["organization_id".to_string()])
+        .collect();
+    let mut code = CodeWriter::new();
+    RepositoryImplEmitter.emit_include_fetch_methods(
+        &tree,
+        &mut code,
+        std::slice::from_ref(&path),
+        // Leaf tree (last segment): auditable — filtered.
+        &[Some(sort_test_tree(true))],
+        // Intermediate tree (segments[0]): auditable — filtered.
+        &[Some(sort_test_tree(true))],
+        &[per_seg_dto.clone()],
+        &[per_seg_dto.clone()],
+        &[vec![vec![false], vec![false]]],
+        &[vec![vec![false], vec![false]]],
+        &[vec![vec![None], vec![None]]],
+        &[vec![vec![false], vec![false]]],
+        &[per_seg_dto.clone()],
+    );
+    let out = code.into_string();
+    assert!(
+        out.contains(".filter(crate::entity::hr_job::Column::DeletedAt.is_null())"),
+        "the dot intermediate load must filter the auditable intermediate:\n{out}"
+    );
+    assert!(
+        out.contains(".filter(crate::entity::hr_position::Column::DeletedAt.is_null())"),
+        "the dot leaf load must filter the auditable leaf:\n{out}"
     );
 }
