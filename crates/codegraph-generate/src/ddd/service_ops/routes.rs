@@ -126,6 +126,14 @@ pub(super) fn covered_statuses(execution: &ExecutionKind) -> Vec<u16> {
         // Issue #767: the collection-level create documents 201 + the DTO's
         // validation 422, and there is no record-load 404.
         ExecutionKind::Create { .. } => covered.extend([201u16, 422]),
+        // Issue #768: the item-addressed projection read keeps the record
+        // load (404); the collection-addressed read loads none — an empty
+        // collection is a 200 with `[]`.
+        ExecutionKind::ProjectionRead { plan } => {
+            if !plan.collection {
+                covered.push(404);
+            }
+        }
         ExecutionKind::Seam { .. } => covered.extend([404u16, 501]),
         ExecutionKind::ChildOp { .. } => covered.extend([404u16, 422]),
         _ => covered.push(404),
@@ -364,7 +372,16 @@ pub async fn routes_for_entity(
                 // no response.
                 let create_shape =
                     create_shape_candidate(op, model, entity_title, &surface_ops, scoped);
-                let record_load = !create_shape && surface_ops.iter().any(|o| o == "read");
+                let projection_shape = super::projection::projection_shape_candidate(
+                    op,
+                    model,
+                    entity_title,
+                    scoped,
+                    &boundary_index,
+                );
+                let record_load = !create_shape
+                    && !projection_shape.unwrap_or(false)
+                    && surface_ops.iter().any(|o| o == "read");
                 // Issue #663: resolve the op's injected-scope `when` paths
                 // into the per-scope plans the rendered gate loads (schema,
                 // domain, query slot, FK) plus the class fields the
@@ -477,6 +494,16 @@ pub async fn routes_for_entity(
                         op,
                         &params,
                         &boundary_index,
+                    )
+                    .await?
+                } else if let Some(collection) = projection_shape {
+                    super::projection::projection_read_execution(
+                        op,
+                        entity_title,
+                        &boundary_index,
+                        collection,
+                        body.dto_casing,
+                        &surface_ops,
                     )
                     .await?
                 } else {
@@ -1455,7 +1482,7 @@ fn body_carrier_hint(type_json: &serde_json::Value) -> String {
 
 /// The entity title an operation binds to, if any (resolution order in the
 /// module doc).
-pub(super) async fn bind_entity(
+pub(crate) async fn bind_entity(
     model: &codegraph_core::types::DddModelGraph,
     op: &codegraph_core::types::DddServiceOperation,
     db: &dyn GraphQuerier,
@@ -1522,6 +1549,18 @@ pub(super) async fn bind_entity(
         }
     }
     if let Some(class) = class_of(op.return_type.as_ref())
+        && let Some(title) = schema_title_for_class(db, &class, type_suffix).await
+    {
+        return Some(title);
+    }
+    // Issue #768: a PROJECTION return binds through the boundary's source
+    // class — a stateless projection read (`BookSummary allSummaries();`)
+    // has no class-typed parameter, so the boundary's `from Book` IS the
+    // entity binding.
+    if let Some(return_json) = op.return_type.as_ref()
+        && let Some(boundary) = crate::ddd::signature::signature_type(return_json).dto_name()
+        && let Some(shape) = model.dto_shapes.iter().find(|s| s.name == boundary)
+        && let Some(class) = crate::ddd::boundary_derive::shape_source_class(shape)
         && let Some(title) = schema_title_for_class(db, &class, type_suffix).await
     {
         return Some(title);

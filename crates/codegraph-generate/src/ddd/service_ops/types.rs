@@ -233,8 +233,42 @@ pub enum ExecutionKind {
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<BoundaryPayloadPlan>,
     },
+    /// A projection READ (issue #768): a public abstract op whose return
+    /// slot is a projection boundary of the bound entity. The handler loads
+    /// the record (item-addressed) or the RLS-scoped collection
+    /// (collection-addressed, `Vec` returns) and constructs the read model
+    /// through the boundary's `from_row` — the same constructor the
+    /// repository finder uses, so both read paths cannot drift.
+    ProjectionRead { plan: ProjectionReadPlan },
     /// No executable lowering; the route answers 501 naming the gap.
     Seam { reason: String },
+}
+
+/// The lowering facts of one projection read (issue #768).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectionReadPlan {
+    /// The projection boundary's generated module stem (`catalog`).
+    pub module: String,
+    /// The projection boundary name (`BookSummary`).
+    pub projection: String,
+    /// `true` for the collection-addressed shape (a `Vec` return over the
+    /// RLS-scoped collection); `false` for the item-addressed read.
+    pub collection: bool,
+    /// The boundary's DERIVED members (`wire_key`, expression source): the
+    /// hurl planner folds each over the contract's own create body and
+    /// asserts the computed value — the derived member provably COMPUTES in
+    /// the read path.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub derived: Vec<ProjectionDerived>,
+}
+
+/// One derived member's wire key + expression source (issue #768).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectionDerived {
+    /// The member's wire key (project dto casing) the JSON assert reads.
+    pub wire_key: String,
+    /// The authored expression source (`playLength / 60`).
+    pub expression: String,
 }
 
 /// The closed child-action vocabulary of `children <Root>` operations
@@ -292,6 +326,7 @@ impl ExecutionKind {
             Self::Delete
             | Self::Read
             | Self::Create { .. }
+            | Self::ProjectionRead { .. }
             | Self::ChildOp { .. }
             | Self::Seam { .. } => None,
         }

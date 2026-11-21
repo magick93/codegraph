@@ -6,6 +6,9 @@ pub use {{ project.domain_types_crate }}::{{ domain }}::{{ module_name }}::{{ en
 {% for child in all_child_dtos %}
 pub use {{ project.domain_types_crate }}::{{ domain }}::{{ module_name }}::{{ child.struct_name }}Response;
 {% endfor %}
+{%- for projection in projection_imports %}
+pub use {{ project.domain_types_crate }}::dto::{{ projection.module }}::{{ projection.name }};
+{%- endfor %}
 
 /// Response wrapper that includes HAL-style `_links` for HATEOAS discoverability.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]

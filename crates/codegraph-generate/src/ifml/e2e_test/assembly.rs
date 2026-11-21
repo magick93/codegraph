@@ -1552,6 +1552,17 @@ pub(super) async fn plan_action_legs(
         ExecutionKind::Create { .. } => {
             return Vec::new();
         }
+        // A projection read (issue #768): the ITEM-addressed shape is a
+        // read-only 200 over the seeded record — a real button. The
+        // collection-addressed shape is a collection-level POST, so like
+        // the #767 create it stays unbuilt (the hurl contract covers the
+        // route; a collection-read POM surface is the recorded follow-up).
+        ExecutionKind::ProjectionRead { plan } => {
+            if plan.collection {
+                return Vec::new();
+            }
+            return vec![(ActionActKind::Ok, None)];
+        }
         // Aggregate child operations (issue #661). `remove`/`save` address an
         // element the parent-scoped seed fixture already created → 200. `add`
         // is a COLLECTION-level action (issue #692): the collection-add POM

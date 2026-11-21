@@ -1232,9 +1232,87 @@ never reached the graph. #667 makes the boundary a plane:
   enumerated in PR #771). A required VO-array (`contains T[]`) child can never
   be carried by a boundary (structured classes are refused), so an entity with
   one makes every create-shaped op a named refusal.
-- **Deferred (filed)**: **#768** — projections as read models (derived-member
-  arithmetic lowering + the real read endpoint); the POM collection-add
-  surface (#661).
+- **Deferred (filed)**: ~~#768 — projections as read models~~ (LANDED, see
+  below); the POM collection-add surface (#661).
+
+### Projections are read models (issue #768)
+
+A `.ddd` projection is now a COMPUTED read model end to end — one
+construction site, two read paths, named refusals:
+
+- **The constructor** (`ddd/boundary_derive.rs` +
+  `templates/domain_types/dto_boundaries.tera`): every output-direction
+  boundary whose source class resolves to a generation-order entity emits
+  `impl {Projection} { pub fn from_row(r: &{Entity}Response) -> Self }`
+  into its boundary module (the import spells
+  `crate::{domain}::{module}::dto_response::{Entity}Response` — the
+  domain-types Response the entity plane emits). `select` members copy the
+  matching response field Option-aware (a required member over an optional
+  column refuses; `String` clones, `Copy` primitives assign);
+  `derive` members lower a BOUNDED arithmetic subset — `+ - * /` + unary
+  minus over numeric stored-field refs, numeric literals, parentheses
+  (navigation, calls, strings, dates, codelists, Option columns: NAMED
+  generation errors naming boundary + member, the `query_refusals`
+  posture). Division: plain `/`, a literal-zero divisor refused at
+  generation time, a field divisor documented (Rust panic semantics).
+  Type adaptation is EXPLICIT — same-type verbatim, widening
+  (`i32→i64/f32/f64`, `f32→f64`) through `From`, every narrowing/lossy
+  direction (`i64→i32`, `i64→f64`, `f64→f32`, float→int) refused by name.
+- **Pre-generation teeth**: `ValidationPass::check_projection_boundaries`
+  (`boundary_derive::projection_refusals`) plans every projection
+  constructor BEFORE any tree — an unplannable derive member fails the run
+  naming the boundary + member (`projection_boundary` check). Negative
+  fixture `tests/fixtures/dto_boundaries_projection_bad/` (a STRING-typed
+  derive — compiler-legal, refused here).
+- **The finder plane** (`design.rs::resolve_finder_signature`): a return
+  slot of `{"dto":"X"}` is ACCEPTED when the boundary's source class is the
+  designing entity — `DesignFinder.projection` rides the tree and the
+  trait (`repository.tera`) + SeaORM impl (`repository_emitter/finders.rs`)
+  + cornucopia adapter (`cornucopia_repo.rs`) return
+  `Option<{Projection}>`/`Vec<{Projection}>`, mapping the loaded row(s)
+  through `from_row`. The app response module RE-EXPORTS the projection
+  types (`dto_response.tera` gains `projection_imports`) so every plane
+  spells them beside `{Entity}Response` with the same `super::dto_response`
+  import rule.
+- **The endpoints** (`service_ops`): a PUBLIC abstract op whose return slot
+  is a projection boundary of the bound entity — stateless (no params) or
+  record-scoped (one class-typed param naming the entity) →
+  `ExecutionKind::ProjectionRead`; single return = item-addressed
+  `POST …/{entity}/{id}/actions/{op}` (200 + record-load 404), `Vec`
+  return = collection-addressed `POST …/{entity}/actions/{op}` over the
+  RLS-scoped collection (200, no 404). utoipa `body = domain_types::dto::
+  {module}::{Projection}` / `[…]` (the #667 component registration
+  resolves). An op-level `when` guard lowers into the item authorize
+  (over the loaded record) — a collection read with a guard is a NAMED
+  pre-generation refusal (authorize has no record to evaluate). The
+  #449/#590 gating invariant holds: the item read REQUIRES the entity's
+  `read` op and the collection read its `list` op — an entity whose design
+  exposes neither refuses pre-tree by name (the walker walks the routes
+  plane's own predicate; a no-read/no-list model would emit a handler
+  naming a query method that does not exist). A foreign-source boundary
+  and an INPUT-direction boundary (the constructor plane emits `from_row`
+  for output shapes only) keep the 501 seam / refuse by name.
+- **hurl** (`api/hurl_contract/actions.rs`): each derived member FOLDS over
+  the contract's own create body (`derive_fold.rs` — integer arithmetic
+  stays integer, `/` truncates) and the leg asserts the computed value —
+  the derived member provably COMPUTES; an unseedable expression omits its
+  one assert. The item read adds the deterministic zero-uuid 404. The
+  IFML planner gives the item read a real button (an `Ok` leg) and leaves
+  the collection-addressed shape unbuilt (the #767 collection case).
+- **Gates**: `--test ddd_dto_boundaries_tests` (the constructor emission,
+  explicit adaptation, both endpoints end to end, the negative refusal) ·
+  `--test repository_compile_tests ::projection_finder_emission_compiles`
+  (the #551 pin: trait + impl + re-export chain compile; its first runs
+  caught the owned-`Option::map` bug) · `--test service_ops_compile_gate ::
+  generated_app_with_projection_reads_compiles` (the FULL app with both
+  endpoints + the finder plane + the derived-value hurl assert; its first
+  runs caught the ux-sort `list_filtered` arity) · the `ddd::boundary_derive`
+  (23 KATs) + `ddd::design` + `ddd::service_ops::predicate_tests` units ·
+  the standing canaries hold with NO re-bless (no dto shapes in any
+  canaried tree).
+- **Deferred**: `Vec<Projection>` paging beyond the 1000-row cap; a
+  collection-read POM surface (the IFML button is item-addressed); derive
+  members over optional numeric columns.
 - **Gates**: `cargo test -p codegraph --test ddd_dto_boundaries_tests` (mirror
   alias, projection/standalone shape, no-shape byte identity, collision +
   member refusals, body-param KATs, the #767 mapping refusals/defaults, and an

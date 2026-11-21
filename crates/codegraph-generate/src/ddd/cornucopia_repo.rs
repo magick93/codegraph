@@ -142,6 +142,20 @@ fn emit_adapter(tree: &EntityTree, domain: &str, project: &ProjectConfig, ux_sor
     );
     wln!(code, "use super::repository::{entity_name}Repository;");
     wln!(code, "use super::dto_response::{entity_name}Response;");
+    // Projection boundary types (issue #768): re-exported by the response
+    // module, spelled beside `{Entity}Response`.
+    {
+        let mut projection_names: Vec<&str> = tree
+            .design_finders
+            .iter()
+            .filter_map(|finder| finder.projection.as_ref().map(|p| p.name.as_str()))
+            .collect();
+        projection_names.sort_unstable();
+        projection_names.dedup();
+        for name in projection_names {
+            wln!(code, "use super::dto_response::{name};");
+        }
+    }
     let mut imported = std::collections::HashSet::new();
     for child in crate::ddd::repository_emitter::flatten_child_tables(&tree.child_tables) {
         if imported.insert(child.struct_name.clone()) {
@@ -1101,12 +1115,14 @@ fn emit_adapter_design_query(
     if finder.returns_many {
         wln!(
             code,
-            "    ) -> Result<Vec<{entity_name}Response>, Box<dyn std::error::Error>> {{"
+            "    ) -> Result<Vec<{}>, Box<dyn std::error::Error>> {{",
+            finder.return_rust_type
         );
     } else {
         wln!(
             code,
-            "    ) -> Result<Option<{entity_name}Response>, Box<dyn std::error::Error>> {{"
+            "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+            finder.return_rust_type
         );
     }
     // Every bind is passed by reference: parameters are the method's own
@@ -1164,7 +1180,18 @@ fn emit_adapter_design_query(
         wln!(code, "            ;");
         wln!(code, "            items.push(resp);");
         wln!(code, "        }}");
-        wln!(code, "        Ok(items)");
+        match &finder.projection {
+            Some(projection) => {
+                wln!(
+                    code,
+                    "        Ok(items.iter().map({}::from_row).collect())",
+                    projection.name
+                );
+            }
+            None => {
+                wln!(code, "        Ok(items)");
+            }
+        }
     } else {
         wln!(
             code,
@@ -1175,7 +1202,18 @@ fn emit_adapter_design_query(
         wln!(code, "        }} else {{");
         wln!(code, "            None");
         wln!(code, "        }};");
-        wln!(code, "        Ok(response)");
+        match &finder.projection {
+            Some(projection) => {
+                wln!(
+                    code,
+                    "        Ok(response.map(|r| {}::from_row(&r)))",
+                    projection.name
+                );
+            }
+            None => {
+                wln!(code, "        Ok(response)");
+            }
+        }
     }
     wln!(code, "    }}");
 }
@@ -1224,12 +1262,14 @@ fn emit_adapter_design_finder(
     if finder.returns_many {
         wln!(
             code,
-            "    ) -> Result<Vec<{entity_name}Response>, Box<dyn std::error::Error>> {{"
+            "    ) -> Result<Vec<{}>, Box<dyn std::error::Error>> {{",
+            finder.return_rust_type
         );
     } else {
         wln!(
             code,
-            "    ) -> Result<Option<{entity_name}Response>, Box<dyn std::error::Error>> {{"
+            "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+            finder.return_rust_type
         );
     }
 
@@ -1270,7 +1310,18 @@ fn emit_adapter_design_finder(
         wln!(code, "            ;");
         wln!(code, "            items.push(resp);");
         wln!(code, "        }}");
-        wln!(code, "        Ok(items)");
+        match &finder.projection {
+            Some(projection) => {
+                wln!(
+                    code,
+                    "        Ok(items.iter().map({}::from_row).collect())",
+                    projection.name
+                );
+            }
+            None => {
+                wln!(code, "        Ok(items)");
+            }
+        }
     } else {
         wln!(
             code,
@@ -1281,7 +1332,18 @@ fn emit_adapter_design_finder(
         wln!(code, "        }} else {{");
         wln!(code, "            None");
         wln!(code, "        }};");
-        wln!(code, "        Ok(response)");
+        match &finder.projection {
+            Some(projection) => {
+                wln!(
+                    code,
+                    "        Ok(response.map(|r| {}::from_row(&r)))",
+                    projection.name
+                );
+            }
+            None => {
+                wln!(code, "        Ok(response)");
+            }
+        }
     }
     wln!(code, "    }}");
 }

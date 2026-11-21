@@ -277,9 +277,16 @@ async fn generate_tree(
     }
 
     if let Some(ddd) = ddd_fixture {
-        let ddd_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/ddd")
-            .join(ddd);
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        // A bare name resolves under `tests/fixtures/ddd/` (the golden
+        // fixture shape); a path with a directory component is taken
+        // verbatim (the dto-boundaries projection fixture lives in its own
+        // directory).
+        let ddd_path = if ddd.contains('/') {
+            base.join(ddd)
+        } else {
+            base.join("ddd").join(ddd)
+        };
         codegraph::ingest::ddd_ingest::ingest_ddd_files(&engine, &engine, &[ddd_path], &config)
             .await
             .unwrap();
@@ -771,5 +778,49 @@ async fn media_repository_plane_compiles() {
         impls >= 1,
         "the media fixture must emit at least one repository impl, got {impls}"
     );
+    cargo_check(&ws);
+}
+
+/// Projection-finder variant (issue #768): a declared finder whose return
+/// slot is a projection boundary emits trait + impl methods returning the
+/// read model, constructed through the boundary's `from_row`. The scratch
+/// workspace carries the whole domain-types crate (the boundary module
+/// lives there) and the app response module re-exports the type — the pin
+/// proves the whole chain compiles on BOTH the single and `Vec` shapes.
+#[tokio::test]
+async fn projection_finder_emission_compiles() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dto_boundaries");
+    let (app_dir, _domain_types) = generate_tree(
+        "projection-finders",
+        Some(LIBRARY_DOMAINS_TOML),
+        false,
+        Some(&[fixture.join("dto_boundaries.mox")]),
+        Some("dto_boundaries/dto_boundaries.ddd"),
+    )
+    .await;
+
+    let book_impl = fs::read_to_string(app_dir.join("src/domain/library/book/repository_impl.rs"))
+        .expect("book's repository impl");
+    assert!(
+        book_impl.contains("-> Result<Option<BookSummary>,"),
+        "the single projection finder must return the read model:\n{book_impl}"
+    );
+    assert!(
+        book_impl.contains("-> Result<Vec<BookSummary>,"),
+        "the many projection finder must return the read model:\n{book_impl}"
+    );
+    assert!(
+        book_impl.contains("BookSummary::from_row"),
+        "the impl must construct through the boundary's from_row:\n{book_impl}"
+    );
+    let book_response = fs::read_to_string(app_dir.join("src/domain/library/book/dto_response.rs"))
+        .expect("book's app response module");
+    assert!(
+        book_response.contains("pub use domain_types::dto::catalog::BookSummary;"),
+        "the response module must re-export the projection type:\n{book_response}"
+    );
+
+    let ws = tree_root("projection-finders").join("ws");
+    assemble_workspace(&app_dir, &_domain_types, &ws);
     cargo_check(&ws);
 }

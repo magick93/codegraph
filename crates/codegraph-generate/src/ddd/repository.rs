@@ -1,4 +1,5 @@
 use crate::ProjectConfig;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -56,6 +57,10 @@ pub struct RepositoryContext {
     /// flag-off output byte-identical.
     #[serde(default)]
     pub design_finders: Vec<DesignFinder>,
+    /// Distinct projection-boundary names the finders return (issue #768) —
+    /// the trait's `super::dto_response` import list gains them (the app
+    /// response module re-exports the boundary types).
+    pub projection_imports: Vec<String>,
 }
 
 pub struct RepositoryTraitGenerator {
@@ -305,6 +310,12 @@ impl EntityGenerator for RepositoryTraitGenerator {
             domain: domain.clone(),
             operations,
             ux_sort,
+            projection_imports: design_finders
+                .iter()
+                .filter_map(|finder| finder.projection.as_ref().map(|p| p.name.clone()))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
             design_finders,
         };
 

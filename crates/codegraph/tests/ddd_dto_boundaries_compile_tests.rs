@@ -75,7 +75,51 @@ fn cargo_check_boundary_plane(domain_types: &Path, target: Option<&str>) {
         let entry = entry.unwrap();
         fs::copy(entry.path(), krate.join("src/dto").join(entry.file_name())).unwrap();
     }
-    fs::write(krate.join("src/lib.rs"), "pub mod dto;\n").unwrap();
+    // Issue #768: the projection constructors read the entity Response the
+    // entity plane emits into the SAME crate — carry ONLY the
+    // `{domain}/{module}/dto_response.rs` files (the create/update/query
+    // modules need garde/async_trait the scratch deliberately omits), with
+    // the minimal `mod` plumbing so `crate::{domain}::{module}::
+    // dto_response::{Entity}Response` resolves exactly as in the real crate.
+    let mut lib = String::from("pub mod dto;\n");
+    let src_root = domain_types.join("src");
+    for domain_entry in fs::read_dir(&src_root).unwrap() {
+        let domain_entry = domain_entry.unwrap();
+        let domain = domain_entry.file_name().to_string_lossy().to_string();
+        if domain == "dto" || !domain_entry.path().is_dir() {
+            continue;
+        }
+        let mut domain_mod = String::new();
+        for module_entry in fs::read_dir(domain_entry.path()).unwrap() {
+            let module_entry = module_entry.unwrap();
+            let module = module_entry.file_name().to_string_lossy().to_string();
+            let response = module_entry.path().join("dto_response.rs");
+            if !response.is_file() {
+                continue;
+            }
+            fs::create_dir_all(krate.join("src").join(&domain).join(&module)).unwrap();
+            fs::copy(
+                &response,
+                krate
+                    .join("src")
+                    .join(&domain)
+                    .join(&module)
+                    .join("dto_response.rs"),
+            )
+            .unwrap();
+            fs::write(
+                krate.join("src").join(&domain).join(&module).join("mod.rs"),
+                "pub mod dto_response;\n",
+            )
+            .unwrap();
+            domain_mod.push_str(&format!("pub mod {module};\n"));
+        }
+        if !domain_mod.is_empty() {
+            fs::write(krate.join("src").join(&domain).join("mod.rs"), domain_mod).unwrap();
+            lib.push_str(&format!("pub mod {domain};\n"));
+        }
+    }
+    fs::write(krate.join("src/lib.rs"), lib).unwrap();
     fs::write(
         krate.join("Cargo.toml"),
         "[package]\nname = \"boundary_plane\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\

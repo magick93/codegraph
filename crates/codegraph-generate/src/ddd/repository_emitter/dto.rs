@@ -106,7 +106,7 @@ pub(crate) fn emit_child_field_population(
 
 /// Emit the response struct construction shared by `find_by_id` and `find_by_id_scoped`.
 pub(crate) fn emit_response_construction(code: &mut CodeWriter, tree: &EntityTree) {
-    emit_response_construction_for(code, tree, "id");
+    emit_response_construction_for(code, tree, "id", None);
 }
 
 /// Same, with the parent id expression named: `find_by_id` scopes child
@@ -116,11 +116,22 @@ pub(crate) fn emit_response_construction_for(
     code: &mut CodeWriter,
     tree: &EntityTree,
     row_id_expr: &str,
+    projection: Option<&str>,
 ) {
     emit_child_reads(code, &tree.child_tables, row_id_expr, 2);
     emit_junction_reads(code, &tree.junction_tables, row_id_expr, 2);
     wln!(code);
-    wln!(code, "        Ok(Some({}Response {{", tree.entity_name);
+    // A projection return builds the response as a value and maps it through
+    // the boundary's `from_row` (issue #768); the entity path returns the
+    // `Ok(Some({Entity}Response))` literal — byte-identical to pre-#768.
+    match projection {
+        Some(_) => wln!(
+            code,
+            "        let response = Some({}Response {{",
+            tree.entity_name
+        ),
+        None => wln!(code, "        Ok(Some({}Response {{", tree.entity_name),
+    }
     wln!(code, "            id: row.id,");
     for col in &tree.direct_columns {
         if col.is_composite_range {
@@ -145,6 +156,17 @@ pub(crate) fn emit_response_construction_for(
     // DTO fields the tree does not load (e.g. base-inherited junction arrays
     // under nested composition nodes) default to None instead of failing E0063.
     wln!(code, "            ..Default::default()");
-    wln!(code, "        }}))");
+    match projection {
+        Some(name) => {
+            // The projection path builds the response as a value, then maps:
+            // `let response = Some({..}); Ok(response.map(P::from_row))`.
+            wln!(code, "        }});");
+            wln!(code, "        Ok(response.map(|r| {name}::from_row(&r)))");
+        }
+        None => {
+            // The original single line: struct close + `Ok(Some(..))` close.
+            wln!(code, "        }}))");
+        }
+    }
     wln!(code, "    }}");
 }

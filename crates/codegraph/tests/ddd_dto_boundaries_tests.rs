@@ -50,7 +50,7 @@ fn schema(title: &str, domain: &str) -> SchemaNode {
         rust_type: title.to_string(),
         sea_orm_type: "Entity".to_string(),
         rust_type_name: title.strip_suffix("Type").unwrap_or(title).to_string(),
-        pg_table_name: title.to_string(),
+        pg_table_name: codegraph_naming::to_snake_case(title),
         api_path_segment: title.to_string(),
         parent_schema: None,
         is_entity: true,
@@ -63,6 +63,55 @@ fn schema(title: &str, domain: &str) -> SchemaNode {
         custom_annotations: Default::default(),
         access: None,
         annotations: None,
+    }
+}
+
+/// The stored features the projection constructors read in the mock graph:
+/// a required `String` and a required `int` (the payload-aligned `i32`),
+/// keyed by the mox-authored camelCase names the bridge produces.
+async fn ingest_book_properties(engine: &MockEngine) {
+    use codegraph_core::types::PropertyNode;
+    for (name, prop_type, pg_column_type, rust_field_type) in [
+        ("title", "string", "TEXT", "String"),
+        ("isbn", "string", "TEXT", "String"),
+        ("playLength", "integer", "INTEGER", "i32"),
+    ] {
+        let prop = PropertyNode {
+            name: name.to_string(),
+            prop_type: prop_type.to_string(),
+            description: None,
+            format: None,
+            is_required: true,
+            is_nullable: false,
+            is_id: false,
+            is_array: false,
+            min_items: None,
+            max_items: None,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: codegraph_naming::to_snake_case(name),
+            pg_column_type: pg_column_type.to_string(),
+            rust_field_name: codegraph_naming::to_snake_case(name),
+            rust_field_type: rust_field_type.to_string(),
+            sea_orm_type: "String".to_string(),
+            render_strategy: "direct_column".to_string(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: None,
+            type_expr: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        };
+        engine
+            .ingest_property("BookType", "library/BookType", &prop)
+            .await
+            .unwrap();
     }
 }
 
@@ -176,6 +225,7 @@ async fn generate(shapes: Vec<DddDtoShapeNode>) -> Vec<codegraph_generate::trait
         .ingest_schema(&schema("BookType", "library"))
         .await
         .unwrap();
+    ingest_book_properties(&engine).await;
     engine.ingest_ddd_model(&model(shapes)).await.unwrap();
 
     let base = tempfile::tempdir().expect("tempdir");
@@ -278,6 +328,69 @@ async fn projection_and_standalone_boundaries_emit_real_types() {
     );
 }
 
+/// Issue #768: a projection boundary emits ONE `from_row` construction site
+/// beside its type — the read model computes, the finder and the endpoint
+/// both call it, and neither can drift.
+#[tokio::test]
+async fn projection_boundaries_emit_a_from_row_constructor() {
+    let files = generate(book_shapes()).await;
+    let catalog = file(&files, "src/dto/catalog.rs");
+    let content = &catalog.content;
+
+    assert!(
+        content.contains("use crate::library::book_type::dto_response::BookResponse;"),
+        "the constructor reads the domain-types Response: {content}"
+    );
+    let impl_block = content
+        .split("impl BookSummary {")
+        .nth(1)
+        .expect("BookSummary from_row impl")
+        .split("\n}\n")
+        .next()
+        .expect("impl body");
+    assert!(
+        impl_block.contains("pub fn from_row(r: &BookResponse) -> Self {"),
+        "{impl_block}"
+    );
+    // `select` copies the matching response field — `String` is not `Copy`,
+    // so it clones.
+    assert!(
+        impl_block.contains("title: r.title.clone(),"),
+        "{impl_block}"
+    );
+    // `derive` lowers the bounded arithmetic subset, adapted verbatim when
+    // the member and column types agree.
+    assert!(
+        impl_block.contains("minutes: (r.play_length / 60),"),
+        "{impl_block}"
+    );
+
+    // Non-projection shapes carry no constructor: the standalone boundary has
+    // no source class, and the INPUT mirror is a request shape, not a read
+    // model.
+    assert!(!content.contains("impl NewBookInput {"), "{content}");
+    assert!(!content.contains("impl BookMirror {"), "{content}");
+}
+
+/// Issue #768: explicit type adaptation — a `long` derive member over `int`
+/// columns widens through `From`, never an `as` cast.
+#[tokio::test]
+async fn derive_member_over_narrower_columns_adapts_explicitly() {
+    let mut shapes = book_shapes();
+    shapes[1].members[1].type_json = serde_json::json!({"type": "primitive", "value": "long"});
+    shapes[1].members[1].expression = Some("playLength + playLength".to_string());
+    let files = generate(shapes).await;
+    let content = &file(&files, "src/dto/catalog.rs").content;
+    let impl_block = content
+        .split("impl BookSummary {")
+        .nth(1)
+        .expect("BookSummary impl");
+    assert!(
+        impl_block.contains("minutes: (i64::from(r.play_length) + i64::from(r.play_length)),"),
+        "explicit widening, never a cast: {impl_block}"
+    );
+}
+
 #[tokio::test]
 async fn no_dto_designs_emit_nothing() {
     let files = generate(Vec::new()).await;
@@ -330,6 +443,7 @@ async fn unresolvable_member_type_refuses_naming_the_boundary_and_member() {
         .ingest_schema(&schema("BookType", "library"))
         .await
         .unwrap();
+    ingest_book_properties(&engine).await;
     engine.ingest_ddd_model(&model(shapes)).await.unwrap();
     let base = tempfile::tempdir().expect("tempdir");
     let generator = DddDtoBoundariesGenerator::new_with_base(base.path().to_path_buf());
@@ -490,6 +604,39 @@ postgres_schema = "library"
     assert!(
         router.contains(".route(\"/actions/register_book\""),
         "the router mounts the collection-level action route: {router}"
+    );
+
+    // ── Issue #768: the projection READ endpoints ────────────────────────
+    //
+    // `summarise(Book book)` (record-scoped, single) is item-addressed;
+    // `allSummaries()` (stateless, Vec) is collection-addressed. Both
+    // construct through the boundary's `from_row`.
+    assert!(
+        handler.contains("service_op_summarise")
+            && handler.contains("domain_types::dto::catalog::BookSummary::from_row(&response)"),
+        "the item projection read constructs through from_row: {handler}"
+    );
+    assert!(
+        handler.contains("body = domain_types::dto::catalog::BookSummary"),
+        "the utoipa response documents the projection type: {handler}"
+    );
+    assert!(
+        handler.contains("service_op_all_summaries")
+            && handler
+                .contains("rows.iter().map(domain_types::dto::catalog::BookSummary::from_row)"),
+        "the collection read maps the collection through from_row: {handler}"
+    );
+    assert!(
+        handler.contains("body = [domain_types::dto::catalog::BookSummary]"),
+        "the collection read documents the Vec projection: {handler}"
+    );
+    assert!(
+        router.contains("{book_id}/actions/summarise"),
+        "the item read mounts item-addressed: {router}"
+    );
+    assert!(
+        router.contains(".route(\"/actions/all_summaries\""),
+        "the collection read mounts at the collection level: {router}"
     );
     assert!(
         !router.contains("{book_id}/actions/register_book"),
@@ -1162,5 +1309,163 @@ postgres_schema = "library"
     assert!(
         !output.join("src").exists(),
         "a refusal must fire BEFORE any tree is written (no src/ dir)"
+    );
+}
+
+/// Issue #768 negative: a derive member the arithmetic subset cannot
+/// compute (a STRING-typed derivation — legal upstream, refused here)
+/// fails the VALIDATION pass by name, and fails it before any tree exists.
+#[tokio::test]
+async fn projection_derive_outside_the_subset_refuses_before_any_tree() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/dto_boundaries_projection_bad");
+    let temp = tempfile::tempdir().expect("tempdir");
+    let output = temp.path().join("out");
+    let config = temp.path().join("domains.toml");
+    fs::write(
+        &config,
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.library]
+label = "Library"
+schema_dir = "schemas/library"
+postgres_schema = "library"
+"#,
+    )
+    .unwrap();
+    let mox_files = vec![fixture.join("bad.mox")];
+    let ddd_files = vec![fixture.join("bad.ddd")];
+
+    let err = codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(PathBuf::from("definitely-absent-profiles.toml")),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: &mox_files,
+        rosetta_files: &[],
+        ddd_files: &ddd_files,
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect_err("a non-numeric derive member must fail the run");
+
+    let message = format!("{err}");
+    assert!(
+        message.contains("Validation error"),
+        "the projection refusal must fail the validation pass: {message}"
+    );
+    assert!(
+        !output.join("src").exists(),
+        "a refusal must fire BEFORE any tree is written (no src/ dir)"
+    );
+}
+
+/// Issue #768 review: the pre-generation walker's OP-SET arm — an
+/// item-addressed projection read over an entity whose design exposes no
+/// `read` op refuses PRE-TREE (the lowering layer would only refuse at
+/// generation). Pinned over the mock graph the boundary tests already
+/// build: no repository in the model ⇒ an EMPTY op set ⇒ the requirement
+/// cannot be met.
+#[tokio::test]
+async fn walker_refuses_an_item_projection_read_over_an_entity_without_read() {
+    use codegraph_core::types::{DddServiceNode, DddServiceOperation};
+
+    let engine = MockEngine::builder().build();
+    engine
+        .ingest_schema(&schema("BookType", "library"))
+        .await
+        .unwrap();
+    ingest_book_properties(&engine).await;
+
+    let mut shapes = vec![{
+        let mut s = book_shapes().remove(1); // BookSummary (output, from Book)
+        s.members.clear(); // plans clean — only the op-set refusal fires
+        s
+    }];
+    shapes.push({
+        let mut s = book_shapes().remove(2); // NewBookInput (standalone)
+        s.ordinal = 3;
+        s
+    });
+
+    let op = DddServiceOperation {
+        name: "summarise".to_string(),
+        params: Vec::new(),
+        return_type: Some(serde_json::json!({ "dto": "BookSummary" })),
+        return_multiplicity: None,
+        is_protected: false,
+        capabilities: Vec::new(),
+        condition: None,
+        condition_paths: Vec::new(),
+        bodies: Default::default(),
+        body_receiver: None,
+        throws: Vec::new(),
+        emits: Vec::new(),
+        transition: None,
+        delegation_target: None,
+        delegation_operation: None,
+        child_scope: None,
+        invokes: Vec::new(),
+        ordinal: 0,
+    };
+    let mut model = model(shapes);
+    // The routes predicate resolves the BOUND entity's design class — the
+    // mock model carries the design node a real model always has.
+    model.designs = vec![codegraph_core::types::DddDesignNode {
+        application: "Library".to_string(),
+        module: "catalog".to_string(),
+        class: "Book".to_string(),
+        resolved_title: Some("BookType".to_string()),
+        stereotype: "entity".to_string(),
+        ordinal: 0,
+        is_abstract: false,
+        flags: Default::default(),
+        machine_json: None,
+        aggregate_boundary: None,
+        invariants: Vec::new(),
+        child_operations: Vec::new(),
+    }];
+    model.services = vec![DddServiceNode {
+        application: "Library".to_string(),
+        module: "catalog".to_string(),
+        name: "Catalog".to_string(),
+        description: None,
+        ordinal: 1,
+        dependencies: Vec::new(),
+        decision_dependencies: Vec::new(),
+        operations: vec![op],
+    }];
+    engine.ingest_ddd_model(&model).await.unwrap();
+
+    let refusals =
+        codegraph_generate::ddd::boundary_derive::projection_refusals(&engine, &config())
+            .await
+            .expect("walker");
+    assert!(
+        refusals
+            .iter()
+            .any(|r| r.contains("summarise") && r.contains("exposes no `read`")),
+        "the walker must refuse the no-read projection read: {refusals:?}"
     );
 }

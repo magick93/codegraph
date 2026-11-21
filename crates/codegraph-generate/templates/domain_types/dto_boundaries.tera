@@ -13,7 +13,10 @@ pub use crate::codelist::{{ import }};
 {%- for import in boundary_imports %}
 pub use crate::dto::{{ import.module }}::{{ import.name }};
 {%- endfor %}
-{% endif %}
+{%- for import in response_imports %}
+use crate::{{ import.domain }}::{{ import.module }}::dto_response::{{ import.name }};
+{%- endfor %}
+{%- endif %}
 {%- for boundary in boundaries %}
 
 /// Modeled {{ boundary.direction }} DTO boundary `{{ boundary.name }}` (DD3).
@@ -42,4 +45,23 @@ pub struct {{ boundary.name }} {
     pub {{ field.name }}: {{ field.rust_type }},
 {%- endfor %}
 }
+{%- if boundary.constructor %}
+
+/// Construct the projection from the loaded `{{ boundary.constructor.entity_response }}`
+/// (issue #768). ONE construction site for the read model — the projection
+/// finder and the projection endpoint both call it, so neither can drift
+/// from the derived-member computation. `select` members copy the matching
+/// response field (Option-aware); `derive` members were lowered at
+/// generation time through the bounded arithmetic subset (`+ - * /` over
+/// numeric stored fields). A field divisor follows Rust division semantics
+/// (a zero divisor panics; a literal-zero divisor is refused at generation
+/// time).
+impl {{ boundary.name }} {
+    pub fn from_row(r: &{{ boundary.constructor.entity_response }}) -> Self {
+        Self {
+{{ boundary.constructor.construct }}
+        }
+    }
+}
+{%- endif %}
 {%- endfor %}

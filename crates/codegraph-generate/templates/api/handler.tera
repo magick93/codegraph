@@ -1252,7 +1252,7 @@ fn service_op_not_implemented(reason: impl Into<String>) -> AppError {
         ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
     ),
 {% endif %}
-{% elif op.execution.kind == "create" %}
+{% elif op.execution.kind == "create" or (op.execution.kind == "projection_read" and op.execution.plan.collection) %}
     path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/actions/{{ op.snake }}",
 {% else %}
     path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/actions/{{ op.snake }}",
@@ -1277,6 +1277,14 @@ fn service_op_not_implemented(reason: impl Into<String>) -> AppError {
         (status = 403, description = "Denied by the actor policy"),
         (status = 422, description = "Invalid request body, or a failed validation"),
 {% if create_invariant_block | default(value="") | length > 0 %}        (status = 409, description = "Denied by a design invariant (INVARIANT_VIOLATION)"),
+{% endif %}{% elif op.execution.kind == "projection_read" %}
+{% if op.execution.plan.collection %}
+        (status = 200, description = "The projection over the session's collection", body = [{{ project.domain_types_crate }}::dto::{{ op.execution.plan.module }}::{{ op.execution.plan.projection }}]),
+{% else %}
+        (status = 200, description = "The projection over the loaded record", body = {{ project.domain_types_crate }}::dto::{{ op.execution.plan.module }}::{{ op.execution.plan.projection }}),
+{% endif %}
+        (status = 403, description = "Denied by the actor policy"),
+{% if not op.execution.plan.collection %}        (status = 404, description = "Not found"),
 {% endif %}{% else %}
         (status = 200, description = "Accepted"),
         (status = 403, description = "Denied by the actor policy"),
@@ -1321,6 +1329,8 @@ pub async fn {{ op.fn_name }}(
 {% endif %}
     CreateBody(body): CreateBody,
 {% endif %}
+{% elif op.execution.kind == "projection_read" and op.execution.plan.collection %}
+    body: Option<Json<serde_json::Value>>,
 {% else %}
 {% if role == "child" %}
 {% if ancestor_path_params >= 2 %}
@@ -1366,6 +1376,30 @@ pub async fn {{ op.fn_name }}(
 {% elif op.execution.kind == "read" %}
     Ok(axum::Json(serde_json::json!({
         "data": response,
+        "meta": { "correlation_id": correlation_id.to_string() }
+    })).into_response())
+{% elif op.execution.kind == "projection_read" %}
+    // Projection read (issue #768): the read model is constructed through
+    // the modeled boundary's `from_row` — the same constructor the
+    // repository projection finder uses, so both read paths compute the
+    // derived members identically. `derive` members were lowered at
+    // generation time (the bounded arithmetic subset); a field divisor
+    // follows Rust division semantics.
+{% if op.execution.plan.collection %}
+    let (rows, _) = state.{{ domain }}_{{ module_name }}_queries
+        .list_filtered(0, 1000, &std::collections::HashMap::new(){% if is_auditable %}, false{% endif %}{% if ux_sort_fields %}, None{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone())
+        .await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+            AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to list {{ entity_name }}")
+                .with_correlation_id(correlation_id)
+        })?;
+    let projection: Vec<{{ project.domain_types_crate }}::dto::{{ op.execution.plan.module }}::{{ op.execution.plan.projection }}> =
+        rows.iter().map({{ project.domain_types_crate }}::dto::{{ op.execution.plan.module }}::{{ op.execution.plan.projection }}::from_row).collect();
+{% else %}
+    let projection = {{ project.domain_types_crate }}::dto::{{ op.execution.plan.module }}::{{ op.execution.plan.projection }}::from_row(&response);
+{% endif %}
+    Ok(axum::Json(serde_json::json!({
+        "data": projection,
         "meta": { "correlation_id": correlation_id.to_string() }
     })).into_response())
 {% elif op.execution.kind == "create" %}
