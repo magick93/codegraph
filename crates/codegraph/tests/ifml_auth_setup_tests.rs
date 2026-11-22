@@ -474,8 +474,9 @@ async fn seeded_auth_specs_import_api_url_and_carry_seed_headers() {
     );
     assert!(
         seeded.contains("const seedKey = apiKeyFor(admin);")
-            && seeded
-                .contains("const seedHeaders = seedKey ? { Authorization: `Bearer ${seedKey}` } : undefined;"),
+            && seeded.contains(
+                "const seedHeaders = seedKey ? { Authorization: `Bearer ${seedKey}` } : undefined;"
+            ),
         "the seed must carry the permitted persona's key (issue #808):\n{seeded}"
     );
     assert!(

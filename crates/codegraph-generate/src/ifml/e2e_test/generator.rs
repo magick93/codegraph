@@ -389,15 +389,15 @@ impl IfmlE2eTestGenerator {
             // redirects mid-click (the detach loop). The view's persona
             // tests already encode the permit decision; resolve before
             // `spec` moves into the spec family.
-            let action_persona = if auth_enabled && (!vc.roles.is_empty() || !vc.requires.is_empty())
-            {
-                spec.personas
-                    .iter()
-                    .find(|p| p.permitted)
-                    .map(|p| super::auth::persona_id(&p.actor))
-            } else {
-                None
-            };
+            let action_persona =
+                if auth_enabled && (!vc.roles.is_empty() || !vc.requires.is_empty()) {
+                    spec.personas
+                        .iter()
+                        .find(|p| p.permitted)
+                        .map(|p| super::auth::persona_id(&p.actor))
+                } else {
+                    None
+                };
             if has_tests(&spec) {
                 specs.push(spec);
             }

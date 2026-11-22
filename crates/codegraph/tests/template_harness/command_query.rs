@@ -199,7 +199,14 @@ async fn database_errors_keep_their_source_detail() {
     project.database.persistence_provider =
         codegraph::generate::profile::PersistenceProvider::Cornucopia;
     let repo = generate::ddd::cornucopia_repo::CornucopiaRepoGenerator::new(&output_dir)
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &project)
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        )
         .await
         .unwrap();
     let content = &repo[0].content;
