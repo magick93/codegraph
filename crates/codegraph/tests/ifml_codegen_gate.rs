@@ -473,12 +473,20 @@ async fn ensure_generated() -> Result<(), String> {
 /// re-installing it costs minutes. It is stashed across the wipe (a rename on
 /// one filesystem, no copy).
 fn reset_generated_app() -> Result<(), String> {
-    let app = app_dir();
+    reset_generated_app_in(&gate_root())
+}
+
+/// [`reset_generated_app`] over an explicit gate root, so the #694 rule is
+/// unit-testable without a 20-minute provision (the `review_fixture_gate`
+/// precedent: the pin plants a simulated older generation and asserts the
+/// reset removes the generated source while keeping the install cache).
+fn reset_generated_app_in(root: &Path) -> Result<(), String> {
+    let app = root.join("app");
     if !app.exists() {
         return Ok(());
     }
-    let keep = svelte_dir().join("node_modules");
-    let stash = gate_root().join("node_modules.stash");
+    let keep = app.join("svelte").join("node_modules");
+    let stash = root.join("node_modules.stash");
     let stashed = keep.is_dir();
     if stashed {
         let _ = fs::remove_dir_all(&stash);
@@ -492,7 +500,7 @@ fn reset_generated_app() -> Result<(), String> {
     }
     fs::create_dir_all(&app).map_err(|e| e.to_string())?;
     if stashed {
-        fs::create_dir_all(svelte_dir()).map_err(|e| e.to_string())?;
+        fs::create_dir_all(app.join("svelte")).map_err(|e| e.to_string())?;
         fs::rename(&stash, &keep).map_err(|e| format!("restore {}: {e}", keep.display()))?;
     }
     println!(
@@ -515,6 +523,63 @@ fn isolate_generated_workspace() -> Result<(), String> {
         fs::write(&manifest, format!("{content}\n[workspace]\n")).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// The #694 reset's executable contract: a simulated older generation's files
+/// go, the content-keyed `node_modules` install cache and the cargo cache
+/// beside the app stay, and no stash directory is left behind.
+///
+/// TEETH: dropping the `remove_dir_all(&app)` (or the stash restore) fails
+/// this test; the live T0-T4 assertions alone cannot see the reset regress
+/// until an artifact actually goes stale.
+#[test]
+fn reset_generated_app_sweeps_the_source_and_keeps_the_caches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let app = root.join("app");
+    let plant = |rel: &str, body: &str| {
+        let path = app.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, body).unwrap();
+    };
+    // A removed view's route dir + page class, a generated manifest.
+    plant("src/routes/removedview/+page.svelte", "<!-- gone -->");
+    plant("tests/pages/removed-view-page.ts", "// gone");
+    plant("Cargo.toml", "[package]\nname = \"app\"\n");
+    // The install cache (content-keyed by `NodeProject::ensure_install`).
+    plant("svelte/node_modules/marker", "installed");
+    plant("svelte/package.json", "{}");
+    // The cargo cache lives beside the app, not inside it.
+    let cargo_cache = root.join("cargo-target/debug/marker");
+    fs::create_dir_all(cargo_cache.parent().unwrap()).unwrap();
+    fs::write(&cargo_cache, "compiled").unwrap();
+
+    reset_generated_app_in(root).expect("reset");
+
+    assert!(app.is_dir(), "the app dir is recreated");
+    for stale in [
+        "src/routes/removedview/+page.svelte",
+        "tests/pages/removed-view-page.ts",
+        "Cargo.toml",
+        "svelte/package.json",
+    ] {
+        assert!(
+            !app.join(stale).exists(),
+            "stale generated file {stale} survived the reset"
+        );
+    }
+    assert!(
+        app.join("svelte/node_modules/marker").is_file(),
+        "the node_modules install cache must survive the wipe"
+    );
+    assert!(
+        cargo_cache.is_file(),
+        "the cargo cache beside the app must survive the wipe"
+    );
+    assert!(
+        !root.join("node_modules.stash").exists(),
+        "the stash must be consumed, never left for the next run"
+    );
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

@@ -31,6 +31,11 @@
 #[path = "service_ops_fixture.rs"]
 mod fixture;
 
+// The #694 source reset (shared with the other persistent-dir gates), plus its
+// node-free pins — see the module docs for why suffix discovery needs it.
+#[path = "gate_reset.rs"]
+mod gate_reset;
+
 #[path = "test_framework/mod.rs"]
 mod test_framework;
 
@@ -648,10 +653,10 @@ async fn service_ops_contract_serves_over_http() {
     // entity order) is still discovered by its `_pay_run_actions.hurl` suffix
     // and then hurl'd against a newer app: a stale contract read as the
     // current one, which is exactly how a missing required field looked like a
-    // regression on a clean master (#687).
+    // regression on a clean master (#687, issue #694). The reset is the shared,
+    // pinned helper so this gate cannot drift from its siblings.
     let output = gate_app_dir();
-    let _ = fs::remove_dir_all(&output);
-    fs::create_dir_all(&output).expect("create gate app dir");
+    gate_reset::reset_generated_source(&output).expect("reset the gate app dir");
     let fixture_root = fixture.config.parent().expect("fixture root").to_path_buf();
     let profiles_path = write_profiles(&fixture_root);
 
@@ -1019,9 +1024,9 @@ async fn aggregate_child_actions_serve_over_http() {
     let root = child_gate_root();
     let output = root.join("app");
     // Same stale-source rule as the payroll gate above (the cargo cache lives
-    // in `root/target`, not here).
-    let _ = fs::remove_dir_all(&output);
-    fs::create_dir_all(&output).expect("create child gate app dir");
+    // in `root/target`, not here): an older generation's numbered contract is
+    // discovered by its `_pay_run_line_actions.hurl` suffix (#687, issue #694).
+    gate_reset::reset_generated_source(&output).expect("reset the child gate app dir");
     let fixture_root = fixture.config.parent().expect("fixture root").to_path_buf();
     let profiles_path = write_profiles(&fixture_root);
 

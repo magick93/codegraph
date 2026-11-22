@@ -53,6 +53,11 @@
 #[path = "test_framework/mod.rs"]
 mod test_framework;
 
+// The #694 source reset (shared with the other persistent-dir gates), plus its
+// node-free pins.
+#[path = "gate_reset.rs"]
+mod gate_reset;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -789,7 +794,11 @@ async fn media_plane_end_to_end_over_rustfs() {
     // ── 1. Generate + migrate ───────────────────────────────────────────
     let profiles = write_profiles(&gate_root().join("fixture"));
     let app_dir = gate_root().join("app");
-    let _ = fs::remove_dir_all(&app_dir);
+    // Issue #694: the gate root persists (logs, the fixture), and the app's
+    // cargo cache is a sibling (`/tmp/opencode/ws695-target`) — but the
+    // generated SOURCE must be regenerated from clean, or a file an older
+    // generation emitted is asserted/typechecked as this run's.
+    gate_reset::reset_generated_source(&app_dir).expect("reset the generated app dir");
     generate(&profiles, &app_dir).await;
     let route_module =
         fs::read_to_string(app_dir.join(ROUTE_MODULE)).expect("the media route module must emit");
