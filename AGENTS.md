@@ -4215,7 +4215,14 @@ result (see "Template Overrides → Embedding watch").
 
 A gate that keeps a persistent output directory must, at run start, sweep the
 files the previous generation produced (keep the build cache) or key discovery
-on content (#694) — never `--test-threads=1`.
+on content (#694) — never `--test-threads=1`. The build/install cache must live
+OUTSIDE the swept tree or be stash-renamed around the wipe, and a hand-authored
+artifact riding a swept tree must be re-seeded by the gate after regeneration (a
+`post_generate` hook), never snapshot-restored — restoring the pre-wipe
+directory resurrects an older generation's numbered contracts. Two paths sharing
+one tree share a serialized provision (a cross-process lock), not a thread
+count. Shared helpers + their pins: `tests/gate_reset.rs`,
+`tests/review_fixture_gate.rs`.
 
 ```bash
 # Rust tests

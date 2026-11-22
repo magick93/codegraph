@@ -29,6 +29,11 @@
 #[path = "service_ops_fixture.rs"]
 mod fixture;
 
+// The #694 source reset (shared with the other persistent-dir gates), plus its
+// node-free pins.
+#[path = "gate_reset.rs"]
+mod gate_reset;
+
 #[path = "test_framework/mod.rs"]
 mod test_framework;
 
@@ -347,8 +352,7 @@ async fn design_invariants_enforce_over_http() {
     let fixture = fixture::write_invariant_fixture();
     let _engine = fixture::ingest_invariant(&fixture).await;
     let output = gate_app_dir();
-    let _ = fs::remove_dir_all(&output);
-    fs::create_dir_all(&output).expect("create gate app dir");
+    gate_reset::reset_generated_source(&output).expect("reset the gate app dir");
     let fixture_root = fixture.config.parent().expect("fixture root").to_path_buf();
     let profiles_path = write_profiles(&fixture_root);
 
