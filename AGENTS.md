@@ -3131,10 +3131,11 @@ cargo test -p codegraph --test ifml_codegen_gate -- --ignored --nocapture
 ```
 
 Requires node 22 + chromium (auto-installed) + Postgres (`DATABASE_URL`, default
-`postgres://postgres:postgres@localhost:5432/postgres`; a `postgres:16` docker
-container on 127.0.0.1:15432 is bootstrapped as fallback). Unique DB per run,
+`postgres://postgres:postgres@localhost:5432/postgres`; there is no
+container-provisioning fallback — start the supabase image container yourself
+when needed; the error names the one-liner). Unique DB per run,
 dropped on finish; warm run ~110s. Runs locally and on the nightly
-`.github/workflows/ifml-gate.yml` (workflow_dispatch + 03:00 UTC cron, postgres:16
+`.github/workflows/ifml-gate.yml` (workflow_dispatch + 03:00 UTC cron, supabase
 service, gate logs artifact on failure) — PR CI stays node-free.
 
 ### IFML doctor gate (issue #468 phase 1)
@@ -5121,7 +5122,7 @@ an already-migrated database (ops-harness band, admin-CLI run, boot, or a
    Hooks stream under `[hook:<name>]` and are timed as separate metrics rows.
 6. CI wiring: run `cargo run -p testkit -- api --metrics ci.tsv` in a job whose
    Postgres service IS the Supabase postgres image
-   (`public.ecr.aws/supabase/postgres:17.6.1.132` — a plain `postgres:<n>`
+   (`public.ecr.aws/supabase/postgres:17.12.0.000` — a plain `postgres:<n>`
    cannot serve the band; issue #640/#708). The suite is shape-B (issue
    #709): a target that already serves the band is used as-is, no stack
    startup, no `[[supabase]]` manifest section needed. GoTrue/PostgREST are

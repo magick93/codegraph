@@ -91,7 +91,7 @@ jobs:
     # unchanged): the image creates that role too.
     services:
       postgres:
-        image: public.ecr.aws/supabase/postgres:17.6.1.132
+        image: public.ecr.aws/supabase/postgres:17.12.0.000
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: supabase_admin
@@ -164,7 +164,7 @@ jobs:
     runs-on: ubuntu-24.04
     services:
       postgres:
-        image: public.ecr.aws/supabase/postgres:17.6.1.132
+        image: public.ecr.aws/supabase/postgres:17.12.0.000
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: supabase_admin

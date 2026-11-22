@@ -87,7 +87,7 @@ fn test_ops_integration_provisions_the_supabase_image_service() {
     assert!(
         image.contains("supabase/postgres"),
         "the test-ops-integration service image must be the Supabase \
-         postgres image (public.ecr.aws/supabase/postgres:17.6.1.132, the \
+         postgres image (public.ecr.aws/supabase/postgres:17.12.0.000, the \
          same image ifml-gate.yml / entity-gate.yml / the gate harness use \
          — issue #708); got `{image}`"
     );

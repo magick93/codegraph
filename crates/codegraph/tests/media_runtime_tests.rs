@@ -35,7 +35,7 @@
 //!
 //! Needs: `docker` (with the pinned `rustfs/rustfs` image pulled — the nightly workflow
 //! pulls it), `curl` ≥ 8.0 (`--aws-sigv4`), `psql`, and the **Supabase
-//! postgres image** (`public.ecr.aws/supabase/postgres:17.6.1.132`) at
+//! postgres image** (`public.ecr.aws/supabase/postgres:17.12.0.000`) at
 //! `DATABASE_URL` or via the gate container fallback (#640: a plain
 //! `postgres:<n>` service is not a supported target — the generated stack
 //! needs the `auth` schema).

@@ -36,7 +36,7 @@ pub const SUPABASE_CLI_VERSION: &str = "3.2.0";
 /// `db_integration`'s fail-closed mode (`CODEGRAPH_REQUIRE_SUPABASE`,
 /// issue #708) names it in the failure message so a red lane says what to
 /// point `DATABASE_URL` at.
-pub const SUPABASE_POSTGRES_IMAGE: &str = "public.ecr.aws/supabase/postgres:17.6.1.132";
+pub const SUPABASE_POSTGRES_IMAGE: &str = "public.ecr.aws/supabase/postgres:17.12.0.000";
 
 /// `supabase@{SUPABASE_CLI_VERSION}` — the spec npm resolves.
 pub fn pinned_cli_spec() -> String {

@@ -71,7 +71,7 @@ ops-db-integration:
         export CODEGRAPH_REQUIRE_SUPABASE=1
     else
         echo "WARN ops — $DB_URL is plain Postgres (missing: ${SUPA}): the 2 full-band tests will SKIP."
-        echo "        point DATABASE_URL at public.ecr.aws/supabase/postgres:17.6.1.132, or set CODEGRAPH_REQUIRE_SUPABASE=1 to fail instead of skip"
+        echo "        point DATABASE_URL at public.ecr.aws/supabase/postgres:17.12.0.000, or set CODEGRAPH_REQUIRE_SUPABASE=1 to fail instead of skip"
     fi
     cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture
 
@@ -187,7 +187,7 @@ ops-api-lane API_DB_URL='postgres://postgres:postgres@localhost:5432/postgres':
     fi
     if ! psql "$API_DB_URL" -Atc "SELECT 1 FROM pg_namespace WHERE nspname='auth'" >/dev/null 2>&1; then
         echo "WARN ops — $API_DB_URL is plain Postgres (no auth schema): the testkit api suite needs a Supabase-compatible target; skipping"
-        echo "        point API_DB_URL at public.ecr.aws/supabase/postgres:17.6.1.132 (or the fixture's manual stack on 54350), or set CODEGRAPH_REQUIRE_SUPABASE=1 to fail instead of skip"
+        echo "        point API_DB_URL at public.ecr.aws/supabase/postgres:17.12.0.000 (or the fixture's manual stack on 54350), or set CODEGRAPH_REQUIRE_SUPABASE=1 to fail instead of skip"
         if [ "${CODEGRAPH_REQUIRE_SUPABASE:-0}" != "1" ]; then
             exit 0
         fi

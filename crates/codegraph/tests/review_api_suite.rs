@@ -21,9 +21,13 @@
 //!    requests with 401 (`hurl/01`, `10+`).
 //!
 //! The test runs the FULL `api` suite against the fixture
-//! `crates/review/generated-candidate/` on a scratch database (unique per run,
-//! dropped at the end): migration → server boot → hurl contracts → curl smoke
-//! → RLS checks → graceful shutdown. The suite OWNS the migration stage now:
+//! `crates/review/generated-candidate/` on the resolved base target's DEFAULT
+//! database — the supabase container is used precisely because its default
+//! database carries the `auth` bootstrap; we never create databases:
+//! migration → server boot → hurl contracts → curl smoke → RLS checks →
+//! graceful shutdown. Repeat runs apply ~0 files (`platform._migrations`,
+//! #756) and the target accumulates demo rows; `supabase db reset` restores
+//! it when wanted. The suite OWNS the migration stage now:
 //! `stage_database` applies the band and writes `platform._migrations`, and
 //! the app's boot migrator must apply NOTHING over it (issue #756) — asserted
 //! from the app log. There is no test-side bookkeeping shim anymore.
@@ -44,7 +48,10 @@
 //! generators so the checked-in manifest and hurl dir survive), under the
 //! cross-process fixture lock shared with `entity_codegen_gate` and
 //! `rules_guard_api_gate` — so the hurl contracts the suite runs are always
-//! this run's, never an older generation's renumbered leftovers.
+//! this run's, never an older generation's renumbered leftovers. The suite
+//! runs against the COMMITTED manifest with the resolved base injected
+//! through `CODEGRAPH_API_DATABASE_URL` (the #709 whole-block override) — no
+//! temp manifest, no scratch database.
 //!
 //! Self-contained but slow: the first run builds the fixture app from cold
 //! (~10-20 minutes); warm runs are a few minutes. Needs a Supabase-compatible
@@ -58,9 +65,8 @@
 
 use std::path::Path;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use codegraph_ops::db::{psql_exec, psql_query};
+use codegraph_ops::db::psql_query;
 use codegraph_ops::pg::PgTarget;
 use codegraph_ops::supabase::{CompatibilityGate, compatibility_gate};
 use test_framework::postgres::resolve_base_target;
@@ -84,10 +90,9 @@ use review_api_suite_regen::fixture_dir;
 async fn supabase_compatible_base() -> PgTarget {
     let base = resolve_base_target().await.unwrap_or_else(|e| {
         panic!(
-            "review_api_suite could not resolve a Postgres base target: {e}. \
-             Point DATABASE_URL at {} or make docker available for the pinned \
-             fallback container (issue #709).",
-            codegraph_ops::supabase::SUPABASE_POSTGRES_IMAGE
+            "review_api_suite could not resolve a Postgres base target: {e} \
+             (issue #709: point DATABASE_URL at the supabase image container \
+             whose default database carries the bootstrap).",
         )
     });
     match compatibility_gate(&base).await {
@@ -122,74 +127,10 @@ fn skip_if_no_tooling() -> bool {
     !(psql && hurl)
 }
 
-/// Unique scratch database name for this run.
-fn scratch_db_name() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("review_apitest_{nanos:x}")
-}
-
-/// Regenerate the fixture app in place from the current templates.
-///
-/// Goes through the #694 provision step: sweep the previous generation's files,
-/// regenerate, record the new produced set — under the cross-process fixture
-/// gate the caller holds for its whole body.
+/// Regenerate the committed fixture under the shared cross-process gate
+/// (issue #694) — the regeneration half of the gate.
 async fn provision_fixture(gate: &review_api_suite_regen::FixtureGate) -> Result<(), String> {
     gate.provision().await
-}
-
-/// Rewrite the `[database.api]` block of the fixture manifest at the resolved
-/// base target. The WHOLE block is retargeted — host/port/user/password and
-/// the per-run scratch database — because the base target is no longer
-/// assumed to be the manifest's `localhost:54350` (shape B may resolve the
-/// pinned fallback container on `127.0.0.1:15432`). Everything else — smoke
-/// entity, hurl contracts, org ids, ports, the manual `[supabase]` section —
-/// is copied verbatim.
-fn retarget_manifest_at_scratch(fixture_manifest: &str, target: &PgTarget) -> String {
-    let mut out: Vec<String> = Vec::new();
-    let mut in_api_block = false;
-    for line in fixture_manifest.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            in_api_block = trimmed == "[database.api]";
-            out.push(line.to_string());
-            continue;
-        }
-        if in_api_block {
-            let port = target.port.to_string();
-            let rewritten = [
-                ("host", target.host.as_str()),
-                ("port", port.as_str()),
-                ("user", target.user.as_str()),
-                ("password", target.password.as_str()),
-                ("database", target.db.as_str()),
-            ]
-            .into_iter()
-            .find(|(key, _)| {
-                trimmed.starts_with(key)
-                    && trimmed
-                        .trim_start_matches(*key)
-                        .trim_start()
-                        .starts_with('=')
-            });
-            if let Some((key, value)) = rewritten {
-                if key == "port" {
-                    out.push(format!("port = {value}"));
-                } else {
-                    out.push(format!("{key} = \"{value}\""));
-                }
-                continue;
-            }
-        }
-        out.push(line.to_string());
-    }
-    let mut text = out.join("\n");
-    if !text.ends_with('\n') {
-        text.push('\n');
-    }
-    text
 }
 
 fn tail(text: &str, n: usize) -> String {
@@ -198,8 +139,9 @@ fn tail(text: &str, n: usize) -> String {
     lines[start..].join("\n")
 }
 
-/// The gate: regenerate the fixture, provision a scratch database, run the
-/// ops api suite against it, and assert the pool-mode + authz outcomes.
+/// The gate: regenerate the fixture, run the ops api suite against the
+/// resolved base target's DEFAULT database, and assert the pool-mode + authz
+/// outcomes.
 #[tokio::test]
 #[ignore = "requires Postgres + hurl + a (cold) cargo build of the fixture app"]
 async fn review_fixture_api_suite_passes_in_app_pool_mode() {
@@ -228,25 +170,7 @@ async fn review_fixture_api_suite_passes_in_app_pool_mode() {
     // build on a run that could never exercise the contracts.
     assert_generated_hurl_contracts(&fixture_dir(), &fixture_manifest());
 
-    // ── scratch database ──────────────────────────────────────────────
-    let scratch = scratch_db_name();
-    psql_exec(&base, &format!("CREATE DATABASE {scratch};"))
-        .await
-        .expect("create scratch database");
-    println!("scratch database: {scratch}");
-
-    let result = run_suite_on_scratch(&base, &scratch).await;
-
-    // ── cleanup (best effort) ─────────────────────────────────────────
-    let _ = psql_exec(
-        &base,
-        &format!("DROP DATABASE IF EXISTS {scratch} WITH (FORCE);"),
-    )
-    .await;
-
-    if let Err(err) = result {
-        panic!("{err}");
-    }
+    run_suite_on_base(&base).await;
 }
 
 /// The checked-in fixture manifest (the regeneration deliberately strips the
@@ -305,32 +229,20 @@ fn assert_generated_hurl_contracts(fixture: &Path, manifest: &str) {
     );
 }
 
-/// Body of the gate after the scratch database exists — split out so the
-/// caller can drop the database no matter how this finishes.
-async fn run_suite_on_scratch(base: &PgTarget, scratch: &str) -> Result<(), String> {
+/// Body of the gate once the fixture is provisioned — split out so the flow
+/// reads top to bottom. The suite runs against the COMMITTED manifest with
+/// the resolved base injected through `CODEGRAPH_API_DATABASE_URL` (the #709
+/// whole-block override): no temp manifest, no scratch database. The target
+/// accumulates demo rows across runs; `supabase db reset` restores it.
+async fn run_suite_on_base(base: &PgTarget) {
     let fixture = fixture_dir();
     let manifest_path = fixture.join("codegraph-ops.toml");
-    let fixture_manifest = std::fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("read fixture manifest: {e}"))?;
-
-    let scratch_target = PgTarget {
-        db: scratch.to_string(),
-        role: "review_apitest".into(),
-        ..base.clone()
-    };
-    let retargeted = retarget_manifest_at_scratch(&fixture_manifest, &scratch_target);
-
-    // The temp manifest MUST live in the fixture dir: OpsConfig resolves the
-    // hurl dir, migrations and output dir relative to the manifest's parent.
-    let temp =
-        tempfile::NamedTempFile::new_in(&fixture).map_err(|e| format!("temp manifest: {e}"))?;
-    std::fs::write(temp.path(), &retargeted).map_err(|e| format!("write temp manifest: {e}"))?;
 
     // Validate the manifest through the harness's own config loader before
     // spending a build on it, and learn the app log path from OpsConfig.
-    let config = codegraph_ops::OpsConfig::load(temp.path())
-        .map_err(|e| format!("temp manifest invalid: {e}"))?;
-    assert_eq!(config.api_db.db, scratch, "api db must be the scratch db");
+    let config = codegraph_ops::OpsConfig::load(&manifest_path)
+        .map_err(|e| format!("fixture manifest invalid: {e}"))
+        .unwrap();
     assert!(
         config
             .manifest
@@ -351,23 +263,27 @@ async fn run_suite_on_scratch(base: &PgTarget, scratch: &str) -> Result<(), Stri
     // No test-side migration shim: the suite's own stage 2 applies the band
     // (writing `platform._migrations`) and the app boots on it. The boot
     // migrator must therefore apply ZERO files — asserted from the app log
-    // below. This is exactly what a production first boot does.
+    // below. This is exactly what a production first boot does. The base
+    // target reaches the suite through the #709 whole-block override, so the
+    // committed manifest is never edited.
     println!(
-        "running `testkit api` against {scratch} (first run builds the fixture app — be patient)…"
+        "running `testkit api` against {} (first run builds the fixture app — be patient)…",
+        base.url()
     );
     let mut cmd = Command::new("cargo");
     cmd.args(["run", "-p", "testkit", "--release", "--", "--config"])
-        .arg(temp.path())
+        .arg(&manifest_path)
         .arg("api")
         .current_dir(&fixture)
-        .env(DATABASE_URL_ENV, base.url());
+        .env(DATABASE_URL_ENV, base.url())
+        .env(codegraph_ops::config::API_DATABASE_URL_ENV, base.url());
     // The gate MUST exercise pool mode: never let an outer APP_DATABASE_URL
     // disable the app_user provisioning / pool-mode export.
     cmd.env_remove("APP_DATABASE_URL");
 
     let output = cmd
         .output()
-        .map_err(|e| format!("failed to spawn cargo: {e}"))?;
+        .unwrap_or_else(|e| panic!("failed to spawn cargo: {e}"));
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -377,8 +293,16 @@ async fn run_suite_on_scratch(base: &PgTarget, scratch: &str) -> Result<(), Stri
     // ── pool-mode proof (independent of the suite's exit status) ──────
     // The server logs `tracing::info!(mode = ?pool_mode, "database pool mode")`
     // as JSON: `{"fields":{"mode":"AppUser",...,"message":"database pool mode"}}`.
-    let app_log = std::fs::read_to_string(&log_file)
-        .map_err(|e| format!("read app log {}: {e}", log_file.display()))?;
+    // A MISSING log means the server never spawned — print the suite's own
+    // output tail so the cause is in the panic, not in a swallowed variable.
+    let app_log = match std::fs::read_to_string(&log_file) {
+        Ok(log) => log,
+        Err(e) => panic!(
+            "read app log {}: {e} (the server never spawned — suite output tail:\n{}",
+            log_file.display(),
+            tail(&combined, 120)
+        ),
+    };
     let pool_mode_line = app_log
         .lines()
         .find(|l| l.contains("database pool mode"))
@@ -419,15 +343,14 @@ async fn run_suite_on_scratch(base: &PgTarget, scratch: &str) -> Result<(), Stri
         // Any failure is hard: the Forbidden → 403 mapping has shipped
         // (#169), so a failing scope-denial contract is a real authz
         // regression, never a transitional state.
-        return Err(format!(
+        panic!(
             "testkit api failed ({})\n--- suite output tail ---\n{}\n--- app log tail ---\n{}",
             output.status,
             tail(&combined, 120),
             tail(&app_log, 30)
-        ));
+        );
     }
 
     println!("suite output tail:\n{}", tail(&combined, 40));
     println!("ALL GATE ASSERTIONS PASSED (pool mode + authz over HTTP)");
-    Ok(())
 }

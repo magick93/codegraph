@@ -425,7 +425,7 @@ the `db_integration` band tests use) and, when it already serves the band,
 **skips `supabase start` entirely and runs against it** — no manifest
 `[[supabase]]` section is needed in this mode (there is no stack to
 start). Point the job's service at
-`public.ecr.aws/supabase/postgres:17.6.1.132` and the suite is
+`public.ecr.aws/supabase/postgres:17.12.0.000` and the suite is
 shape-B from the first request. The stack-startup path (the pinned
 `npx --yes supabase@3.2.0 start`, issue #743) remains the fallback for a
 down stack. Shape A — `npx supabase start` inside the CI job — is a
@@ -436,23 +436,25 @@ and 1–2 minutes of stack boot per PR.
 same shape-B contract, and it is the reference wiring for a host-side run:
 
 - `crates/codegraph/tests/review_api_suite.rs` resolves its base target
-  through `test_framework::postgres::resolve_base_target()` —
-  `DATABASE_URL` when it is reachable **and** can host per-run databases,
-  else the pinned Supabase-image container on `127.0.0.1:15432` (reused
-  across warm runs).
+  through `test_framework::postgres::resolve_base_target()` — `DATABASE_URL`
+  (default `localhost:5432`, CI's service); there is no container fallback,
+  and the error names the supabase image + the `docker run` one-liner.
 - It HARD-asserts `compatibility_gate == Run` before doing any slow work. A
   plain `postgres:<n>` target aborts in seconds naming
-  `public.ecr.aws/supabase/postgres:17.6.1.132`; the 403/404/RLS legs are
+  `public.ecr.aws/supabase/postgres:17.12.0.000`; the 403/404/RLS legs are
   not skippable (a silent skip would make the gate vacuous).
-- It retargets the WHOLE `[database.api]` block (host/port/user/password +
-  the per-run scratch database) at the resolved base target, then invokes
-  the plain `testkit api` — no `--no-migrate`. Stage 2 applies the band and
-  writes `platform._migrations`; the app's boot migrator then applies ZERO
-  files (asserted from the app log as `boot-migrations: 0 applied`). The
-  pre-#756 test-side `seaql_migrations` shim is gone: one tracking table is
-  the honest consumer path.
-- It drops the scratch database at the end and exports nothing that would
-  disable `APP_DATABASE_URL` pool mode.
+- It runs the plain `testkit api` against the base target's DEFAULT database
+  (never `CREATE DATABASE` — the container is used precisely because its
+  default database carries the `auth` bootstrap), injecting the target
+  through the `CODEGRAPH_API_DATABASE_URL` whole-block override (#709) with
+  the COMMITTED fixture manifest — no temp manifest. No `--no-migrate`:
+  stage 2 applies the migration set and writes `platform._migrations`; the
+  app's boot migrator then applies ZERO files (asserted from the app log as
+  `boot-migrations: 0 applied`). The pre-#756 test-side `seaql_migrations`
+  shim is gone: one tracking table is the honest consumer path. Repeat runs
+  apply ~0 files; the target accumulates demo rows, and `supabase db reset`
+  restores it when wanted.
+- It exports nothing that would disable `APP_DATABASE_URL` pool mode.
 
 **The committed fixture manifest shape**
 (`crates/review/generated-candidate/codegraph-ops.toml`) is generated
@@ -517,8 +519,8 @@ the lane fails in confusing ways: an old-shaped `platform` table survives a
 newer band whose files no longer recreate it (`CREATE TABLE IF NOT EXISTS`
 no-ops over the old shape), and the pre-#427 tolerant runner moves on —
 the failure surfaces minutes later as runtime `column does not exist`
-errors in the hurl legs. `supabase db reset` (or a scratch database)
-before a local lane run. Issue #427's fail-on-error work makes this class
+errors in the hurl legs. `supabase db reset` before a local lane run.
+Issue #427's fail-on-error work makes this class
 loud; until it lands, the freshness requirement is manual.
 
 ---

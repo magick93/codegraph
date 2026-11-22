@@ -1,7 +1,7 @@
 //! Postgres provisioning for full-stack integration tests: resolves a usable
-//! base target (DATABASE_URL, falling back to a dedicated docker supabase
-//! postgres container when the URL is unreachable or lacks CREATEDB), then
-//! creates, migrates and drops unique per-run databases.
+//! base target (`DATABASE_URL` — CI service containers, or a locally started
+//! supabase image container), then creates, migrates and drops unique
+//! per-run databases.
 //!
 //! The base target is deliberately NOT assumed to be a superuser: on the
 //! Supabase image `postgres` is `CREATEROLE` + `BYPASSRLS` but
@@ -12,46 +12,16 @@
 //! (#727).
 
 use std::path::Path;
-use std::process::Command;
-use std::time::{Duration, Instant};
 
 use codegraph_ops::db::{psql_exec, psql_query};
 use codegraph_ops::migrate::run_api_migrations;
 use codegraph_ops::pg::PgTarget;
+use codegraph_ops::supabase::SUPABASE_POSTGRES_IMAGE;
 
-use super::process;
-
-const FALLBACK_CONTAINER: &str = "ifml-gate-pg";
-const FALLBACK_PORT: u16 = 15432;
 /// Prefix for the probe database and per-run databases.
 const DB_PREFIX: &str = "ifml_gate";
 /// Role label used in log messages for per-run databases.
 const DB_ROLE: &str = "gate";
-/// The Supabase postgres image: the generated stack relies on the `auth`
-/// schema (BaseJump sessions, `auth.uid()` RLS) which only this image
-/// ships — plain `postgres:*` has no `auth` schema.
-const FALLBACK_IMAGE: &str = "public.ecr.aws/supabase/postgres:17.6.1.132";
-/// The image's init user (`POSTGRES_USER`). Its entrypoint runs
-/// `psql -U supabase_admin` from `/docker-entrypoint-initdb.d/migrate.sh`
-/// BEFORE that role exists, so any other init user makes the bootstrap exit
-/// early — leaving a container that answers connections with no `auth`
-/// tables, no pgcrypto and no `authenticator` role. Reusing such a container
-/// silently is the #730 defect.
-const FALLBACK_INIT_USER: &str = "supabase_admin";
-const FALLBACK_PASSWORD: &str = "postgres";
-/// The APP user on the fallback image: its bootstrap creates `postgres` (the
-/// role `DATABASE_URL` names in CI) as a NON-superuser, so the tests connect
-/// as a role whose row visibility is only honest because the generated plane
-/// issues `SET LOCAL ROLE app_user`.
-const FALLBACK_APP_USER: &str = "postgres";
-/// How long a freshly created fallback container may take to accept
-/// connections, and to finish the image's bootstrap (the `auth` tables land
-/// later than the port).
-const FALLBACK_READY_TIMEOUT: Duration = Duration::from_secs(60);
-const FALLBACK_CONTRACT_TIMEOUT: Duration = Duration::from_secs(180);
-/// Grace window before a REUSED container is judged stale: a container that
-/// is still finishing a (re)start must not be recreated out from under itself.
-const FALLBACK_REUSE_GRACE: Duration = Duration::from_secs(30);
 /// Environment overrides for the role that runs the prelude's reserved-role
 /// block (the Supabase image's superuser is its `POSTGRES_USER`).
 const ADMIN_USER_ENV: &str = "GATE_ADMIN_USER";
@@ -174,269 +144,46 @@ async fn read_superuser(target: &PgTarget, what: &str) -> Result<bool, String> {
     })
 }
 
-/// Resolve a usable base Postgres target. The configured DATABASE_URL wins
-/// when it can host per-run databases (CI service containers, local docker
-/// defaults). When it is unreachable or lacks CREATEDB (restricted shared
-/// instances), bootstraps a dedicated supabase postgres container on
-/// 127.0.0.1:15432 and reuses it across warm runs.
+/// Resolve a usable base Postgres target: `DATABASE_URL` (default
+/// `postgres://postgres:postgres@localhost:5432/postgres` — CI's service
+/// containers), reachable and able to host per-run databases.
+///
+/// There is deliberately NO container-provisioning fallback: the supabase
+/// image/container is used precisely because its default database carries
+/// the `auth` schema the generated migration set needs, and pointing
+/// `DATABASE_URL` at it is the one-liner the error prints.
 pub async fn resolve_base_target() -> Result<PgTarget, String> {
-    if let Some(target) = base_target() {
-        if database_reachable(&target).await {
-            let probe = format!("CREATE DATABASE {DB_PREFIX}_probe;");
-            if psql_exec(&target, &probe).await.is_ok() {
-                let _ = psql_exec(&target, &format!("DROP DATABASE {DB_PREFIX}_probe;")).await;
-                return Ok(target);
-            }
-            println!(
-                "gate: DATABASE_URL target lacks CREATEDB — falling back to the gate postgres container"
-            );
-        } else {
-            println!(
-                "gate: DATABASE_URL unreachable — falling back to the gate postgres container"
-            );
-        }
-    }
-    ensure_fallback_postgres().await
-}
-
-fn docker(args: &[&str]) -> Result<String, String> {
-    let out = Command::new("docker")
-        .args(args)
-        .output()
-        .map_err(|e| format!("spawn docker: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "docker {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-async fn ensure_fallback_postgres() -> Result<PgTarget, String> {
-    if !process::have_tool("docker") {
-        return Err("no usable DATABASE_URL and docker is not available".to_string());
-    }
-    let target = PgTarget {
-        host: "127.0.0.1".into(),
-        port: FALLBACK_PORT,
-        user: FALLBACK_APP_USER.into(),
-        password: FALLBACK_PASSWORD.into(),
-        db: "postgres".into(),
-        role: DB_ROLE.into(),
+    let Some(target) = base_target() else {
+        return Err(base_unavailable_error("DATABASE_URL is not set"));
     };
-    let running = docker(&[
-        "ps",
-        "--filter",
-        &format!("name={FALLBACK_CONTAINER}"),
-        "-q",
-    ])
-    .map(|v| !v.is_empty())
-    .unwrap_or(false);
-    let exists = running
-        || docker(&[
-            "ps",
-            "-a",
-            "--filter",
-            &format!("name={FALLBACK_CONTAINER}"),
-            "-q",
-        ])
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-    if !exists {
-        run_fallback_container()?;
-        wait_for_fallback_contract(&target, FALLBACK_CONTRACT_TIMEOUT).await?;
-        return Ok(target);
+    if !database_reachable(&target).await {
+        return Err(base_unavailable_error(format!(
+            "{} is not reachable",
+            default_database_url()
+        )));
     }
-    if !running {
-        docker(&["start", FALLBACK_CONTAINER])?;
+    let probe = format!("CREATE DATABASE {DB_PREFIX}_probe;");
+    if psql_exec(&target, &probe).await.is_err() {
+        return Err(base_unavailable_error(format!(
+            "{} lacks CREATEDB",
+            default_database_url()
+        )));
     }
-    // A container this run did not create is never trusted silently (#730):
-    // a half-initialised one answers connections but has no `auth.users`, no
-    // pgcrypto and no `authenticator` role, so reuse must verify the contract
-    // first and recreate when it does not match. A container that is still
-    // finishing a (re)start gets the same grace window the create path has
-    // (M4), and the recreate is announced with one stdout line — visible
-    // because the lanes run `--nocapture` (there is no log channel).
-    wait_until_reachable(&target, FALLBACK_READY_TIMEOUT).await?;
-    let inspect_env = docker(&[
-        "inspect",
-        FALLBACK_CONTAINER,
-        "--format",
-        "{{range .Config.Env}}{{println .}}{{end}}",
-    ])?;
-    let image = docker(&[
-        "inspect",
-        FALLBACK_CONTAINER,
-        "--format",
-        "{{.Config.Image}}",
-    ])?;
-    let mut reasons: Vec<String> = fallback_reuse_contract_errors(&inspect_env, &image);
-    reasons.extend(wait_for_contract_grace(&target, FALLBACK_REUSE_GRACE).await);
-    if reasons.is_empty() {
-        println!("gate: reusing {FALLBACK_CONTAINER} (contract verified)");
-        return Ok(target);
-    }
-    println!(
-        "gate: recreating {FALLBACK_CONTAINER} — its contract is not the gate's: {}",
-        reasons.join("; ")
-    );
-    docker(&["rm", "-f", FALLBACK_CONTAINER])?;
-    run_fallback_container()?;
-    wait_for_fallback_contract(&target, FALLBACK_CONTRACT_TIMEOUT).await?;
+    let _ = psql_exec(&target, &format!("DROP DATABASE {DB_PREFIX}_probe;")).await;
     Ok(target)
 }
 
-/// Start the fallback container with the image contract (#730): the Supabase
-/// image's bootstrap only completes when its init user is `supabase_admin`.
-fn run_fallback_container() -> Result<(), String> {
-    docker(&[
-        "run",
-        "-d",
-        "--name",
-        FALLBACK_CONTAINER,
-        "-e",
-        &format!("POSTGRES_USER={FALLBACK_INIT_USER}"),
-        "-e",
-        &format!("POSTGRES_PASSWORD={FALLBACK_PASSWORD}"),
-        "-p",
-        &format!("127.0.0.1:{FALLBACK_PORT}:5432"),
-        FALLBACK_IMAGE,
-    ])?;
-    println!(
-        "gate: created {FALLBACK_CONTAINER} \
-         (POSTGRES_USER={FALLBACK_INIT_USER}, app user {FALLBACK_APP_USER})"
-    );
-    Ok(())
-}
-
-/// The DOCKER-side half of the reuse contract: the init user and the image.
-/// Pure so a stale container is unit-testable without docker.
-fn fallback_reuse_contract_errors(inspect_env: &str, image: &str) -> Vec<String> {
-    fallback_init_user_error(inspect_env)
-        .into_iter()
-        .chain(fallback_image_error(image))
-        .collect()
-}
-
-/// `docker inspect`'s `.Config.Env` lines → the init-user verdict. Pure so a
-/// stale contract is unit-testable without docker.
-fn fallback_init_user_error(inspect_env: &str) -> Option<String> {
-    // `split_once` rather than `strip_prefix`: `POSTGRES_USERX=…` must not
-    // read as `POSTGRES_USER=…`.
-    let value = inspect_env.lines().find_map(|line| {
-        let (key, value) = line.split_once('=')?;
-        (key.trim() == "POSTGRES_USER").then_some(value)
-    });
-    match value {
-        Some(value) if value.trim() == FALLBACK_INIT_USER => None,
-        Some(value) => Some(format!(
-            "its POSTGRES_USER is {} (must be {FALLBACK_INIT_USER}: the image's bootstrap runs \
-             `psql -U {FALLBACK_INIT_USER}` before that role exists)",
-            value.trim()
-        )),
-        None => Some(format!(
-            "it sets no POSTGRES_USER (must be {FALLBACK_INIT_USER})"
-        )),
-    }
-}
-
-/// The container's image must be the pinned one — a container built from an
-/// older tag is recreated rather than reused.
-fn fallback_image_error(image: &str) -> Option<String> {
-    let image = image.trim();
-    if image == FALLBACK_IMAGE {
-        None
-    } else {
-        Some(format!("its image is {image} (must be {FALLBACK_IMAGE})"))
-    }
-}
-
-/// The initialised-state half of the fallback contract. Deliberately a
-/// PRELUDE-FREE reuse check: it proves the image's bootstrap ran far enough to
-/// create `auth.users`, install pgcrypto and create the `authenticator` role —
-/// it says nothing about the prelude's reserved roles (admin-only), the
-/// `pgmq` schema, or the app role's attributes, which a prelude-using gate
-/// exercises for itself. One round trip; empty when the container is usable.
-async fn fallback_contract_errors(target: &PgTarget) -> Vec<String> {
-    let sql = "SELECT concat_ws(',', \
-               (SELECT count(*) FROM information_schema.tables \
-                 WHERE table_schema = 'auth' AND table_name = 'users'), \
-               (SELECT count(*) FROM pg_extension WHERE extname = 'pgcrypto'), \
-               (SELECT count(*) FROM pg_roles WHERE rolname = 'authenticator'));";
-    let out = match psql_query(target, sql).await {
-        Ok(value) => value,
-        Err(e) => return vec![format!("cannot read the Postgres catalog: {e}")],
-    };
-    let counts: Vec<i64> = out
-        .trim()
-        .split(',')
-        .filter_map(|value| value.trim().parse().ok())
-        .collect();
-    if counts.len() != 3 {
-        return vec![format!("unexpected contract probe answer: {out}")];
-    }
-    let mut errors = Vec::new();
-    if counts[0] == 0 {
-        errors.push(
-            "the `auth.users` table is missing (the image bootstrap did not complete)".into(),
-        );
-    }
-    if counts[1] == 0 {
-        errors.push("the `pgcrypto` extension is missing".into());
-    }
-    if counts[2] == 0 {
-        errors.push("the `authenticator` role is missing".into());
-    }
-    errors
-}
-
-/// Probe the catalog half of the reuse contract for up to `grace`, so a
-/// container still finishing a (re)start is not recreated out from under
-/// itself. Returns the LAST reasons (empty when the contract landed).
-async fn wait_for_contract_grace(target: &PgTarget, grace: Duration) -> Vec<String> {
-    let deadline = Instant::now() + grace;
-    loop {
-        let reasons = fallback_contract_errors(target).await;
-        if reasons.is_empty() || Instant::now() >= deadline {
-            return reasons;
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-}
-
-async fn wait_until_reachable(target: &PgTarget, timeout: Duration) -> Result<(), String> {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if database_reachable(target).await {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    Err(format!(
-        "gate: {FALLBACK_CONTAINER} did not accept connections within {}s",
-        timeout.as_secs()
-    ))
-}
-
-async fn wait_for_fallback_contract(target: &PgTarget, timeout: Duration) -> Result<(), String> {
-    let deadline = Instant::now() + timeout;
-    let mut reasons = vec!["it never accepted connections".to_string()];
-    while Instant::now() < deadline {
-        if database_reachable(target).await {
-            reasons = fallback_contract_errors(target).await;
-            if reasons.is_empty() {
-                return Ok(());
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    Err(format!(
-        "gate: {FALLBACK_CONTAINER} did not reach the expected contract within {}s: {}",
-        timeout.as_secs(),
-        reasons.join("; ")
-    ))
+/// The actionable error for an unusable base target: name the image the
+/// generated migration set needs and the one-liner that starts it.
+fn base_unavailable_error(reason: impl std::fmt::Display) -> String {
+    format!(
+        "gate: no usable Postgres target — {reason}. The generated migration \
+         set needs the Supabase bootstrap (the `auth` schema), which only \
+         {SUPABASE_POSTGRES_IMAGE} provides. Point DATABASE_URL at it, e.g.:\n  \
+         docker run -d --name gate-pg -e POSTGRES_USER=supabase_admin -e POSTGRES_PASSWORD=postgres \
+         -p 127.0.0.1:15432:5432 {SUPABASE_POSTGRES_IMAGE}\n  \
+         export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:15432/postgres"
+    )
 }
 
 /// A unique per-run database: created from a base target, migrated, and
@@ -623,45 +370,16 @@ mod tests {
         }
     }
 
-    /// #730: the reused-container verdict names the mismatch, so the recreate
-    /// line says what is wrong rather than "something changed".
+    /// The unresolvable-base error must be actionable: it names the image the
+    /// generated migration set needs and the docker run + DATABASE_URL
+    /// one-liners, so a clean machine fails forward instead of provisioning
+    /// containers itself.
     #[test]
-    fn fallback_reuse_contract_names_the_mismatch() {
-        assert_eq!(
-            fallback_init_user_error(
-                "POSTGRES_USER=supabase_admin\nPGDATA=/var/lib/postgresql/data"
-            ),
-            None
-        );
-        let stale =
-            fallback_init_user_error("POSTGRES_PASSWORD=postgres\nPOSTGRES_USER=postgres\n")
-                .expect("a stale init user must be reported");
-        assert!(stale.contains("POSTGRES_USER is postgres"), "{stale}");
-        assert!(stale.contains(FALLBACK_INIT_USER), "{stale}");
-        let missing =
-            fallback_init_user_error("PGDATA=/var/lib/postgresql/data").expect("must be reported");
-        assert!(missing.contains("sets no POSTGRES_USER"), "{missing}");
-        // A longer key must not match the prefix.
-        assert_eq!(
-            fallback_init_user_error("POSTGRES_USERX=supabase_admin"),
-            fallback_init_user_error("PGDATA=/x"),
-            "POSTGRES_USERX must not satisfy the POSTGRES_USER contract"
-        );
-    }
-
-    /// A container built from another image tag is recreated, not reused.
-    #[test]
-    fn fallback_reuse_contract_requires_the_pinned_image() {
-        assert_eq!(fallback_image_error(FALLBACK_IMAGE), None);
-        assert_eq!(fallback_image_error(&format!(" {FALLBACK_IMAGE}\n")), None);
-        let stale = fallback_image_error("postgres:15").expect("a stale image must be reported");
-        assert!(stale.contains("postgres:15"), "{stale}");
-        assert!(stale.contains(FALLBACK_IMAGE), "{stale}");
-        assert!(
-            fallback_reuse_contract_errors("POSTGRES_USER=supabase_admin", "postgres:15")
-                .iter()
-                .any(|reason| reason.contains("image")),
-            "the combined verdict must carry the image mismatch"
-        );
+    fn base_unavailable_error_names_the_image_and_the_one_liners() {
+        let err = base_unavailable_error("DATABASE_URL is not set");
+        assert!(err.contains("no usable Postgres target"), "{err}");
+        assert!(err.contains("SUPABASE"), "{err}");
+        assert!(err.contains("docker run"), "{err}");
+        assert!(err.contains("DATABASE_URL=postgres://"), "{err}");
     }
 }

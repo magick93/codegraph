@@ -201,7 +201,7 @@ async fn child_rows_carry_the_session_org_and_evict_the_zero_tenant() {
          pgmq functions the generated migrations install): the target at \
          {}:{} has no `auth` schema. Plain `postgres:<n>` is not a supported \
          target (#640); the supported image is \
-         public.ecr.aws/supabase/postgres:17.6.1.132.",
+         public.ecr.aws/supabase/postgres:17.12.0.000.",
         base.host, base.port
     );
     let db = GateDb::create(base)
