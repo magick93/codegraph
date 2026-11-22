@@ -517,6 +517,17 @@ impl GlobalGenerator for ScaffoldGenerator {
                 path: self.output_dir.join("src").join("migration.rs"),
                 content: migration_rs,
             });
+        } else {
+            // Issue #756: the CLI-less boot runner. It shares ONE tracking
+            // table with the ops harness band and (by adoption) legacy
+            // CLI/SeaORM bands, so a boot over an already-migrated database
+            // applies nothing.
+            let boot_migrate_rs =
+                render_template_with_project(tera, "scaffold/boot_migrate.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: self.output_dir.join("src").join("boot_migrate.rs"),
+                content: boot_migrate_rs,
+            });
         }
 
         let app_state =

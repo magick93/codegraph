@@ -51,7 +51,7 @@ audit:
 
 # CI test-ops-integration job: the ignored gates (service_ops_compile_gate
 # is wired into CI by issue #629's pin work — mirrored here ahead of it).
-ops: ops-db-integration ops-generator-tests ops-wrapper-compile ops-hooks-runtime ops-wasm-compile ops-service-ops-compile ops-service-ops-hurl ops-invariants-live
+ops: ops-db-integration ops-generator-tests ops-wrapper-compile ops-hooks-runtime ops-wasm-compile ops-service-ops-compile ops-service-ops-hurl ops-invariants-live ops-boot-migration
 
 ops-db-integration:
     #!/usr/bin/env bash
@@ -152,3 +152,17 @@ ops-invariants-live:
         exit 0
     fi
     cargo test -p codegraph --test ddd_invariants_live_gate -- --ignored --nocapture
+
+ops-boot-migration:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # One migration tracking table (issue #756): the ops band records
+    # platform._migrations and a generated CLI-less app boots over it without
+    # re-applying (plus the fresh/seaql/raw-adoption/drift legs). Same
+    # prerequisites as the other DB gates.
+    DB_URL="${DATABASE_URL:-postgres://postgres:postgres@localhost:5432/postgres}"
+    if ! command -v psql >/dev/null 2>&1 || ! psql "$DB_URL" -c 'select 1' >/dev/null 2>&1; then
+        echo "WARN ops — Postgres unreachable ($DB_URL); skipping boot_migration_tests"
+        exit 0
+    fi
+    cargo test -p codegraph --test boot_migration_tests -- --ignored --nocapture

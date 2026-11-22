@@ -273,6 +273,7 @@
     "src/api/rsvp/router.rs",
     "src/api/rsvp/rsvp_handler.rs",
     "src/app_state.rs",
+    "src/boot_migrate.rs",
     "src/codelist/mod.rs",
     "src/domain/common/amount/command.rs",
     "src/domain/common/amount/dto_create.rs",

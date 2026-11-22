@@ -4932,6 +4932,71 @@ gateway 8787 and worker base 8791 needs no manifest edits. Absent
 The live 10-domain boot gate is a recorded follow-up (it needs a full
 workers fixture + Postgres).
 
+### Migration tracking (issue #756 — ONE table for boot + band)
+
+Every migration plane shares ONE tracking table, so a generated app boots over
+an already-migrated database (ops-harness band, admin-CLI run, boot, or a
+`sea-orm-cli` hand-run) and applies NOTHING:
+
+- **Postgres**: `platform._migrations (name TEXT PRIMARY KEY, checksum TEXT
+  NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`. **sqlite** (boot
+  side only — the ops harness is Postgres-only): a top-level `_migrations` with
+  sqlite types. `name` is the full migration filename (the SeaORM
+  `MigrationName` convention); `checksum` is FNV-1a 64-bit lowercase hex over
+  the ORIGINAL file bytes, implemented inline in the generated code and in
+  `codegraph-ops` (no new dependency; the `codegraph-ext-points` helper
+  pattern).
+- **The three writers**: the ops band (`codegraph-ops/src/migrate.rs::
+  run_api_migrations_with_options`, records after every phase AND the app-role
+  grant sweep succeed — a partial band records nothing), the admin-CLI engine
+  (`templates/scaffold/migration.tera` → `src/migration.rs`), and the CLI-less
+  boot runner (`templates/scaffold/boot_migrate.tera` →
+  `src/boot_migrate.rs`, emitted only when `has_admin_cli = false`;
+  `templates/scaffold/boot_migrate/probe.tera` is its raw-band probe
+  fragment). `server.tera`'s CLI-less boot branch calls
+  `crate::boot_migrate::run_boot_migrations(&db)`; the SeaORM
+  `migration::Migrator` is no longer the boot path. The standalone `migration`
+  crate stays emitted and UNCHANGED (it is the sea-orm-cli-compatible hand-off
+  surface).
+- **Boot**: resolves `migrations/` with the retired fallback's order
+  (`MIGRATIONS_DIR` → manifest-relative `<repo>/migrations` → `./migrations`),
+  takes the harness advisory lock (`pg_advisory_lock(73287328)`; sqlite none),
+  skips a tracked file whose checksum matches, applies + records the rest
+  whole-file in a per-file transaction (record inside it), and treats a
+  CHANGED tracked file as a HARD, NAMED error naming the file, the recorded
+  checksum and the current one — never a silent re-apply over an existing band.
+- **Adoption** (only when `platform._migrations` is absent or empty, BEFORE
+  anything is applied): tier 1 `seaql_migrations` rows (version = full
+  filename — the SeaORM migration crate / `sea-orm-cli` band; this keeps the
+  `review_api_suite` bookkeeping shim green), tier 2 legacy
+  `schema_migrations` rows (the pre-#756 CLI engine records the filename
+  WITHOUT `.sql`; both spellings are accepted), tier 3 a per-file
+  object-existence probe for raw old harness bands — a file is adopted when
+  the object it creates (or the table a seed/`INSERT INTO`/`ALTER TABLE`/
+  `CREATE INDEX`/`CREATE TRIGGER`/`CREATE POLICY`/`GRANT … ON` targets) already
+  exists (`pg_class`/`pg_type`/`pg_proc`/`pg_namespace`/`pg_extension`, one
+  catalog read for the whole band). A `CREATE EXTENSION` anchor is weak
+  evidence (images preinstall pgcrypto/uuid-ossp/pg_tle/pgmq), so it is used
+  only when the file defines no other probed object; a `CREATE SCHEMA platform`
+  anchor is distrusted when the tracking table pre-existed (the runner created
+  that schema). Unrecognized files are NOT adopted — they apply, and a
+  genuinely incompatible raw band fails loudly. Adopted rows record the
+  CURRENT checksum, so drift is detectable from then on.
+- **Interop direction**: a `sea-orm-cli` / hand-run band writes
+  `seaql_migrations`; the next boot adopts it into `platform._migrations` and
+  re-applies nothing. `GRAPH_FORMAT_VERSION` did NOT move in #756 (no
+  graph/schema change).
+- Gates: `cargo test -p codegraph --test boot_migration_tests` (node-free pins:
+  sqlite branch, the named drift error, the CLI engine's shared table +
+  legacy-adoption read, the server boot wiring) and `-- --ignored` (the live
+  lane: ops-band→boot applies nothing, fresh double boot, seaql adoption, raw
+  probe adoption, checksum drift named + DB untouched; builds the generated app
+  once and `cargo check`s the admin-CLI variant as the #551 compile pin) —
+  wired into CI's `test-ops-integration` job and `just ops-boot-migration`.
+  Deferred to a later wave: #427's fail-on-error semantics, a `--replay-all`
+  escape hatch, the full speed acceptance, and the `testkit api` CI-lane
+  wiring (`ops_ci_lane_contract` stays ignore-marked).
+
 ### Consumer integration guide
 
 1. Add `codegraph-ops` to the consumer workspace deps:
@@ -4996,8 +5061,10 @@ workers fixture + Postgres).
    The codegraph repo's own `test-ops-integration` job (Supabase-image
    service + the fail-closed `CODEGRAPH_REQUIRE_SUPABASE` gate) is the
    reference pattern for the DB tier; the api-suite CI lane itself is
-   blocked upstream on issue #756 (CLI-less generated apps cannot boot over
-   an already-applied band) — see `docs/ops-testing.md` §7.
+   still unwired — its boot blocker (issue #756: CLI-less generated apps
+   could not boot over an already-applied band) is FIXED by the shared
+   `platform._migrations` table above; the lane wiring is a later wave —
+   see `docs/ops-testing.md` §7.
 
 ### Platform support & prerequisites
 

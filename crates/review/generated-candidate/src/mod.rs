@@ -1,5 +1,6 @@
 pub mod api;
 pub mod app_state;
+pub mod boot_migrate;
 pub mod codelist;
 pub mod domain;
 pub mod entity;

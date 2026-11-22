@@ -1,0 +1,312 @@
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CatalogKind {
+    Table,
+    Type,
+    Function,
+}
+
+struct ObjectCatalog {
+    namespaces: HashSet<String>,
+    extensions: HashSet<String>,
+    tables: HashSet<String>,
+    types: HashSet<String>,
+    functions: HashSet<String>,
+}
+
+impl ObjectCatalog {
+    fn has(&self, kind: &CatalogKind, schema: &str, name: &str) -> bool {
+        let key = format!("{schema}.{name}");
+        match kind {
+            CatalogKind::Table => self.tables.contains(&key),
+            CatalogKind::Type => self.types.contains(&key),
+            CatalogKind::Function => self.functions.contains(&key),
+        }
+    }
+}
+
+
+async fn load_object_catalog(
+    db: &DatabaseConnection,
+) -> Result<ObjectCatalog, Box<dyn std::error::Error>> {
+    let sql = "SELECT 'namespace' AS kind, nspname AS name FROM pg_namespace \
+               UNION ALL SELECT 'extension', extname FROM pg_extension \
+               UNION ALL SELECT 'table', n.nspname || '.' || c.relname \
+                   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                   WHERE c.relkind IN ('r', 'p') \
+               UNION ALL SELECT 'type', n.nspname || '.' || t.typname \
+                   FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace \
+                   WHERE t.typtype IN ('c', 'd', 'e', 'r') \
+               UNION ALL SELECT 'function', n.nspname || '.' || p.proname \
+                   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace";
+    let rows = db
+        .query_all_raw(Statement::from_string(BACKEND, sql))
+        .await?;
+    let mut catalog = ObjectCatalog {
+        namespaces: HashSet::new(),
+        extensions: HashSet::new(),
+        tables: HashSet::new(),
+        types: HashSet::new(),
+        functions: HashSet::new(),
+    };
+    for row in rows {
+        let kind: String = row.try_get("", "kind")?;
+        let name: String = row.try_get("", "name")?;
+        match kind.as_str() {
+            "namespace" => {
+                catalog.namespaces.insert(name);
+            }
+            "extension" => {
+                catalog.extensions.insert(name);
+            }
+            "table" => {
+                catalog.tables.insert(name);
+            }
+            "type" => {
+                catalog.types.insert(name);
+            }
+            "function" => {
+                catalog.functions.insert(name);
+            }
+            _ => {}
+        }
+    }
+    Ok(catalog)
+}
+
+
+/// The object a migration file is anchored on. Raw bands are recognised by
+/// "the thing this file creates (or targets) already exists".
+enum AnchorKind {
+    Namespace,
+    Extension,
+    Type,
+    Function,
+    Table,
+}
+
+struct Anchor {
+    kind: AnchorKind,
+    schema: String,
+    name: String,
+}
+
+impl Anchor {
+    /// A schema-qualified object (`common.widget`, `platform.fn`).
+    fn qualified(kind: AnchorKind, token: &str) -> Self {
+        let (schema, name) = split_identifier(token);
+        Self { kind, schema, name }
+    }
+
+    /// A bare catalog name (a schema or an extension).
+    fn bare(kind: AnchorKind, token: &str) -> Self {
+        Self {
+            kind,
+            schema: clean_identifier(token),
+            name: String::new(),
+        }
+    }
+}
+
+/// Classify a file by the FIRST recognised DDL statement. Unrecognised files
+/// return `None` and are never adopted (they apply, and a genuinely
+/// incompatible band fails loudly instead of being silently half-adopted).
+///
+/// The probe only needs the generated templates' own statement shapes; it
+/// deliberately does not try to be a SQL parser.
+fn first_anchor(sql: &str) -> Option<Anchor> {
+    let lines: Vec<&str> = sql.lines().collect();
+    // An extension alone is weak evidence: extension control files are
+    // cluster-wide and images preinstall pgcrypto/uuid-ossp/pg_tle/pgmq, so a
+    // fresh database can carry one without this file ever running. Prefer any
+    // object the file itself defines, and fall back to the extension only for
+    // a pure extension-install file (where re-applying is an idempotent
+    // no-op anyway).
+    let mut extension: Option<Anchor> = None;
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with("--") {
+            continue;
+        }
+        let upper = trimmed.to_ascii_uppercase();
+        if let Some(name) = after_keyword(&upper, trimmed, "CREATE SCHEMA") {
+            return Some(Anchor::bare(AnchorKind::Namespace, &name));
+        }
+        if let Some(name) = after_keyword(&upper, trimmed, "CREATE EXTENSION") {
+            if extension.is_none() {
+                extension = Some(Anchor::bare(AnchorKind::Extension, &name));
+            }
+            continue;
+        }
+        if let Some(name) = after_keyword(&upper, trimmed, "CREATE TYPE")
+            .or_else(|| after_keyword(&upper, trimmed, "CREATE DOMAIN"))
+        {
+            return Some(Anchor::qualified(AnchorKind::Type, &name));
+        }
+        if upper.starts_with("CREATE OR REPLACE FUNCTION")
+            || upper.starts_with("CREATE OR REPLACE PROCEDURE")
+            || upper.starts_with("CREATE FUNCTION")
+            || upper.starts_with("CREATE PROCEDURE")
+        {
+            if let Some(name) = create_name_before_paren(trimmed) {
+                return Some(Anchor::qualified(AnchorKind::Function, &name));
+            }
+        }
+        if let Some(name) = after_keyword(&upper, trimmed, "CREATE TABLE")
+            .or_else(|| after_keyword(&upper, trimmed, "CREATE UNLOGGED TABLE"))
+            .or_else(|| after_keyword(&upper, trimmed, "CREATE TEMP TABLE"))
+        {
+            return Some(Anchor::qualified(AnchorKind::Table, &name));
+        }
+        if let Some(name) = after_keyword(&upper, trimmed, "INSERT INTO")
+            .or_else(|| after_keyword(&upper, trimmed, "ALTER TABLE"))
+        {
+            return Some(Anchor::qualified(AnchorKind::Table, &name));
+        }
+        if upper.starts_with("CREATE UNIQUE INDEX")
+            || upper.starts_with("CREATE INDEX")
+            || upper.starts_with("CREATE TRIGGER")
+            || upper.starts_with("CREATE POLICY")
+        {
+            // Generated triggers wrap `ON <table>` onto the next line, so look
+            // a short window ahead rather than only at this line.
+            let window = lines[index..lines.len().min(index + 8)].join(" ");
+            let window_upper = window.to_ascii_uppercase();
+            if let Some(pos) = window_upper.find(" ON ") {
+                if let Some(name) = token_after(&window[pos + 4..]) {
+                    return Some(Anchor::qualified(AnchorKind::Table, &name));
+                }
+            }
+            continue;
+        }
+        if upper.starts_with("GRANT ") {
+            if let Some(name) = grant_target(trimmed) {
+                return Some(Anchor::qualified(AnchorKind::Table, &name));
+            }
+        }
+    }
+    extension
+}
+
+fn clean_identifier(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| *c != '"' && *c != '`' && *c != '[' && *c != ']')
+        .collect()
+}
+
+fn split_identifier(raw: &str) -> (String, String) {
+    let cleaned = clean_identifier(raw);
+    match cleaned.split_once('.') {
+        Some((schema, name)) if !name.is_empty() => (schema.to_string(), name.to_string()),
+        _ => ("public".to_string(), cleaned),
+    }
+}
+
+fn token_after(rest: &str) -> Option<String> {
+    let token: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | '@' | '"' | '`')
+        })
+        .collect();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
+    }
+}
+
+/// The identifier following a prefix keyword (after an optional
+/// `IF [NOT] EXISTS` / `ONLY` clause).
+fn after_keyword(upper: &str, original: &str, keyword: &str) -> Option<String> {
+    if !upper.starts_with(keyword) {
+        return None;
+    }
+    token_after(strip_if_exists(&original[keyword.len()..]))
+}
+
+/// `CREATE OR REPLACE FUNCTION` / `CREATE FUNCTION` → the name before `(`.
+fn create_name_before_paren(line: &str) -> Option<String> {
+    let open = line.find('(')?;
+    let head = &line[..open];
+    let tail = head
+        .rsplit_once(|c: char| c.is_whitespace())
+        .map(|(_, t)| t)
+        .unwrap_or(head);
+    if tail.is_empty() {
+        None
+    } else {
+        Some(tail.to_string())
+    }
+}
+
+/// `GRANT SELECT ON TABLE common.x TO app_user` / `GRANT ... ON common.x`.
+fn grant_target(line: &str) -> Option<String> {
+    let upper = line.to_ascii_uppercase();
+    let idx = upper.find(" ON ")?;
+    let rest = strip_if_exists(line[idx + 4..].trim_start());
+    let rest_upper = rest.to_ascii_uppercase();
+    if rest_upper.starts_with("ALL ")
+        || rest_upper.starts_with("SCHEMA ")
+        || rest_upper.starts_with("SEQUENCE ")
+        || rest_upper.starts_with("FUNCTION ")
+    {
+        return None;
+    }
+    let rest = if rest_upper.starts_with("TABLE ") {
+        &rest["TABLE ".len()..]
+    } else {
+        rest
+    };
+    token_after(rest)
+}
+
+fn strip_if_exists(rest: &str) -> &str {
+    let trimmed = rest.trim_start();
+    let upper = trimmed.to_ascii_uppercase();
+    for prefix in ["IF NOT EXISTS ", "IF EXISTS ", "ONLY ", "CONCURRENTLY "] {
+        if upper.starts_with(prefix) {
+            return strip_if_exists(&trimmed[prefix.len()..]);
+        }
+    }
+    trimmed
+}
+
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+    let catalog = load_object_catalog(db).await?;
+    let mut adopted = Vec::new();
+    for (name, path) in files {
+        if already_adopted.iter().any(|(n, _)| n == name) {
+            continue;
+        }
+        let Ok(sql) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Some(anchor) = first_anchor(&sql) else {
+            continue;
+        };
+        let present = match anchor.kind {
+            AnchorKind::Namespace => {
+                // `platform` may exist because THIS runner is about to create
+                // its tracking table there; only trust it when the tracking
+                // table did not pre-exist.
+                if anchor.schema == "platform" && tracking_preexisted {
+                    false
+                } else {
+                    catalog.namespaces.contains(&anchor.schema)
+                }
+            }
+            AnchorKind::Extension => catalog.extensions.contains(&anchor.schema),
+            AnchorKind::Type => catalog.has(&CatalogKind::Type, &anchor.schema, &anchor.name),
+            AnchorKind::Function => {
+                catalog.has(&CatalogKind::Function, &anchor.schema, &anchor.name)
+            }
+            AnchorKind::Table => catalog.has(&CatalogKind::Table, &anchor.schema, &anchor.name),
+        };
+        if present {
+            adopted.push(name.clone());
+        }
+    }
+    Ok(adopted)

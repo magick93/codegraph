@@ -27,23 +27,70 @@ pub async fn run_migrations() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 {% if migration_strategy == "sea-orm" %}
+/// FNV-1a 64-bit hex (16 lowercase hex chars) over the ORIGINAL file bytes —
+/// the same checksum the boot runner and the ops harness record (issue #756).
+fn fnv1a_64_hex(bytes: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// Insert adoption rows into the ONE tracking table (idempotent).
+async fn record_tracked(
+    db: &sea_orm::DatabaseConnection,
+    entries: &[(String, String)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let values: Vec<String> = entries
+        .iter()
+        .map(|(name, checksum)| {
+            format!(
+                "('{}', '{}')",
+                name.replace('\'', "''"),
+                checksum.replace('\'', "''")
+            )
+        })
+        .collect();
+    sea_orm::ConnectionTrait::execute_unprepared(
+        db,
+        &format!(
+            "INSERT INTO platform._migrations (name, checksum) VALUES {} \
+             ON CONFLICT (name) DO NOTHING",
+            values.join(", ")
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
 async fn run_sea_orm_migrations() -> Result<(), Box<dyn std::error::Error>> {
     let db_url = std::env::var("DATABASE_URL")
         .map_err(|_| "DATABASE_URL environment variable is required")?;
     let db = sea_orm::Database::connect(&db_url).await?;
 
-    // Ensure schema_migrations table exists
-    sea_orm::ConnectionTrait::execute_raw(
+    // ONE tracking table shared with the boot runner (`src/boot_migrate.rs`)
+    // and the ops harness band (issue #756). `name` is the full migration
+    // filename; `checksum` is the FNV-1a 64-bit hex digest of the ORIGINAL
+    // file bytes.
+    sea_orm::ConnectionTrait::execute_unprepared(
         &db,
-        sea_orm::Statement::from_string(
-            sea_orm::DatabaseBackend::Postgres,
-            r#"
-            CREATE TABLE IF NOT EXISTS schema_migrations (
-                version TEXT PRIMARY KEY,
-                applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            "#,
-        ),
+        "CREATE SCHEMA IF NOT EXISTS platform;",
+    )
+    .await?;
+    sea_orm::ConnectionTrait::execute_unprepared(
+        &db,
+        r#"
+        CREATE TABLE IF NOT EXISTS platform._migrations (
+            name TEXT PRIMARY KEY,
+            checksum TEXT NOT NULL,
+            applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        "#,
     )
     .await?;
 
@@ -65,32 +112,101 @@ async fn run_sea_orm_migrations() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     files.sort_by_key(|e| e.file_name());
 
-    let mut applied = 0u32;
-    for entry in &files {
-        let fname = entry.file_name().to_string_lossy().to_string();
-        let version = fname.trim_end_matches(".sql");
+    let mut tracked: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for row in sea_orm::ConnectionTrait::query_all_raw(
+        &db,
+        sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            "SELECT name, checksum FROM platform._migrations",
+        ),
+    )
+    .await?
+    {
+        tracked.insert(row.try_get("", "name")?, row.try_get("", "checksum")?);
+    }
 
-        // Check if already applied
-        let already = sea_orm::ConnectionTrait::query_one_raw(
+    // Adoption: when the shared tracking table has no rows yet, a legacy
+    // `schema_migrations` band (the pre-#756 CLI engine; `version` is the
+    // filename WITHOUT `.sql`) vouches for the files it recorded. The rows
+    // are adopted with the CURRENT checksum so drift is detectable from then
+    // on, and nothing is re-applied over that band.
+    if tracked.is_empty() {
+        let legacy_present: bool = sea_orm::ConnectionTrait::query_all_raw(
             &db,
-            sea_orm::Statement::from_sql_and_values(
+            sea_orm::Statement::from_string(
                 sea_orm::DatabaseBackend::Postgres,
-                "SELECT 1 FROM schema_migrations WHERE version = $1",
-                [version.into()],
+                "SELECT to_regclass('schema_migrations') IS NOT NULL AS present",
             ),
         )
         .await?
-        .is_some();
+        .first()
+        .map(|row| row.try_get("", "present"))
+        .transpose()?
+        .unwrap_or(false);
+        if legacy_present {
+            let versions: std::collections::HashSet<String> =
+                sea_orm::ConnectionTrait::query_all_raw(
+                    &db,
+                    sea_orm::Statement::from_string(
+                        sea_orm::DatabaseBackend::Postgres,
+                        "SELECT version FROM schema_migrations",
+                    ),
+                )
+                .await?
+                .into_iter()
+                .filter_map(|row| row.try_get("", "version").ok())
+                .collect();
+            let mut adopted: Vec<(String, String)> = Vec::new();
+            for entry in &files {
+                let fname = entry.file_name().to_string_lossy().to_string();
+                let stem = fname.trim_end_matches(".sql");
+                if versions.contains(&fname) || versions.contains(stem) {
+                    adopted.push((fname, fnv1a_64_hex(&std::fs::read(entry.path())?)));
+                }
+            }
+            if !adopted.is_empty() {
+                record_tracked(&db, &adopted).await?;
+                println!(
+                    "Adopted {} migration(s) from schema_migrations",
+                    adopted.len()
+                );
+                tracked.extend(adopted);
+            }
+        }
+    }
 
-        if already {
+    // Drift validation BEFORE applying anything: a changed file is a hard,
+    // named error, never a silent re-application.
+    for entry in &files {
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if let Some(recorded) = tracked.get(&fname) {
+            let current = fnv1a_64_hex(&std::fs::read(entry.path())?);
+            if *recorded != current {
+                return Err(format!(
+                    "Migration checksum mismatch for {fname}: recorded {recorded}, current \
+                     {current} — the file changed after it was applied; refusing to re-apply it \
+                     over an existing migration band"
+                )
+                .into());
+            }
+        }
+    }
+
+    let mut applied = 0u32;
+    for entry in &files {
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if tracked.contains_key(&fname) {
             continue;
         }
 
-        let sql = std::fs::read_to_string(entry.path())?;
+        let bytes = std::fs::read(entry.path())?;
+        let checksum = fnv1a_64_hex(&bytes);
+        let sql = String::from_utf8_lossy(&bytes).into_owned();
         let statements = split_sql_statements(&sql);
 
-        // Apply the file's statements one by one inside a transaction;
-        // the version is recorded only after every statement succeeds.
+        // Apply the file's statements one by one inside a transaction; the
+        // tracking row is recorded in the SAME transaction, so a crash can
+        // never leave the band applied-but-unrecorded.
         let txn = sea_orm::TransactionTrait::begin(&db).await?;
         let mut failure: Option<(usize, sea_orm::DbErr)> = None;
         for (idx, stmt_sql) in statements.iter().enumerate() {
@@ -111,20 +227,18 @@ async fn run_sea_orm_migrations() -> Result<(), Box<dyn std::error::Error>> {
             txn.rollback().await?;
             return Err(format!("Migration {fname} failed at statement {idx}: {e}").into());
         }
-        txn.commit().await?;
-
-        // Record migration
         sea_orm::ConnectionTrait::execute_raw(
-            &db,
+            &txn,
             sea_orm::Statement::from_sql_and_values(
                 sea_orm::DatabaseBackend::Postgres,
-                "INSERT INTO schema_migrations (version) VALUES ($1)",
-                [version.into()],
+                "INSERT INTO platform._migrations (name, checksum) VALUES ($1, $2)",
+                [fname.clone().into(), checksum.into()],
             ),
         )
         .await?;
+        txn.commit().await?;
 
-        println!("Applied: {version}");
+        println!("Applied: {fname}");
         applied += 1;
     }
 

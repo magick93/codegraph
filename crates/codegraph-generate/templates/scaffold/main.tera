@@ -402,6 +402,7 @@ mod middleware;
 {% if project.persistence_provider == "cornucopia" %}mod db_client;
 {% endif %}mod qs_query;
 mod server;
+mod boot_migrate;
 {% if has_webhooks %}
 mod webhook_api;{% endif %}{% if has_webhooks or has_function_events %}
 mod webhook_dispatch;{% endif %}{% if has_webhooks %}

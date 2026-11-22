@@ -21,7 +21,13 @@ use crate::pg::PgTarget;
 
 /// Advisory lock key shared by all migration runs against a target, so
 /// concurrent invocations do not interleave phases.
-const MIGRATION_LOCK_KEY: i64 = 73287328;
+pub const MIGRATION_LOCK_KEY: i64 = 73287328;
+
+/// The ONE migration tracking table (issue #756), shared with every
+/// generated app's boot runner (CLI-less `src/boot_migrate.rs` and the
+/// admin-CLI `src/migration.rs`). `name` is the full migration filename and
+/// `checksum` the FNV-1a 64-bit hex digest of the ORIGINAL file bytes.
+const TRACKING_TABLE: &str = "platform._migrations";
 
 /// Max SQL lines per FK-phase `psql -c` batch. Keeps the argv well below
 /// the OS limit even with hundreds of migration files.
@@ -408,6 +414,14 @@ pub async fn run_api_migrations_with_options(
         }
         Err(e) => Err(e),
     };
+    // Issue #756: record the band in the ONE tracking table the generated
+    // app's boot runner reads, so a later boot over this database applies
+    // nothing. Only a COMPLETE band records — a partial band records nothing
+    // and the boot runner's object-existence adoption probe covers it.
+    let result = match result {
+        Ok(()) => record_tracking(&phases, target).await,
+        Err(e) => Err(e),
+    };
 
     match crate::db::advisory_unlock(target, MIGRATION_LOCK_KEY).await {
         Ok(()) => output::ok("Migration advisory lock released"),
@@ -554,6 +568,80 @@ fn quote_ident(s: &str) -> String {
 /// Quote a string literal for interpolation into SQL (`WHERE rolname = ...`).
 fn quote_literal(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
+}
+
+/// FNV-1a 64-bit hex (16 lowercase hex chars) over the ORIGINAL file bytes —
+/// the checksum every migration plane records (issue #756). Implemented
+/// inline so the ops harness needs no extra dependency, matching the
+/// generated apps' own helper.
+fn fnv1a_64_hex(bytes: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// Record the applied band in `platform._migrations` (issue #756). Called
+/// only once every phase — and the app-role grant sweep — has succeeded.
+/// Re-recording updates the checksum (the band re-applied those bytes) but
+/// keeps the original `applied_at`.
+async fn record_tracking(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<()> {
+    let files = phases
+        .tables
+        .iter()
+        .chain(phases.aux.iter())
+        .chain(phases.rls_triggers.iter());
+
+    let mut values: Vec<String> = Vec::new();
+    for file in files {
+        let bytes = std::fs::read(file).map_err(|e| {
+            OpsError::Command(format!(
+                "read {} for migration tracking: {e}",
+                file.display()
+            ))
+        })?;
+        let name = file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if name.is_empty() {
+            continue;
+        }
+        values.push(format!(
+            "({}, {})",
+            quote_literal(&name),
+            quote_literal(&fnv1a_64_hex(&bytes))
+        ));
+    }
+
+    crate::db::psql_exec(
+        target,
+        "CREATE SCHEMA IF NOT EXISTS platform;\n\
+         CREATE TABLE IF NOT EXISTS platform._migrations (\n\
+             name TEXT PRIMARY KEY,\n\
+             checksum TEXT NOT NULL,\n\
+             applied_at TIMESTAMPTZ NOT NULL DEFAULT now()\n\
+         );",
+    )
+    .await?;
+
+    if values.is_empty() {
+        output::info("no migration files to record");
+        return Ok(());
+    }
+    let sql = format!(
+        "INSERT INTO {TRACKING_TABLE} (name, checksum) VALUES {} \n\
+         ON CONFLICT (name) DO UPDATE SET checksum = EXCLUDED.checksum;",
+        values.join(", ")
+    );
+    crate::db::psql_exec(target, &sql).await?;
+    output::ok(format!(
+        "Recorded {} migration(s) in {TRACKING_TABLE}",
+        values.len()
+    ));
+    Ok(())
 }
 
 async fn apply_phases(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<()> {
@@ -886,6 +974,18 @@ mod tests {
     #[test]
     fn chunk_sql_empty_input_yields_empty() {
         assert!(chunk_sql(&[], 200).is_empty());
+    }
+
+    /// The tracking checksum (issue #756) must be the SAME FNV-1a 64-bit hex
+    /// the generated boot runner computes — the known-answer vectors pin the
+    /// constants and the multiply/ xor order.
+    #[test]
+    fn tracking_checksum_is_fnv1a_64_hex() {
+        assert_eq!(fnv1a_64_hex(b""), "cbf29ce484222325");
+        assert_eq!(fnv1a_64_hex(b"a"), "af63dc4c8601ec8c");
+        assert_eq!(fnv1a_64_hex(b"hello"), "a430d84680aabd0b");
+        assert_eq!(fnv1a_64_hex(b"hello").len(), 16);
+        assert_ne!(fnv1a_64_hex(b"hello"), fnv1a_64_hex(b"hello "));
     }
 
     #[test]
