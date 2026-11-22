@@ -146,6 +146,74 @@ async fn domain_errors_map_rls_denials_to_forbidden() {
     );
 }
 
+// === DB error detail survives the mapping (#810) ===
+
+/// A database error must keep its SOURCE detail through the generated
+/// mapping: `tokio-postgres` renders a server error as the bare string
+/// `db error` (code/message/detail/hint live in the source), so the
+/// domain classifier logs the Debug form AND the cornucopia repository
+/// preserves the original error instead of stringifying it. Without this
+/// a machine-bearing create answers a 500 whose envelope and log both say
+/// only "db error" (issue #810).
+#[tokio::test]
+async fn database_errors_keep_their_source_detail() {
+    let tera = test_tera();
+
+    let mut ctx = tera::Context::new();
+    ctx.insert("domain", "recruiting");
+    ctx.insert("errors", &Vec::<serde_json::Value>::new());
+    ctx.insert(
+        "project",
+        &serde_json::json!({
+            "generator_name": "codegraph",
+            "persistence_provider": "cornucopia",
+            "hooks_api_crate": null,
+            "database_target": "postgres",
+        }),
+    );
+    let errors = tera
+        .render("ddd/errors.tera", &ctx)
+        .expect("errors.tera must render");
+
+    assert!(
+        errors.contains("impl std::fmt::Display + std::fmt::Debug"),
+        "from_repo_err must accept the Debug form to reach the source detail:\n{errors}"
+    );
+    assert!(
+        errors.contains("error_debug = ?e"),
+        "from_repo_err must LOG the Debug form (tokio-postgres hides the \
+         server detail behind a bare `db error` Display):\n{errors}"
+    );
+    assert!(
+        errors.matches("error_debug = ?e").count() >= 2,
+        "the tokio/deadpool conversions must log the detail too:\n{errors}"
+    );
+
+    // The cornucopia repository adapter must preserve the typed error
+    // (boxed) rather than flattening it to a String — the String path loses
+    // `source()` entirely.
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-cornucopia-repo");
+    let mut project = test_project_config();
+    project.database.persistence_provider =
+        codegraph::generate::profile::PersistenceProvider::Cornucopia;
+    let repo = generate::ddd::cornucopia_repo::CornucopiaRepoGenerator::new(&output_dir)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &project)
+        .await
+        .unwrap();
+    let content = &repo[0].content;
+    assert!(
+        content.contains("Box::new(e)") || content.contains("map_err(db_err)"),
+        "the cornucopia repository adapter must preserve the DB error \
+         (source detail), not flatten it to a string:\n{content}"
+    );
+    assert!(
+        !content.contains(".map_err(|e| e.to_string())"),
+        "a stringified query error loses the source detail (issue #810):\n{content}"
+    );
+}
+
 #[tokio::test]
 async fn command_and_query_route_repo_errors_through_the_classifier() {
     let mock = setup_mock().await;
