@@ -268,7 +268,11 @@ fn marked_body(minimal_body: &str, marker: &str) -> String {
 
 /// A required FK parent of an entity: route segment, FK json field, the
 /// capture name its preamble POST introduces, and its own minimal payload.
+#[derive(Debug)]
 struct FkParent {
+    /// The parent's DOMAIN (it may differ from the child's — a `refers`
+    /// across bounded contexts). The preamble URL must use it, not the child's.
+    domain: String,
     module: String,
     route_segment: String,
     json_name: String,
@@ -560,7 +564,11 @@ async fn route_segment_for(config: &DomainConfig, domain: &str, schema: &SchemaN
 }
 
 /// Resolve a ref target schema: exact title first, then title +
-/// `type_suffix` (the mox/JSON alias chain).
+/// `type_suffix` (the mox/JSON alias chain), then — for a path-style JSON
+/// `$ref` (`../../common/json/EventBaseType.json`) — the filename stem as a
+/// title. JSON ingestion stores the RAW `$ref` path in `ref_target`, so without
+/// the stem fallback a `$ref`-to-entity is never resolved and its required FK
+/// is omitted from the contract body (the RsvpType.event 422).
 async fn resolve_ref_target(
     db: &dyn GraphQuerier,
     type_suffix: &str,
@@ -570,13 +578,28 @@ async fn resolve_ref_target(
         return Some(schema);
     }
     let suffixed = format!("{ref_target}{type_suffix}");
+    if let Ok(Some(schema)) = db.get_schema(&suffixed).await {
+        return Some(schema);
+    }
+    let stem = codegraph_core::types::codelist_enum_name_from_ref(&Some(ref_target.to_string()))?;
+    if stem == ref_target {
+        return None;
+    }
+    if let Ok(Some(schema)) = db.get_schema(&stem).await {
+        return Some(schema);
+    }
+    let suffixed = format!("{stem}{type_suffix}");
     db.get_schema(&suffixed).await.ok().flatten()
 }
 
 /// The required FK parents of an entity: required, scalar, non-null
-/// entity-ref properties, resolved to parent routes + minimal payloads.
-/// Skipped above depth 0 so parent payloads never recurse (self/cyclic
-/// required refs terminate).
+/// properties whose resolved target is a generated ENTITY — a direct
+/// `EntityReference` **or** a value-object ref that resolves to an entity
+/// (the JSON `$ref`-to-VO-that-auto-classifies-as-entity shape, e.g.
+/// `RsvpType.event -> EventBaseType`). Both project as a `{name}_id` FK column
+/// on the child (the DTO plane's `resolve_fk_column_name` contract), so both
+/// must be seeded by a preamble POST. Skipped above depth 0 so parent payloads
+/// never recurse (self/cyclic required refs terminate).
 async fn resolve_fk_parents(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
@@ -595,34 +618,50 @@ async fn resolve_fk_parents(
         if !prop.is_required || prop.is_array || prop.is_nullable {
             continue;
         }
-        if prop.effective_kind() != Some(RefClassificationKind::EntityReference) {
-            continue;
-        }
         let Some(target) = prop.ref_target.clone() else {
             continue;
         };
-        let Some(parent) = resolve_ref_target(db, type_suffix, &target).await else {
-            continue;
+        // Prefer the graph's resolved ref edge (title-accurate even when the
+        // filename and title differ); fall back to the string resolver for
+        // graphs that carry no edge.
+        let parent = match db.get_property_ref_target(&prop.name, &schema.title).await {
+            Ok(Some(parent)) => parent,
+            _ => match resolve_ref_target(db, type_suffix, &target).await {
+                Some(parent) => parent,
+                None => continue,
+            },
         };
-        let field = codegraph_core::types::resolve_field(&prop);
+        // Only a resolved ENTITY can be created by a preamble POST. Pure value
+        // objects/codelists/wrappers have no route (and no `{name}_id` DTO
+        // field); they are omitted from the body by `payload_fields`.
+        if !parent.is_entity {
+            continue;
+        }
+        // The parent can live in another domain (a cross-bounded-context
+        // `refers`); its route, payload config and URL all use THAT domain.
+        let parent_domain = parent.domain.clone().unwrap_or_else(|| domain.to_string());
+        // The FK column the DTO exposes (VO→entity refs included). `event` →
+        // `event_id`; an already-suffixed name is idempotent.
+        let json_name = codegraph_core::types::ensure_id_suffix(&prop.rust_field_name);
         // Boxed: the parent's payload resolution recurses back into
         // resolve_fk_parents (depth+1); the guard above terminates it but
         // the compiler still needs the future boxed.
         let parent_body = Box::pin(minimal_body_for(
             db,
             config,
-            domain,
+            &parent_domain,
             &parent,
             api_version,
             depth + 1,
         ))
         .await?;
-        let parent_segment = route_segment_for(config, domain, &parent).await;
-        let capture = format!("parent_{}", field.rust_field_name);
+        let parent_segment = route_segment_for(config, &parent_domain, &parent).await;
+        let capture = format!("parent_{json_name}");
         parents.push(FkParent {
+            domain: parent_domain,
             module: parent.pg_table_name.clone(),
             route_segment: parent_segment,
-            json_name: field.rust_field_name,
+            json_name,
             capture,
             create_body: parent_body,
         });
@@ -694,7 +733,21 @@ async fn payload_fields(
         }
         match prop.effective_kind() {
             Some(RefClassificationKind::ValueObject)
-            | Some(RefClassificationKind::StructuredWrapper) => continue,
+            | Some(RefClassificationKind::StructuredWrapper) => {
+                // A value-object `$ref` that resolves to a generated ENTITY
+                // (the `RsvpType.event -> EventBaseType` shape) projects as a
+                // `{name}_id` FK on the create DTO and must carry the parent
+                // capture. A pure embedded VO has no capture and stays out of
+                // the body (its child table is not a create-time field).
+                let json_name = codegraph_core::types::ensure_id_suffix(name);
+                if let Some((_, capture)) = fk_captures.iter().find(|(n, _)| *n == json_name) {
+                    let value = "\"{{".to_string() + capture + "}}\"";
+                    create.push(format!(r#"  "{json_name}": {value}"#));
+                    echo.push(format!(r#"jsonpath "$.data.{json_name}" == {value}"#));
+                    update.push(format!(r#"  "{json_name}": {value}"#));
+                    update_echo.push(format!(r#"jsonpath "$.data.{json_name}" == {value}"#));
+                }
+            }
             Some(RefClassificationKind::EntityReference) => {
                 let json_name = codegraph_core::types::resolve_field(prop).rust_field_name;
                 if let Some((_, capture)) = fk_captures.iter().find(|(n, _)| *n == json_name) {
@@ -995,7 +1048,8 @@ async fn build_entity_contract(
         });
     }
     for parent in &fk_parents {
-        let parent_url = format!("{domain_base}/{}", parent.route_segment);
+        let parent_domain_base = format!("{{{{base_url}}}}/api/{api_version}/{}", parent.domain);
+        let parent_url = format!("{parent_domain_base}/{}", parent.route_segment);
         fk_parent_sections.push(ContractSection {
             body: format!(
                 "# Required FK parent {} — created first, id captured\n\
@@ -1281,6 +1335,87 @@ entities = ["TaskType"]
                 ],
             )
             .build()
+    }
+
+    /// A required VALUE-OBJECT `$ref` that resolves to a generated ENTITY
+    /// (the `RsvpType.event -> EventBaseType` shape) projects as a `{name}_id`
+    /// FK on the create DTO. The contract must seed the parent and carry the
+    /// capture — the pre-fix generator only seeded `EntityReference` props, so
+    /// the body omitted `event_id` and every create 422s (`missing field`).
+    #[tokio::test]
+    async fn required_value_object_ref_resolving_to_an_entity_is_seeded() {
+        let mut rsvp = task_schema();
+        rsvp.title = "RsvpType".to_string();
+        rsvp.schema_id = "rsvp/json/RsvpType.json".to_string();
+        rsvp.rel_path = "rsvp/json/RsvpType.json".to_string();
+        rsvp.pg_table_name = "rsvp".to_string();
+        rsvp.api_path_segment = "rsvp".to_string();
+        rsvp.rust_type_name = "Rsvp".to_string();
+
+        let mut event = task_schema();
+        event.title = "EventBaseType".to_string();
+        event.schema_id = "common/json/EventBaseType.json".to_string();
+        event.rel_path = "common/json/EventBaseType.json".to_string();
+        event.pg_table_name = "event_base".to_string();
+        event.api_path_segment = "event-base".to_string();
+        event.rust_type_name = "EventBase".to_string();
+        // A cross-domain FK: the parent lives in `common`, the child in `work`.
+        event.domain = Some("common".to_string());
+
+        let mut event_ref = text_prop("event", true);
+        // The JSON pipeline stores the RAW `$ref` path (not the title) — the
+        // exact shape that made the pre-fix resolver skip the FK.
+        event_ref.ref_target = Some("../../common/json/EventBaseType.json".to_string());
+        event_ref.classification_kind =
+            Some(codegraph_type_contracts::RefClassificationKind::ValueObject);
+        event_ref.rust_field_type = "uuid::Uuid".to_string();
+        event_ref.pg_column_type = "UUID".to_string();
+
+        let db = MockEngine::builder()
+            .with_schema(rsvp.clone())
+            .with_schema(event)
+            .with_properties("RsvpType", vec![event_ref])
+            .with_properties("EventBaseType", vec![text_prop("title", true)])
+            .build();
+        let config = plain_config();
+
+        let parents = resolve_fk_parents(&db, &config, "work", &rsvp, "v1", 0)
+            .await
+            .expect("fk parents");
+        assert_eq!(parents.len(), 1, "{parents:?}");
+        assert_eq!(parents[0].json_name, "event_id");
+        assert_eq!(parents[0].capture, "parent_event_id");
+        assert_eq!(parents[0].module, "event_base");
+        assert_eq!(
+            parents[0].domain, "common",
+            "the preamble URL must use the PARENT's domain, not the child's"
+        );
+
+        let captures = vec![("event_id".to_string(), "parent_event_id".to_string())];
+        let (create, echo, update, update_echo) =
+            payload_fields(&db, &config, "work", &rsvp, &captures)
+                .await
+                .expect("payload fields");
+        assert!(
+            create
+                .iter()
+                .any(|line| line.contains(r#""event_id": "{{parent_event_id}}""#)),
+            "the create body must carry the seeded FK: {create:?}"
+        );
+        assert!(
+            echo.iter().any(|line| line.contains("$.data.event_id")),
+            "the echo must assert the FK: {echo:?}"
+        );
+        assert!(
+            update.iter().any(|line| line.contains(r#""event_id""#)),
+            "the update body must carry the FK: {update:?}"
+        );
+        assert!(
+            update_echo
+                .iter()
+                .any(|line| line.contains("$.data.event_id")),
+            "the update echo must assert the FK: {update_echo:?}"
+        );
     }
 
     /// Bug fix (WS2 live-gate finding): the hurl create/PUT payloads must

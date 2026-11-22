@@ -588,13 +588,11 @@ async fn grafeo_candidate_inspect_output() {
     let repo_impl = repo_dir.join("repository_impl.rs");
     std::fs::write(&repo_impl, &repo_code).unwrap();
 
-    // Restore the fixture-owned `[supabase]` section the ops generator does
-    // not emit (issue #764) — this test wiped it above — and the project dir.
-    review_fixture_maintained::reapply_maintained_manifest_section(
-        &manifest_path,
-        &previous_manifest,
-    )
-    .expect("restore the maintained manifest section");
+    // Restore the fixture-owned DB targeting + `[supabase]` section the ops
+    // generator does not emit (issue #764) — this test wiped it above — and
+    // the project dir.
+    review_fixture_maintained::reapply_maintained_sections(&manifest_path, &previous_manifest)
+        .expect("restore the maintained manifest sections");
     if supabase_backup.is_dir() {
         std::fs::rename(&supabase_backup, &supabase_src).expect("restore the Supabase project");
     }

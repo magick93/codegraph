@@ -367,6 +367,27 @@ async fn regenerate_fixture() -> Result<Vec<PathBuf>, String> {
 impl FixtureGate {
     pub async fn provision(&self) -> Result<(), String> {
         let output_dir = fixture_dir();
+        // Cross-recipe stale contracts (#694/#764): the committed tree is the
+        // FLAG-OFF recipe's, whose hurl numbering excludes the
+        // rosetta/auto-classify entities this flag-ON plan adds. Those files
+        // are not in the flag-ON ledger (sweeps are per recipe — see
+        // `review_fixture_gate`), so the sweep cannot remove them, and the api
+        // suite's hurl stage discovers every `*.hurl` in the directory. The
+        // flag-ON plan re-emits the whole dir, so make it from-clean first.
+        let hurl_dir = output_dir.join("hurl");
+        if hurl_dir.is_dir() {
+            std::fs::remove_dir_all(&hurl_dir).map_err(|e| {
+                format!(
+                    "sweep the stale generated hurl dir {}: {e}",
+                    hurl_dir.display()
+                )
+            })?;
+            eprintln!(
+                "provision: removed the stale generated hurl dir {} — a previous recipe's \
+                 contracts would otherwise run as this run's",
+                hurl_dir.display()
+            );
+        }
         let swept = review_fixture_gate::sweep_produced(&output_dir, Recipe::FlagOn);
         if swept > 0 {
             eprintln!(

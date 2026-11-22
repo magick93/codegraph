@@ -175,7 +175,11 @@ fn retarget_manifest_at_scratch(fixture_manifest: &str, target: &PgTarget) -> St
                         .starts_with('=')
             });
             if let Some((key, value)) = rewritten {
-                out.push(format!("{key} = \"{value}\""));
+                if key == "port" {
+                    out.push(format!("port = {value}"));
+                } else {
+                    out.push(format!("{key} = \"{value}\""));
+                }
                 continue;
             }
         }
