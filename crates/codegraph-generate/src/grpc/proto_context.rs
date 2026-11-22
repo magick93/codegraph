@@ -112,7 +112,7 @@ impl ProtoContext {
         // Entity message fields + collected imports/enums live in their own
         // helpers (issue #751); evaluation order is unchanged.
         let entity_fields = build_entity_fields(db, &properties, &entity_name);
-        let imports = entity_fields.imports;
+        let mut imports = entity_fields.imports;
         let enums = entity_fields.enums;
 
         let mut messages = Vec::new();
@@ -140,6 +140,11 @@ impl ProtoContext {
             has_workflow,
             &hierarchy_field,
         );
+        // Field-level well-known-type usage collects its import via
+        // `proto_type_from_field`; method input/output slots are built
+        // independently, so their WKT imports must be collected here
+        // (issue #793).
+        push_well_known_imports(&mut imports, &service_methods);
 
         let proto_file_name = format!("{}.proto", module_name);
 
@@ -405,7 +410,10 @@ fn push_crud_messages(
     list_fields.push(ProtoFieldDef {
         field_number: 5,
         name: "filters".to_string(),
-        proto_type: "FilterClause".to_string(),
+        // `FilterClause` lives in the `shared` package (`proto/shared.proto`),
+        // so a bare reference cannot resolve from a domain package
+        // (issue #793).
+        proto_type: "shared.FilterClause".to_string(),
         is_optional: true,
         is_repeated: true,
         description: Some("Additional field filters".to_string()),
@@ -702,7 +710,8 @@ fn build_service_methods(
         service_methods.push(ProtoServiceMethod {
             name: "SemanticSearch".to_string(),
             input_type: "SemanticSearchRequest".to_string(),
-            output_type: "SearchResult".to_string(),
+            // `SearchResult` lives in the `shared` package (issue #793).
+            output_type: "shared.SearchResult".to_string(),
             client_streaming: false,
             server_streaming: true,
             description: Some("Semantic/vector search".to_string()),
@@ -734,6 +743,40 @@ fn build_service_methods(
     service_methods
 }
 
+/// Push the `google/protobuf/*.proto` imports required by SERVICE method
+/// input/output slots.
+///
+/// Message FIELDS report their own `is_import`/`import_path` through
+/// `proto_type_from_field`, but service signatures are assembled
+/// independently — before issue #793 nothing pushed the import for the
+/// `Delete` method's `google.protobuf.Empty` return, so the emitted proto
+/// failed to compile under protoc (`"google.protobuf.Empty" is not
+/// defined`). Mirrors the synthetic-timestamp import push in
+/// `build_entity_fields`.
+fn push_well_known_imports(imports: &mut Vec<String>, service_methods: &[ProtoServiceMethod]) {
+    for method in service_methods {
+        for slot in [&method.input_type, &method.output_type] {
+            if let Some(path) = well_known_import_path(slot)
+                && !imports.contains(&path)
+            {
+                imports.push(path);
+            }
+        }
+    }
+}
+
+/// Map a well-known-type reference (`google.protobuf.Empty`) to the proto
+/// file that declares it (`google/protobuf/empty.proto`). The distro
+/// protobuf ships these under its own include dir; `timestamp.proto` and
+/// `struct.proto` follow the same naming rule.
+fn well_known_import_path(proto_type: &str) -> Option<String> {
+    let file = proto_type.strip_prefix("google.protobuf.")?;
+    Some(format!(
+        "google/protobuf/{}.proto",
+        codegraph_naming::to_snake_case(file)
+    ))
+}
+
 /// Check if a property should be rendered as a proto enum.
 /// Returns Some(enum_name) if an enum was collected, or None for scalar types.
 fn maybe_collect_enum(
@@ -762,5 +805,58 @@ fn maybe_collect_enum(
             Some(enum_name)
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn well_known_import_path_maps_every_wkt_file() {
+        assert_eq!(
+            well_known_import_path("google.protobuf.Empty").as_deref(),
+            Some("google/protobuf/empty.proto")
+        );
+        assert_eq!(
+            well_known_import_path("google.protobuf.Timestamp").as_deref(),
+            Some("google/protobuf/timestamp.proto")
+        );
+        assert_eq!(
+            well_known_import_path("google.protobuf.Struct").as_deref(),
+            Some("google/protobuf/struct.proto")
+        );
+        assert_eq!(
+            well_known_import_path("google.protobuf.FieldMask").as_deref(),
+            Some("google/protobuf/field_mask.proto")
+        );
+        assert_eq!(well_known_import_path("Candidate"), None);
+    }
+
+    #[test]
+    fn service_method_wkt_slots_collect_their_imports() {
+        let methods = build_service_methods(
+            "Candidate",
+            &["delete".to_string()],
+            false,
+            false,
+            false,
+            &None,
+        );
+        let mut imports: Vec<String> = Vec::new();
+        push_well_known_imports(&mut imports, &methods);
+        assert_eq!(imports, vec!["google/protobuf/empty.proto".to_string()]);
+    }
+
+    /// `SearchResult` is declared in the `shared` package, so the
+    /// semantic-search slot must be package-qualified (issue #793).
+    #[test]
+    fn semantic_search_returns_the_shared_search_result() {
+        let methods = build_service_methods("Candidate", &[], false, true, false, &None);
+        let method = methods
+            .iter()
+            .find(|m| m.name == "SemanticSearch")
+            .expect("semantic search method");
+        assert_eq!(method.output_type, "shared.SearchResult");
     }
 }

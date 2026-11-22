@@ -860,6 +860,50 @@ mod tests {
         .unwrap();
         assert!(sql.contains("REVOKE UPDATE, DELETE ON core.case_status_changed FROM app_user"));
     }
+
+    /// The emitted `build.rs` must put the protobuf well-known-types include
+    /// dir on `tonic_build`'s include path (issue #793): the generated protos
+    /// import `google/protobuf/{timestamp,struct,empty}.proto`, and a distro
+    /// protoc only ships those under its own include dir.
+    #[test]
+    fn grpc_build_rs_puts_the_well_known_types_include_on_the_compile_path() {
+        let mut ctx = test_ctx();
+        ctx.has_grpc = true;
+        let script = render_template_with_project(
+            &tera(),
+            "scaffold/build_rs.tera",
+            &ctx,
+            &crate::ProjectConfig::default(),
+        )
+        .unwrap();
+        assert!(
+            script.contains("well_known_types_include()"),
+            "build.rs must discover the WKT include dir:\n{script}"
+        );
+        assert!(
+            script.contains("\"/usr/include\"") && script.contains("\"/usr/local/include\""),
+            "build.rs must fall back to the standard include dirs:\n{script}"
+        );
+        assert!(
+            script.contains("PROTOC_INCLUDE"),
+            "build.rs must honour PROTOC_INCLUDE:\n{script}"
+        );
+        assert!(
+            script.contains("compile(&protos, &includes)"),
+            "the discovered include must reach tonic_build:\n{script}"
+        );
+
+        // Flag-off: the grpc branch is not rendered at all.
+        let off = render_template_with_project(
+            &tera(),
+            "scaffold/build_rs.tera",
+            &test_ctx(),
+            &crate::ProjectConfig::default(),
+        )
+        .unwrap();
+        assert!(!off.contains("well_known_types_include"));
+        assert!(!off.contains("tonic_build"));
+    }
 }
 
 #[cfg(test)]

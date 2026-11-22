@@ -19,11 +19,36 @@ fn compile_grpc_protos() {
     if protos.is_empty() {
         return;
     }
+    // The generated protos import well-known types
+    // (google/protobuf/timestamp.proto, struct.proto, empty.proto). A distro
+    // protoc ships those only under its own include directory, so it must be
+    // on the include path or protoc reports
+    // `"google.protobuf.Timestamp" is not defined` (issue #793).
+    // PROTOC_INCLUDE wins, then the standard locations.
+    let mut includes: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from("proto")];
+    if let Some(wkt_include) = well_known_types_include() {
+        includes.push(wkt_include);
+    }
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
-        .compile(&protos, &["proto"])
+        .compile(&protos, &includes)
         .expect("protobuf compilation failed");
+}
+
+/// Locate the protobuf include dir that ships the well-known types.
+fn well_known_types_include() -> Option<std::path::PathBuf> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(dir) = std::env::var("PROTOC_INCLUDE") {
+        if !dir.is_empty() {
+            candidates.push(std::path::PathBuf::from(dir));
+        }
+    }
+    candidates.push(std::path::PathBuf::from("/usr/include"));
+    candidates.push(std::path::PathBuf::from("/usr/local/include"));
+    candidates
+        .into_iter()
+        .find(|dir| dir.join("google/protobuf/empty.proto").is_file())
 }
 
 fn collect_protos(dir: &std::path::Path, protos: &mut Vec<std::path::PathBuf>) {
