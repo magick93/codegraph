@@ -1,0 +1,36 @@
+// DDD design for the inventory domain (workers gate fixture).
+//
+// The #810 class pin: a machine-bearing entity created through the workers
+// slice. Unlike the leave domain — whose status is managed by a
+// domains.toml workflow (which DTO-excludes the field and defaults the
+// column) — this entity's status is an ordinary modeled feature with a
+// `.ddd` machine. The generated create body therefore carries the machine's
+// initial state, and the cornucopia create INSERT must persist it against
+// the real migrated schema under the RLS session bundle.
+//
+// A create that fails here answers a 500 whose envelope reads
+// "Failed to create ...: db error" (tokio-postgres hides the server detail
+// behind that Display — the emitted error mapping logs the Debug/source
+// form, issue #810).
+
+import "../model/inventory.mox";
+
+application Inventory {
+    base inventory
+
+    module inventory {
+        entity StockAdjustmentType scaffold repository StockAdjustmentRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+
+        /// The stock-adjustment lifecycle machine on StockAdjustment.status.
+        machine status: StockAdjustmentStatus {
+            initial Draft;
+            Draft -> Posted via Post;
+            terminal Posted;
+        }
+    }
+}

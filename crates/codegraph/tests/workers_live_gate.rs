@@ -330,6 +330,31 @@ fn workers_gate_fixture_manifest_is_complete() {
          (check_status_bypass stays quiet)"
     );
 
+    // ── issue #810: a MACHINE-BEARING create leg on the workers slice ──
+    // The leave entity's status is domains.toml workflow-managed (DTO-
+    // excluded, DDL-defaulted), so its create never carries the machine
+    // state. The inventory design declares the machine on a plain modeled
+    // feature instead: the generated create body seeds the modeled initial
+    // state and the cornucopia create must persist it under the workers
+    // slice. This is the class the consumer's 500 came from.
+    let inventory_design = std::fs::read_to_string(fixture_dir().join("design/inventory.ddd"))
+        .expect("the inventory design must exist");
+    assert!(
+        inventory_design.contains("machine status: StockAdjustmentStatus"),
+        "the inventory design declares the machine on the entity's status \
+         feature (the machine-bearing create pin):\n{inventory_design}"
+    );
+    assert!(
+        inventory_design.contains("repository StockAdjustmentRepository"),
+        "the machine-bearing entity must be scaffolded (create leg emitted):\n{inventory_design}"
+    );
+    let inventory_model = std::fs::read_to_string(fixture_dir().join("model/inventory.mox"))
+        .expect("the inventory model must exist");
+    assert!(
+        inventory_model.contains("StockAdjustmentStatus status"),
+        "the machine's bound feature is an ordinary modeled codelist:\n{inventory_model}"
+    );
+
     // ── the fixture workspace detaches the generated output ───────────
     let workspace_cargo =
         std::fs::read_to_string(fixture_dir().join("Cargo.toml")).expect("fixture Cargo.toml");
@@ -813,6 +838,16 @@ async fn regenerate_workers_output(config: &OpsConfig) -> Result<String, String>
         config
             .root_dir
             .join("design/leave.ddd")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    // Issue #810: the inventory design carries the machine-bearing entity
+    // the workers create leg pins.
+    args.push("--ddd-files".to_string());
+    args.push(
+        config
+            .root_dir
+            .join("design/inventory.ddd")
             .to_string_lossy()
             .into_owned(),
     );
