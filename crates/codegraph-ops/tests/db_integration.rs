@@ -311,9 +311,14 @@ fn write_full_generated_set(dir: &Path) {
     let basejump_sql = fs::read_to_string(&basejump)
         .unwrap_or_else(|_| panic!("cannot read basejump install at {}", basejump.display()));
 
+    // Mirror the generator's `EXTENSIONS_SQL` (basejump_setup.rs): the
+    // `extensions` schema comes first, so `CREATE EXTENSION … WITH SCHEMA
+    // extensions` cannot fail silently (psql -f exits 0 on a statement error
+    // unless ON_ERROR_STOP is set) and make the two application paths see a
+    // different extension set.
     fs::write(
         dir.join("0000_extensions.sql"),
-        "CREATE EXTENSION IF NOT EXISTS http WITH SCHEMA extensions;\nCREATE EXTENSION IF NOT EXISTS pg_tle;\nCREATE EXTENSION IF NOT EXISTS pgcrypto;\nCREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";\n",
+        "CREATE SCHEMA IF NOT EXISTS extensions;\nCREATE EXTENSION IF NOT EXISTS http WITH SCHEMA extensions;\nCREATE EXTENSION IF NOT EXISTS pg_tle;\nCREATE EXTENSION IF NOT EXISTS pgcrypto;\nCREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";\n",
     )
     .unwrap();
     fs::write(dir.join("0001_basejump_install.sql"), basejump_sql).unwrap();
@@ -591,6 +596,14 @@ fn sorted_sql_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// `platform._migrations` is the migration BOOKKEEPING table (issue #756),
+/// not band schema: the harness's PHASED path intentionally creates and
+/// records it, while the raw per-file path (simulating `supabase db reset`)
+/// applies only the files and never creates it. Every compared inventory
+/// section therefore excludes exactly this relation — nothing else is
+/// relaxed, so the parity assertion still proves the band itself matches.
+const TRACKING_RELATION: &str = "platform._migrations";
+
 /// A deterministic, sorted inventory of the objects the migration set creates
 /// (tables + ACLs, functions, triggers, constraints, policies, enum values).
 /// Two runs that produce the same inventory are considered schema-equivalent.
@@ -604,7 +617,9 @@ async fn object_inventory(t: &PgTarget) -> String {
         &format!(
             "SELECT n.nspname, c.relname FROM pg_class c \
              JOIN pg_namespace n ON n.oid = c.relnamespace \
-             WHERE n.nspname IN {schemas} AND c.relkind IN ('r','p') ORDER BY 1,2;"
+             WHERE n.nspname IN {schemas} AND c.relkind IN ('r','p') \
+               AND c.oid <> COALESCE(to_regclass('{TRACKING_RELATION}'), 0) \
+             ORDER BY 1,2;"
         ),
     )
     .await
@@ -612,13 +627,17 @@ async fn object_inventory(t: &PgTarget) -> String {
     parts.push(tables);
 
     // ACLs: the app-role DML grants are part of the schema contract — both
-    // application methods must produce the same grant state.
+    // application methods must produce the same grant state. The tracking
+    // table is excluded for the same reason: only the phased path creates it
+    // (and a re-run's grant sweep then touches it).
     let acls = psql_query(
         t,
         &format!(
             "SELECT n.nspname, c.relname, c.relacl::text FROM pg_class c \
              JOIN pg_namespace n ON n.oid = c.relnamespace \
-             WHERE n.nspname IN {schemas} AND c.relkind IN ('r','p') ORDER BY 1,2,3;"
+             WHERE n.nspname IN {schemas} AND c.relkind IN ('r','p') \
+               AND c.oid <> COALESCE(to_regclass('{TRACKING_RELATION}'), 0) \
+             ORDER BY 1,2,3;"
         ),
     )
     .await
@@ -636,10 +655,22 @@ async fn object_inventory(t: &PgTarget) -> String {
     .expect("inventory query (functions) failed");
     parts.push(funcs);
 
+    // Triggers/constraints/policies are filtered by the tracking relation for
+    // the same reason (the table's primary-key constraint would otherwise
+    // appear only in the phased snapshot). Domain constraints
+    // (`conrelid = 0`) belong to system/extension domains
+    // (`information_schema.*`, `extensions.content_type`) — PostgreSQL
+    // materializes those lazily depending on which catalogs/extensions a path
+    // touches, and the generated band creates no domains, so they are not
+    // part of the band contract.
     let triggers = psql_query(
         t,
-        "SELECT t.tgname, t.tgrelid::regclass::text FROM pg_trigger t \
-         WHERE NOT t.tgisinternal ORDER BY 1,2;",
+        &format!(
+            "SELECT t.tgname, t.tgrelid::regclass::text FROM pg_trigger t \
+             WHERE NOT t.tgisinternal \
+               AND t.tgrelid <> COALESCE(to_regclass('{TRACKING_RELATION}'), 0) \
+             ORDER BY 1,2;"
+        ),
     )
     .await
     .expect("inventory query (triggers) failed");
@@ -647,8 +678,13 @@ async fn object_inventory(t: &PgTarget) -> String {
 
     let constraints = psql_query(
         t,
-        "SELECT c.conname, c.conrelid::regclass::text, pg_get_constraintdef(c.oid) \
-         FROM pg_constraint c ORDER BY 1,2,3;",
+        &format!(
+            "SELECT c.conname, c.conrelid::regclass::text, pg_get_constraintdef(c.oid) \
+             FROM pg_constraint c \
+             WHERE c.conrelid <> 0 \
+               AND c.conrelid <> COALESCE(to_regclass('{TRACKING_RELATION}'), 0) \
+             ORDER BY 1,2,3;"
+        ),
     )
     .await
     .expect("inventory query (constraints) failed");
@@ -656,8 +692,12 @@ async fn object_inventory(t: &PgTarget) -> String {
 
     let policies = psql_query(
         t,
-        "SELECT pol.polname, c.relname FROM pg_policy pol \
-         JOIN pg_class c ON c.oid = pol.polrelid ORDER BY 1,2;",
+        &format!(
+            "SELECT pol.polname, c.relname FROM pg_policy pol \
+             JOIN pg_class c ON c.oid = pol.polrelid \
+             WHERE c.oid <> COALESCE(to_regclass('{TRACKING_RELATION}'), 0) \
+             ORDER BY 1,2;"
+        ),
     )
     .await
     .expect("inventory query (policies) failed");
