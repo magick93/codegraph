@@ -30,6 +30,12 @@ use codegraph_grafeo::GrafeoEngine;
 #[path = "../review_fixture_gate.rs"]
 mod review_fixture_gate;
 
+// The fixture's HAND-MAINTAINED manifest section (issue #764): the generators
+// render the root manifest, but `[supabase]` is owned by the fixture and must
+// survive this wholesale wipe + regenerate.
+#[path = "../review_fixture_maintained.rs"]
+mod review_fixture_maintained;
+
 use crate::setup::{entity_names_from_config, include_domain_config, setup_grafeo};
 // === Task 1: Repository Trait Generation ===
 
@@ -515,6 +521,21 @@ async fn grafeo_candidate_inspect_output() {
     // residue and its from-clean guarantee is single-recipe.
     let _gate =
         review_fixture_gate::FixtureGate::acquire().expect("acquire the review-fixture gate");
+    // The fixture owns the manifest's `[supabase]` section (issue #764) and
+    // this test wipes the tree wholesale — capture the manifest bytes and move
+    // the fixture-owned `supabase/` project aside before the wipe, restore
+    // both after generation.
+    let manifest_path = output_dir.join("codegraph-ops.toml");
+    let previous_manifest = std::fs::read_to_string(&manifest_path).unwrap_or_default();
+    let preserved = tempfile::Builder::new()
+        .prefix(".review-maintained-")
+        .tempdir_in(output_dir.parent().unwrap())
+        .expect("tempdir beside the fixture");
+    let supabase_src = output_dir.join("supabase");
+    let supabase_backup = preserved.path().join("supabase");
+    if supabase_src.is_dir() {
+        std::fs::rename(&supabase_src, &supabase_backup).expect("stash the Supabase project");
+    }
     let _ = std::fs::remove_dir_all(&output_dir);
     std::fs::create_dir_all(&output_dir).unwrap();
 
@@ -566,6 +587,17 @@ async fn grafeo_candidate_inspect_output() {
     std::fs::create_dir_all(&repo_dir).unwrap();
     let repo_impl = repo_dir.join("repository_impl.rs");
     std::fs::write(&repo_impl, &repo_code).unwrap();
+
+    // Restore the fixture-owned `[supabase]` section the ops generator does
+    // not emit (issue #764) — this test wiped it above — and the project dir.
+    review_fixture_maintained::reapply_maintained_manifest_section(
+        &manifest_path,
+        &previous_manifest,
+    )
+    .expect("restore the maintained manifest section");
+    if supabase_backup.is_dir() {
+        std::fs::rename(&supabase_backup, &supabase_src).expect("restore the Supabase project");
+    }
 
     // Record this recipe's produced set (the #694 ledger) — the pipeline's
     // report plus the post-pipeline repository impl written above.

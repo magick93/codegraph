@@ -1,0 +1,81 @@
+# Minimal local Supabase stack for the review-fixture api suite.
+#
+# This is the MANUAL full-stack fallback for `review_api_suite`: the gate runs
+# SHAPE B by default (a Supabase-compatible Postgres base target, no stack
+# spawn — issue #709/#764). Start this stack only when you need the GoTrue /
+# Kong surface the postgres image does not install:
+#
+#     cd crates/review/generated-candidate
+#     npx --yes supabase@3.2.0 start
+#     cargo run -p testkit -- api
+#
+# Ports 54350+ are deliberately disjoint from every other local Supabase
+# stack (crewbase at 54321-54327, trader-rex at 54331-54337, workers-gate at
+# 54340-54349, ourcustomers at 54343) — the gate must never touch those. The
+# triple that must stay coherent: db port 54350 <-> [database.api].port in
+# codegraph-ops.toml <-> the health_url in the same manifest (Kong auth
+# endpoint on the api port).
+#
+# Everything the api suite does not need (studio, email testing, realtime,
+# storage, edge runtime, analytics) is disabled so the stack boots fewer
+# containers. The CLI's own migration/seed passes are disabled because the
+# ops harness applies the generated band itself into [database.api].
+#
+# Two halves make the stack boot, both load-bearing (issue #729, each
+# verified on the pinned CLI):
+#  * the harness pins the CLI version (`SUPABASE_CLI_VERSION` in
+#    crates/codegraph-ops/src/supabase.rs); a node-free lockstep pin holds the
+#    workers-gate workflow's prefetch literal to it;
+#  * this file speaks that version's KEY SPELLING. The `[local_smtp]` rename
+#    is REQUIRED, not cosmetic: `supabase@3.2.0` REJECTS the legacy
+#    `[inbucket]` key, so `start` dies at config load without it — while
+#    `supabase@2.105.0` still accepted it. Do not revert.
+project_id = "review-fixture"
+
+[api]
+enabled = true
+port = 54351
+
+[db]
+port = 54350
+shadow_port = 54354
+major_version = 17
+
+[db.pooler]
+enabled = false
+port = 54355
+
+# The api suite applies the generated migrations itself (phase-ordered psql
+# into [database.api]) — never `supabase db reset` — so the CLI's own
+# migration/seed passes stay off.
+[db.migrations]
+enabled = false
+
+[db.seed]
+enabled = false
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = false
+port = 54352
+
+[local_smtp]
+enabled = false
+port = 54353
+
+[storage]
+enabled = false
+
+# GoTrue stays up: the harness health probe is Kong's /auth/v1/health.
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false
+port = 54356

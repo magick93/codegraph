@@ -49,6 +49,12 @@ mod inspect_setup;
 #[path = "review_fixture_gate.rs"]
 pub mod review_fixture_gate;
 
+// The fixture's HAND-MAINTAINED manifest section (issue #764): the generators
+// render the root manifest, but `[supabase]` is owned by the fixture and must
+// survive every in-place refresh.
+#[path = "review_fixture_maintained.rs"]
+mod maintained;
+
 use std::path::{Path, PathBuf};
 
 use codegraph::generate::ProjectConfig;
@@ -158,6 +164,10 @@ pub async fn regenerate_flag_off_fixture() -> Result<(), String> {
     // Held to the end of the call: the regeneration is the whole body here.
     let _gate = review_fixture_gate::FixtureGate::acquire()?;
     let output_dir = fixture_dir();
+    // The ops generator overwrites the manifest; the fixture owns its
+    // `[supabase]` section, so capture it before the refresh (issue #764).
+    let manifest_path = output_dir.join("codegraph-ops.toml");
+    let previous_manifest = std::fs::read_to_string(&manifest_path).unwrap_or_default();
     let swept =
         review_fixture_gate::sweep_produced(&output_dir, review_fixture_gate::Recipe::FlagOff);
     if swept > 0 {
@@ -168,6 +178,7 @@ pub async fn regenerate_flag_off_fixture() -> Result<(), String> {
         );
     }
     let produced = regenerate_flag_off_fixture_into(&output_dir).await?;
+    maintained::reapply_maintained_manifest_section(&manifest_path, &previous_manifest)?;
     review_fixture_gate::record_produced(
         &output_dir,
         review_fixture_gate::Recipe::FlagOff,

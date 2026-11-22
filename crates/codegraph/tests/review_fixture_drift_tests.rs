@@ -38,10 +38,17 @@
 //!   `../../../codegraph-ops` (machine paths must never reach the
 //!   committed bytes — see `OUTPUT_DIR_RELATIVE_FILES`);
 //! - the deliberate checked-in content the flag-OFF pipeline does not
-//!   produce (`committed_extra`): consumer-authored `ui/forms/` and the
-//!   retired-era trees (`api-contracts/`, `svelte/`, `e2e/`). Removing any
-//!   of those is a deliberate decision — shrink `committed_extra` in the
-//!   same commit.
+//!   produce (`committed_extra`): consumer-authored `ui/forms/`, the
+//!   retired-era trees (`api-contracts/`, `svelte/`, `e2e/`), and the
+//!   review fixture's own Supabase project (`supabase/`, the manual
+//!   full-stack fallback for `review_api_suite`). Removing any of those is a
+//!   deliberate decision — shrink `committed_extra` in the same commit.
+//!
+//! `codegraph-ops.toml` needs one more rule: the generators still produce it,
+//! but the fixture HAND-MAINTAINS the `[supabase]` section (and the comment
+//! header). [`normalized_maintained_manifest`] compares the generated half
+//! line-for-line while dropping comments and that section, so a generated
+//! field change is still caught but the maintained block is free to differ.
 //!
 //! Maintenance: `regenerate_committed_fixture_in_place` (ignored) rewrites
 //! the committed fixture with the same recipe, so the fixture and the pin
@@ -87,13 +94,48 @@ const MAX_REPORTED: usize = 20;
 ///   still carries. The current flag-OFF pipeline does not produce them
 ///   and #747's scope deliberately does NOT delete them (the fixture
 ///   tracks the flag-OFF recipe with the modest delta the mandate names —
-///   era cleanup is a separate decision).
+///   era cleanup is a separate decision);
+/// - `supabase/` is the fixture-owned local Supabase project (the MANUAL
+///   full-stack fallback for `review_api_suite`, issue #764 — the gate
+///   itself runs shape B and needs no stack).
 ///
 /// Note `codegraph-ops.toml` + `testkit/` are NOT here: the ops generator
 /// IS in the flag-OFF plan and the recipe produces them (only
 /// `testkit/Cargo.toml` needs special byte handling — see
-/// `OUTPUT_DIR_RELATIVE_FILES`).
-const COMMITTED_EXTRA_PREFIXES: [&str; 4] = ["ui/forms/", "api-contracts/", "svelte/", "e2e/"];
+/// `OUTPUT_DIR_RELATIVE_FILES` — and the root manifest's maintained
+/// `[supabase]` section is normalized out by
+/// [`normalized_maintained_manifest`]).
+const COMMITTED_EXTRA_PREFIXES: [&str; 5] = [
+    "ui/forms/",
+    "api-contracts/",
+    "svelte/",
+    "e2e/",
+    "supabase/",
+];
+
+/// The root ops manifest the fixture hand-maintains: the generators still
+/// render it, but the `[supabase]` section and comment header are owned by
+/// the fixture (the api suite's manual full-stack fallback).
+const MAINTAINED_MANIFEST: &str = "codegraph-ops.toml";
+
+/// The generated half of a maintained manifest: comments (the header/prose)
+/// and the maintained `[supabase]` section dropped, everything else verbatim.
+/// Pure so the comparison rule is unit-testable.
+fn normalized_maintained_manifest(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_maintained_section = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_maintained_section = trimmed == "[supabase]";
+        }
+        if in_maintained_section || trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        out.push(line.to_string());
+    }
+    out
+}
 
 fn committed_extra(rel: &str) -> bool {
     COMMITTED_EXTRA_PREFIXES
@@ -122,6 +164,13 @@ const COMMITTED_OPS_DEP_LINE: &str = "codegraph-ops = { path = \"../../../codegr
 fn files_differ(rel: &str, fresh: &Path, committed: &Path) -> Option<String> {
     let fresh_bytes = fs::read(fresh).unwrap_or_default();
     let committed_bytes = fs::read(committed).unwrap_or_default();
+    if rel == MAINTAINED_MANIFEST {
+        let fresh_text = String::from_utf8_lossy(&fresh_bytes);
+        let committed_text = String::from_utf8_lossy(&committed_bytes);
+        return (normalized_maintained_manifest(&fresh_text)
+            != normalized_maintained_manifest(&committed_text))
+        .then(|| "generated (non-maintained) lines differ".to_string());
+    }
     if !OUTPUT_DIR_RELATIVE_FILES.contains(&rel) {
         return (fresh_bytes != committed_bytes).then(|| "bytes differ".to_string());
     }
@@ -416,6 +465,35 @@ async fn committed_fixture_matches_the_current_generators() {
          --nocapture regenerate_committed_fixture_in_place`, review the diff, and commit the \
          regenerated tree with an enumerated message.{report}"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The maintained manifest rule: the generated half is compared
+    /// line-for-line, while comments and the fixture-owned `[supabase]`
+    /// section are free to differ.
+    #[test]
+    fn maintained_manifest_ignores_comments_and_the_supabase_section() {
+        let generated = "# Generated by codegraph. DO NOT EDIT.\n\napp_name = \"app\"\n\n\
+                         [database.api]\nhost = \"localhost\"\n\n[capabilities]\nhas_cli = true\n";
+        let committed = "# Hand-maintained.\n\napp_name = \"app\"\n\n\
+                         [database.api]\nhost = \"localhost\"\n\n\
+                         [supabase]\ndir = \"supabase\"\nhealth_url = \"http://localhost:54351/auth/v1/health\"\n\n\
+                         [capabilities]\nhas_cli = true\n";
+        assert_eq!(
+            normalized_maintained_manifest(generated),
+            normalized_maintained_manifest(committed)
+        );
+
+        let drifted = committed.replace("has_cli = true", "has_cli = false");
+        assert_ne!(
+            normalized_maintained_manifest(generated),
+            normalized_maintained_manifest(&drifted),
+            "a generated field change must still be caught"
+        );
+    }
 }
 
 /// Maintenance helper (ignored): rewrite the committed fixture in place
