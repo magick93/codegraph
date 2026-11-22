@@ -423,26 +423,56 @@ pub(crate) fn render_auth_spec(spec: &AuthTestSpec, personas_import: &str) -> St
          // seeding lives there, so the specs carry zero inline addInitScript.\n\n",
         spec.view_name
     ));
+    // Issue #808: a seeded auth spec (the id route's `beforeAll` fixture)
+    // posts through the API origin WITH the seeding persona's key — a row
+    // created under one persona's org is not visible to the others, so the
+    // seed must authenticate as a persona the guarded route permits. Both
+    // the `apiUrl` helper and `apiKeyFor` come from the shared support
+    // modules, so the spec must import them.
+    let seeding_persona = match (&spec.open_param, &spec.open_seed) {
+        (Some(_), Some(_)) => Some(
+            spec.personas
+                .iter()
+                .find(|p| p.permitted)
+                .map(|p| persona_id(&p.actor))
+                .or_else(|| used.first().cloned()),
+        ),
+        _ => None,
+    }
+    .flatten();
     s.push_str("import { test, expect } from '@playwright/test';\n\n");
     let imports = {
         let mut all = used.clone();
         all.push("asPersona".to_string());
+        if seeding_persona.is_some() {
+            all.push("apiKeyFor".to_string());
+        }
         all.join(", ")
     };
     s.push_str(&format!(
         "import {{ {imports} }} from '{personas_import}';\n"
     ));
     s.push_str(&format!(
-        "import {{ {class} }} from '../pages/{kebab}-page';\n\n"
+        "import {{ {class} }} from '../pages/{kebab}-page';\n"
     ));
+    if seeding_persona.is_some() {
+        s.push_str("import { apiUrl } from '../pages/support/api';\n");
+    }
+    s.push('\n');
 
-    // Detail/edit views need a real record: seed it once (through the API,
-    // using the env API_KEY header the emitted playwright config attaches)
-    // and open every auth test against that id.
-    if let (Some(_param), Some(seed)) = (&spec.open_param, &spec.open_seed) {
+    // Detail/edit views need a real record: seed it once through the API
+    // with the permitted persona's key (issue #808) and open every auth
+    // test against that id.
+    if let (Some(_param), Some(seed), Some(seed_persona)) =
+        (&spec.open_param, &spec.open_seed, &seeding_persona)
+    {
         s.push_str("let seededId: string;\n\n");
         s.push_str("test.beforeAll(async ({ request }) => {\n");
-        s.push_str(&seed.setup_js_json("seeded", "\t"));
+        s.push_str(&format!("\tconst seedKey = apiKeyFor({seed_persona});\n"));
+        s.push_str(
+            "\tconst seedHeaders = seedKey ? { Authorization: `Bearer ${seedKey}` } : undefined;\n",
+        );
+        s.push_str(&seed.setup_js_with_headers("seeded", "\t", "seedHeaders", true));
         s.push_str("\tseededId = String(seeded.data?.id ?? seeded.id);\n");
         s.push_str("});\n\n");
     }

@@ -148,6 +148,9 @@ view "RefundRequestList" {
 view "RefundRequestDetail" {
     params { id: Uuid };
     label "Refund Request";
+    // Guarded id route (issue #808): forces the auth family down the
+    // `beforeAll` seeding path (a detail view needs a real record).
+    roles: [Admin];
 
     component "refund_editor" {
         type: form;
@@ -445,6 +448,46 @@ async fn auth_specs_assert_denial_and_control_gating() {
     assert!(
         list.contains("agent"),
         "the roles-guarded view's auth spec must exercise the denied persona:\n{list}"
+    );
+}
+
+/// Issue #808: a seeded auth spec (an id route whose fixture is created in
+/// `beforeAll`) must import `apiUrl` AND carry the seeding persona's API key.
+/// The consumer's ui-post import shim and seeded-view skip-list papered over
+/// these two regressions; the un-seeded auth surface stays unchanged.
+#[tokio::test]
+async fn seeded_auth_specs_import_api_url_and_carry_seed_headers() {
+    let (_fixture, ui) = generate_fixture().await;
+
+    let seeded = read(&ui, "tests/ifml/refund-request-detail.auth.spec.ts");
+    assert!(
+        seeded.contains("import { apiUrl } from '../pages/support/api';"),
+        "a seeded auth spec must import apiUrl (issue #808):\n{seeded}"
+    );
+    assert!(
+        seeded.contains("apiKeyFor") && seeded.contains("from './support/personas';"),
+        "a seeded auth spec must import apiKeyFor from the personas fixture:\n{seeded}"
+    );
+    assert!(
+        seeded.contains("test.beforeAll(") && seeded.contains("request.post(apiUrl("),
+        "the seed must still post through the API origin:\n{seeded}"
+    );
+    assert!(
+        seeded.contains("const seedKey = apiKeyFor(admin);")
+            && seeded
+                .contains("const seedHeaders = seedKey ? { Authorization: `Bearer ${seedKey}` } : undefined;"),
+        "the seed must carry the permitted persona's key (issue #808):\n{seeded}"
+    );
+    assert!(
+        seeded.contains("headers: seedHeaders"),
+        "the seed POST must send the headers (issue #808):\n{seeded}"
+    );
+
+    // No seeding ⇒ no apiUrl/seedHeaders: the un-seeded surface is unchanged.
+    let unseeded = read(&ui, "tests/ifml/request-list.auth.spec.ts");
+    assert!(
+        !unseeded.contains("apiUrl(") && !unseeded.contains("seedHeaders"),
+        "an un-seeded auth spec must not gain the seeding imports/headers:\n{unseeded}"
     );
 }
 
