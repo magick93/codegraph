@@ -88,7 +88,7 @@ impl OpsConfig {
         let supabase_dir = manifest.supabase.as_ref().map(|s| root_dir.join(&s.dir));
         let hurl_dir = manifest.hurl.as_ref().map(|h| root_dir.join(&h.dir));
 
-        let api_db = pg_target(&manifest.database.api, "api");
+        let api_db = api_db_target(&manifest.database.api)?;
         let grant_options = crate::migrate::GrantOptions {
             role: manifest
                 .database
@@ -192,6 +192,32 @@ fn pg_target(t: &OpsDbTarget, role: &str) -> PgTarget {
     }
 }
 
+/// Environment variable that WHOLE-BLOCK replaces the manifest's
+/// `[database.api]` target (host/port/user/password/database) — the same
+/// whole-block retarget `review_api_suite` applies to its temp manifest,
+/// available without editing a committed manifest (issue #709: the CI lane
+/// points the fixture manifest at the Supabase-image service; consumers can
+/// point a generated manifest at any target without touching it). A parse
+/// failure is a config error naming the variable — never a silently
+/// half-applied target.
+pub const API_DATABASE_URL_ENV: &str = "CODEGRAPH_API_DATABASE_URL";
+
+/// The api database target: the manifest block, overridden by
+/// [`API_DATABASE_URL_ENV`] when set to a non-empty `postgres://` URL. Pure
+/// over the env value so the override is unit-testable.
+fn api_db_target(t: &OpsDbTarget) -> OpsResult<PgTarget> {
+    let manifest_target = pg_target(t, "api");
+    match std::env::var(API_DATABASE_URL_ENV) {
+        Ok(url) if !url.trim().is_empty() => {
+            let mut target = PgTarget::from_url(url.trim())?;
+            target.role = "api".to_string();
+            Ok(target)
+        }
+        Ok(_) => Ok(manifest_target),
+        Err(_) => Ok(manifest_target),
+    }
+}
+
 /// Replace every `{env:NAME}` placeholder in `value` with the current value
 /// of the `NAME` environment variable. An unset variable expands to an empty
 /// string. Plain strings (no placeholders) pass through unchanged, so
@@ -231,6 +257,72 @@ pub const DEMO_JWT_SECRET: &str = "super-secret-jwt-token-with-at-least-32-chara
 mod tests {
     use super::*;
     use codegraph_config::OpsDatabase;
+
+    /// Issue #709: the CI lane points a COMMITTED manifest's `[database.api]`
+    /// at the Supabase-image service via `CODEGRAPH_API_DATABASE_URL` — the
+    /// env whole-block replaces the manifest target, never merges with it.
+    /// Serialized because env vars are process-global.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn api_target() -> OpsDbTarget {
+        OpsDbTarget {
+            host: "manifest-host".into(),
+            port: 55555,
+            user: "manifest-user".into(),
+            password: "manifest-pass".into(),
+            database: "manifest-db".into(),
+            reset_sql: None,
+            seed_sql: None,
+            grant_role: None,
+            grant_strict: None,
+        }
+    }
+
+    #[test]
+    fn api_db_env_override_whole_block_replaces_the_manifest_target() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: single-threaded test binaries under the ENV_LOCK; every
+        // path through this test restores or removes the variable.
+        unsafe { std::env::set_var(API_DATABASE_URL_ENV, "postgres://svc:pw@10.0.0.9:6543/scr") };
+        let target = api_db_target(&api_target()).unwrap();
+        unsafe { std::env::remove_var(API_DATABASE_URL_ENV) };
+        assert_eq!(target.host, "10.0.0.9");
+        assert_eq!(target.port, 6543);
+        assert_eq!(target.user, "svc");
+        assert_eq!(target.password, "pw");
+        assert_eq!(target.db, "scr");
+        assert_eq!(
+            target.role, "api",
+            "the role label must survive the override"
+        );
+    }
+
+    #[test]
+    fn api_db_env_unset_or_blank_keeps_the_manifest_target() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let manifest = api_db_target(&api_target()).unwrap();
+        assert_eq!(manifest.host, "manifest-host");
+        assert_eq!(manifest.port, 55555);
+        assert_eq!(manifest.db, "manifest-db");
+
+        unsafe { std::env::set_var(API_DATABASE_URL_ENV, "   ") };
+        let blank = api_db_target(&api_target()).unwrap();
+        unsafe { std::env::remove_var(API_DATABASE_URL_ENV) };
+        assert_eq!(blank.host, "manifest-host", "a blank override must not win");
+    }
+
+    #[test]
+    fn api_db_env_override_parse_failure_is_a_named_config_error() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var(API_DATABASE_URL_ENV, "mysql://nope") };
+        let err = api_db_target(&api_target()).unwrap_err();
+        unsafe { std::env::remove_var(API_DATABASE_URL_ENV) };
+        let text = err.to_string();
+        assert!(
+            text.contains(API_DATABASE_URL_ENV) || text.contains("postgres"),
+            "{text}"
+        );
+    }
 
     #[test]
     fn resolves_paths_relative_to_manifest() {

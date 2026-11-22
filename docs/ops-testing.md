@@ -410,10 +410,12 @@ For aggregation:
 
 CI wiring: run the api suite against the **Supabase postgres image** (the
 `auth` schema is load-bearing; a plain `postgres:<n>` service cannot serve
-this suite — issue #640), with metrics export:
+this suite — issue #640). The wired lane (see below) IS the wiring; a
+standalone run with metrics export looks like:
 
 ```bash
-cargo run -p testkit -- api --metrics ci.tsv
+CODEGRAPH_API_DATABASE_URL=postgres://postgres:postgres@<service>:5432/postgres \
+  cargo run -p testkit -- api --metrics ci.tsv --results ci-results.json
 ```
 
 **Which mode CI uses (issue #709, shape B):** the suite probes the
@@ -485,19 +487,39 @@ the 401 leg is served by axum itself). The persona/auth legs — JWT login
 flows, Supabase client auth, browser sessions — are **shadowed** in this
 lane; they remain the consumer `testkit e2e` lane's job.
 
-**CI lane status:** the codegraph repo's own CI does **not yet** run the
-testkit api lane. Wiring it surfaced issue #756 (a generated app without
-the admin CLI could not boot over an already-applied band: the boot re-seed
-hit the #700 tenant trigger with no session org) — that blocker is FIXED:
-every migration plane now records/reads ONE `platform._migrations` table and
-boot adopts legacy bands instead of re-applying them (`boot_migration_tests`,
-wired into `test-ops-integration`). The lane wiring itself is a later wave;
-the contract pin
+**The repo's own CI lane (`ops-api-suite` job in ci.yml, issue #709)** runs
+exactly these steps on every PR touching the ops harness or the generated
+api surface (path-filtered via `dorny/paths-filter`), and the justfile's
+`ops-api-lane` recipe mirrors them: regenerate the committed review fixture
+with the CURRENT generators (the dedicated `review_fixture_regen` test
+target — the regeneration half of `review_api_suite`, under the same
+cross-process fixture gate), build the app, then run `cargo run -p testkit
+-- api --skip-build --allow-gen-rev-mismatch` against the service through
+the `CODEGRAPH_API_DATABASE_URL` env override — OpsConfig whole-block
+replaces the committed fixture manifest's `[database.api]` with it on load,
+so the manifest itself is never edited. The service IS the Supabase
+postgres image and the job exports `CODEGRAPH_REQUIRE_SUPABASE=1` (the #708
+fail-closed gate); `--results`/`--metrics` artifacts upload on failure. The
+contract pin
 (`ops_ci_lane_contract::the_testkit_api_lane_is_wired_into_ci_and_mirrored_in_the_justfile`)
-stays ignore-marked until then. The codegraph repo's `test-ops-integration`
-job (Supabase-image service + the fail-closed `CODEGRAPH_REQUIRE_SUPABASE`
-gate, issue #708) is the reference pattern for the DB tier; see the "Ops
-Harness" section of `AGENTS.md` for the consumer integration guide.
+is un-ignored and holds the wiring: remove a step or the override env and
+the PR-CI `test` job fails naming what went missing. Locally,
+`just ops-api-lane API_DB_URL=postgres://postgres:postgres@localhost:54350/postgres`
+runs the same three steps against the fixture's manual stack (or any
+Supabase-compatible target); a plain Postgres target skips with a WARN
+naming the image. The lane's history: wiring it surfaced #756 (a generated
+app could not boot over an already-applied band) — fixed; every migration
+plane now records/reads ONE `platform._migrations` table.
+
+**The lane's target must be FRESH.** CI's service is ephemeral per run, so
+this is free there; a LONG-LIVED local database carries an older band and
+the lane fails in confusing ways: an old-shaped `platform` table survives a
+newer band whose files no longer recreate it (`CREATE TABLE IF NOT EXISTS`
+no-ops over the old shape), and the pre-#427 tolerant runner moves on —
+the failure surfaces minutes later as runtime `column does not exist`
+errors in the hurl legs. `supabase db reset` (or a scratch database)
+before a local lane run. Issue #427's fail-on-error work makes this class
+loud; until it lands, the freshness requirement is manual.
 
 ---
 

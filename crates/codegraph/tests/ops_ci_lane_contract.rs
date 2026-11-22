@@ -173,17 +173,21 @@ fn normalize(text: &str) -> String {
 /// suite was validated by nothing in CI (`grep -rn testkit
 /// .github/workflows/` found nothing). ci.yml must build the committed
 /// review fixture app and run its testkit against the Supabase-image
-/// service (shape B — the stack is already up, the suite skips stack
-/// startup), and the justfile must mirror the steps (the
+/// service (shape B — the suite probes the configured target with the
+/// shared compatibility gate, finds it already serving the band, and skips
+/// stack startup), and the justfile must mirror the steps (the
 /// `ci_local_contract` drift discipline).
 ///
-/// BLOCKED (issue #756): the generated app cannot boot over the harness
-/// band until the boot-migration defect is fixed — the suite's own run
-/// proved migrate + provisioning green and the boot re-seed dead. The
-/// wiring (this pin + the ci.yml steps + the justfile recipe) lands with
-/// the #756 fix; shape B itself (the run_api mode) is live in this PR.
+/// The lane's steps: regenerate the fixture with the CURRENT generators
+/// (the dedicated `review_fixture_regen` target — CI regenerates without
+/// running the full suite), build the app, then run `testkit api
+/// --skip-build` pointed at the service through the
+/// `CODEGRAPH_API_DATABASE_URL` whole-block env override (a committed
+/// manifest needs no edit; `OpsConfig` applies it on load). Un-ignored with
+/// the lane: the #756 boot blocker (an app could not boot over an
+/// already-applied band) is fixed — the `review_api_suite` lane proves
+/// `boot-migrations: 0 applied` every run.
 #[test]
-#[ignore = "blocked by #756 — the generated app cannot boot over an already-applied band; wire the lane with that fix"]
 fn the_testkit_api_lane_is_wired_into_ci_and_mirrored_in_the_justfile() {
     let ci = normalize(&read(".github/workflows/ci.yml"));
     let api_step = "cargo run -p testkit -- api --skip-build --allow-gen-rev-mismatch";
@@ -201,10 +205,33 @@ fn the_testkit_api_lane_is_wired_into_ci_and_mirrored_in_the_justfile() {
          and build the app (`{build_step}`) before the api suite \
          (`--skip-build` skips generate+build; the binary must exist)"
     );
+    // The lane must name its database target: the env override is what
+    // points the committed fixture manifest's [database.api] at the CI
+    // service. A lane that loses the override would run the suite against
+    // the fixture's manual-stack port (54350) and fail obscurely — the
+    // override in the job block is the visible wiring.
+    assert!(
+        ci.contains("CODEGRAPH_API_DATABASE_URL: postgres://"),
+        "the ops-api-suite job must export CODEGRAPH_API_DATABASE_URL \
+         (postgres://… against the service) — it is how the committed \
+         fixture manifest's [database.api] targets the lane's database \
+         without editing it"
+    );
+    assert!(
+        ci.contains("public.ecr.aws/supabase/postgres"),
+        "the ops-api-suite service must BE the Supabase postgres image \
+         (issue #708: a plain postgres:<n> cannot serve the band; shape B \
+         probes it fail-closed)"
+    );
     let justfile = normalize(&read("justfile"));
     assert!(
         justfile.contains(api_step) && justfile.contains(build_step),
         "the justfile must mirror the testkit api lane steps (issue #709: \
          every non-runner-only CI step appears in the justfile)"
+    );
+    assert!(
+        justfile.contains("review_fixture_regen"),
+        "the justfile mirror must include the fixture regen step (the lane's \
+         first signal on template drift)"
     );
 }

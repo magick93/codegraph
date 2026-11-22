@@ -5061,8 +5061,9 @@ an already-migrated database (ops-harness band, admin-CLI run, boot, or a
   once and `cargo check`s the admin-CLI variant as the #551 compile pin) —
   wired into CI's `test-ops-integration` job and `just ops-boot-migration`.
   Deferred to a later wave: #427's fail-on-error semantics, a `--replay-all`
-  escape hatch, the full speed acceptance, and the `testkit api` CI-lane
-  wiring (`ops_ci_lane_contract` stays ignore-marked).
+  escape hatch, the full speed acceptance (the `testkit api` CI-lane wiring
+  itself has LANDED — see the "Ops Harness" consumer guide §6;
+  `ops_ci_lane_contract` is un-ignored and holds it).
 
 ### Consumer integration guide
 
@@ -5125,13 +5126,20 @@ an already-migrated database (ops-harness band, admin-CLI run, boot, or a
    #709): a target that already serves the band is used as-is, no stack
    startup, no `[[supabase]]` manifest section needed. GoTrue/PostgREST are
    NOT exercised — the persona/auth legs stay the `testkit e2e` lane's job.
-   The codegraph repo's own `test-ops-integration` job (Supabase-image
-   service + the fail-closed `CODEGRAPH_REQUIRE_SUPABASE` gate) is the
-   reference pattern for the DB tier; the api-suite CI lane itself is
-   still unwired — its boot blocker (issue #756: CLI-less generated apps
-   could not boot over an already-applied band) is FIXED by the shared
-   `platform._migrations` table above; the lane wiring is a later wave —
-   see `docs/ops-testing.md` §7.
+   **The codegraph repo's own lane is WIRED** (issue #709): the
+   `ops-api-suite` job in ci.yml — path-filtered to the ops harness + the
+   generated api surface — regenerates the committed review fixture with
+   the CURRENT generators (`review_fixture_regen` test target), builds the
+   app, then runs `cargo run -p testkit -- api --skip-build
+   --allow-gen-rev-mismatch` against the service through the
+   `CODEGRAPH_API_DATABASE_URL` env override (OpsConfig whole-block
+   replaces `[database.api]` with it on load — a committed manifest needs
+   no edit); `--results`/`--metrics` upload on failure. The justfile
+   `ops-api-lane` recipe mirrors the steps, and the un-ignored
+   `ops_ci_lane_contract::the_testkit_api_lane_is_wired_into_ci_and_
+   mirrored_in_the_justfile` pin holds the wiring. The
+   `test-ops-integration` job (same image + fail-closed gate) remains the
+   reference pattern for the DB tier; details in `docs/ops-testing.md` §7.
 
 ### Platform support & prerequisites
 

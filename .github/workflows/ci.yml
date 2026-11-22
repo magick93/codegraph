@@ -146,3 +146,99 @@ jobs:
         run: cargo test -p codegraph --test ddd_invariants_live_gate -- --ignored --nocapture
       - name: Boot-migration tracking gate (issue #756)
         run: cargo test -p codegraph --test boot_migration_tests -- --ignored --nocapture
+
+  ops-api-suite:
+    # Issue #709: the ops harness's own api suite (`testkit api`) — the one
+    # every consumer runs via `just api` — was validated by nothing in CI
+    # (`grep -rn testkit .github/workflows/` was empty). This lane runs it
+    # against the Supabase-postgres service in SHAPE B: the suite probes the
+    # configured target with the shared compatibility gate
+    # (`codegraph_ops::supabase::compatibility_gate`), finds it already
+    # serving the band, and skips `supabase start` entirely — no manifest
+    # [[supabase]] section is needed in this mode. GoTrue/PostgREST are NOT
+    # exercised (the postgres image does not carry them): the persona/auth
+    # legs remain the consumer `testkit e2e` lane's job. The lane is
+    # path-filtered to the ops harness + the generated api surface so it is
+    # green exactly when it needs to be (drift-pinned by
+    # ops_ci_lane_contract).
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: public.ecr.aws/supabase/postgres:17.6.1.132
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: supabase_admin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Issue #708: fail closed — a missing Supabase capability FAILS naming
+      # the image instead of silently skipping.
+      CODEGRAPH_REQUIRE_SUPABASE: "1"
+      RUSTFLAGS: -C debuginfo=0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Detect relevant changes (ops harness + generated api surface)
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            ops_api:
+              - 'crates/codegraph-ops/**'
+              - 'crates/codegraph-generate/templates/api/**'
+              - 'crates/codegraph-generate/templates/scaffold/**'
+              - 'crates/codegraph-generate/templates/hurl/**'
+              - 'crates/codegraph-generate/src/api/**'
+              - 'crates/codegraph-generate/src/ddd/**'
+              - 'crates/codegraph-generate/src/profile/**'
+              - 'crates/codegraph/tests/review_api_suite.rs'
+              - 'crates/codegraph/tests/review_api_suite_regen.rs'
+              - 'crates/codegraph/tests/review_fixture_regen.rs'
+              - 'crates/codegraph/tests/review_fixture_gate.rs'
+              - 'crates/codegraph/tests/ops_ci_lane_contract.rs'
+              - 'crates/codegraph/tests/fixtures/**'
+              - 'crates/review/generated-candidate/**'
+              - '.github/workflows/ci.yml'
+      - name: Install psql + hurl
+        if: steps.changes.outputs.ops_api == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          HURL_VERSION=8.1.0
+          curl --silent --location --remote-name \
+            "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/hurl_${HURL_VERSION}_amd64.deb"
+          sudo apt-get install -y "./hurl_${HURL_VERSION}_amd64.deb"
+          hurl --version
+      - name: Regenerate the review fixture with the CURRENT generators (issue #709)
+        if: steps.changes.outputs.ops_api == 'true'
+        run: cargo test -p codegraph --test review_fixture_regen -- --ignored --nocapture
+      - name: Build the fixture app (the suite runs with --skip-build)
+        if: steps.changes.outputs.ops_api == 'true'
+        run: cargo build --manifest-path crates/review/generated-candidate/Cargo.toml
+      - name: Run the testkit api suite against the service (shape B)
+        if: steps.changes.outputs.ops_api == 'true'
+        working-directory: crates/review/generated-candidate
+        env:
+          # Issue #709: point the committed fixture manifest's [database.api]
+          # at the service without editing it (the whole-block env override
+          # OpsConfig applies on load).
+          CODEGRAPH_API_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+        run: >-
+          cargo run -p testkit -- api --skip-build --allow-gen-rev-mismatch
+          --results test-results/api-results.json
+          --metrics test-results/api-metrics.tsv
+      - name: Upload failure artifacts (results + metrics + hurl logs)
+        if: failure() && steps.changes.outputs.ops_api == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ops-api-suite-failure
+          path: |
+            crates/review/generated-candidate/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

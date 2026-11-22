@@ -166,3 +166,38 @@ ops-boot-migration:
         exit 0
     fi
     cargo test -p codegraph --test boot_migration_tests -- --ignored --nocapture
+
+# CI ops-api-suite job (issue #709): the ops harness's own api suite over the
+# review fixture, shape B — the suite probes the target and, when it already
+# serves the Supabase band, skips stack startup entirely. Point API_DB_URL at
+# a Supabase-compatible Postgres (the fixture's manual stack on 54350, or a
+# port-mapped public.ecr.aws/supabase/postgres container); a plain Postgres
+# target is skipped with a WARN locally (set CODEGRAPH_REQUIRE_SUPABASE=1 to
+# fail instead, exactly like CI). The target must be FRESH — CI's service is
+# ephemeral per run; a long-lived database with an OLD band surfaces as
+# runtime failures (an old-shaped platform table survives a band whose files
+# no longer recreate it, and the api suite's hurl legs hit the missing
+# columns) — `supabase db reset` first, or point at a scratch database.
+ops-api-lane API_DB_URL='postgres://postgres:postgres@localhost:5432/postgres':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v psql >/dev/null 2>&1 || ! psql "$API_DB_URL" -c 'select 1' >/dev/null 2>&1; then
+        echo "WARN ops — Postgres unreachable ($API_DB_URL); skipping ops-api-lane"
+        exit 0
+    fi
+    if ! psql "$API_DB_URL" -Atc "SELECT 1 FROM pg_namespace WHERE nspname='auth'" >/dev/null 2>&1; then
+        echo "WARN ops — $API_DB_URL is plain Postgres (no auth schema): the testkit api suite needs a Supabase-compatible target; skipping"
+        echo "        point API_DB_URL at public.ecr.aws/supabase/postgres:17.6.1.132 (or the fixture's manual stack on 54350), or set CODEGRAPH_REQUIRE_SUPABASE=1 to fail instead of skip"
+        if [ "${CODEGRAPH_REQUIRE_SUPABASE:-0}" != "1" ]; then
+            exit 0
+        fi
+    fi
+    export CODEGRAPH_REQUIRE_SUPABASE=1
+    # The three CI steps (ops-api-suite job), in order: regenerate the
+    # fixture with the CURRENT generators, build the app (--skip-build
+    # consumes the binary), then run the suite against the target through
+    # the CODEGRAPH_API_DATABASE_URL whole-block override.
+    cargo test -p codegraph --test review_fixture_regen -- --ignored --nocapture
+    cargo build --manifest-path crates/review/generated-candidate/Cargo.toml
+    cd crates/review/generated-candidate
+    CODEGRAPH_API_DATABASE_URL="$API_DB_URL" cargo run -p testkit -- api --skip-build --allow-gen-rev-mismatch
