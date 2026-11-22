@@ -152,4 +152,28 @@ fn snapshot_grpc_proto_candidate_contains_entity_message() {
             .content
             .contains("rpc List(ListCandidateRequest) returns (ListCandidateResponse)")
     );
+
+    // Issue #793 — cross-package + well-known-type references must RESOLVE:
+    // `FilterClause` lives in `shared.proto`'s `shared` package, and the
+    // `Delete` method's `google.protobuf.Empty` needs its own import (a
+    // missing import is not an include-path problem).
+    assert!(
+        proto_file
+            .content
+            .contains("import \"google/protobuf/empty.proto\";"),
+        "the Delete method returns google.protobuf.Empty, so the import must be emitted:\n{}",
+        proto_file.content
+    );
+    assert!(
+        proto_file
+            .content
+            .contains("repeated shared.FilterClause filters = 5;"),
+        "FilterClause is declared in the `shared` package and must be qualified:\n{}",
+        proto_file.content
+    );
+    assert!(
+        !proto_file.content.contains("repeated FilterClause"),
+        "a bare cross-package reference cannot resolve:\n{}",
+        proto_file.content
+    );
 }

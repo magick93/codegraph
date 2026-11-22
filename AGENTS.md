@@ -3981,10 +3981,61 @@ The generated `build.rs` walks the `proto/` directory tree and compiles all `.pr
 tonic_build::configure()
     .build_server(true)
     .build_client(true)
-    .compile(&protos, &["proto"])
+    .compile(&protos, &includes)   // includes = ["proto", <well-known-types include>]
 ```
 
 Setting `build_client(true)` causes tonic to auto-generate typed client structs (`{Entity}ServiceClient<T>`) — zero additional codegen needed.
+
+### Well-known types + cross-package references (issue #793)
+
+Two emission rules keep the generated protos **compilable** under a distro
+protobuf (`libprotoc 3.21.12`) — the first real execution of
+`grpc_compile_tests` found both:
+
+- **Cross-package references are package-qualified.** `shared.proto` declares
+  `package shared;`, so a domain proto must spell `shared.FilterClause`
+  (ListRequest `filters`) and `shared.SearchResult` (the semantic-search
+  method's return), never the bare names. Bare names only resolve inside the
+  *current* package.
+- **Every well-known-type slot emits its import.** Message fields collect
+  theirs through `proto_type_from_field` (`google/protobuf/timestamp.proto`,
+  `struct.proto`), but SERVICE method input/output slots are assembled
+  independently: `push_well_known_imports` (proto_context.rs) maps
+  `google.protobuf.X` → `google/protobuf/{snake(X)}.proto` and pushes it, so
+  the `Delete` method's `google.protobuf.Empty` return always carries
+  `import "google/protobuf/empty.proto";`. A missing import is NOT an
+  include-path problem — `-I` cannot fix it.
+
+**Consumer include-path contract.** The emitted `build.rs` must put the
+protobuf well-known-types include dir on `tonic_build`'s include slice beside
+`proto`: `PROTOC_INCLUDE` wins, then `/usr/include`, then
+`/usr/local/include` — the first candidate containing
+`google/protobuf/empty.proto`. A distro protoc ships the WKTs only under that
+dir, so without it a consumer app fails with
+`"google.protobuf.Timestamp" is not defined`. (`scaffold/build_rs.tera`,
+pinned by `scaffold::generator::tests::
+grpc_build_rs_puts_the_well_known_types_include_on_the_compile_path`.)
+
+**The compile gate's skip is LOUD and RECORDED.** `grpc_compile_tests`
+renders the REAL `shared.proto` (the `proto_shared.tera` template — a
+hand-written stub was the same source-of-truth drift the bug was) and passes
+the discovered WKT include as a second `-I`. It skips only when `protoc` is
+absent or no WKT include is found, and each path prints
+`SKIPPING grpc_compile_tests: <reason>` on stderr. The old silent `return`
+counted as `ok` and masked both defects on every machine without protoc —
+including CI's `test` job, which installs no protobuf-compiler
+(`grep -rn protoc .github/workflows/` is empty). Wiring protoc into CI is a
+recorded follow-up; until then a green CI run of this test means "skipped",
+not "compiled".
+
+**Recorded finding (separate, pre-existing).** The emitted `build.rs` calls
+`tonic_build::configure()` / `.compile(...)` while the scaffold's Cargo.toml
+declares `tonic-build = "0.14"`; in 0.14 prost/protoc functionality moved to
+`tonic-prost-build` (`configure()`/`compile_protos(&protos, &includes)`), so
+the grpc build.rs branch has an independent API drift. The gRPC plane has no
+compile pin (no `cargo check` of emitted grpc Rust), which is why it went
+unnoticed; fixing it is its own change (dependency + `tonic::include_proto!`
+surface). The WKT include discovery above is independent of that drift.
 
 ### Dependency graph
 

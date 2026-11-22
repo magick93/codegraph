@@ -6,6 +6,7 @@ syntax = "proto3";
 package recruiting;
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
 
 import "shared.proto";
 option go_package = "recruiting/;recruiting";
@@ -108,7 +109,7 @@ message ListCandidateRequest {
   optional string page_token = 2;
   
     // Additional field filters
-  repeated FilterClause filters = 5;
+  repeated shared.FilterClause filters = 5;
   
 }
 
