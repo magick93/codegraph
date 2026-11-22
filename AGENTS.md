@@ -4880,7 +4880,14 @@ as transient), `clean --deep`, `smoke` flags below. `e2e`/`ui` pass trailing
 args through to Playwright (`testkit e2e -- --last-failed`).
 
 Global flags: `--config FILE` (manifest path), `--keep`, `--skip-build`,
-`--skip-generate`, `--release`, `--verbose` (unmutes quiet stages —
+`--skip-generate`, `--release`, `--migrate-lenient` (issue #427: tolerate
+per-file migration errors — the DEFAULT is strict fail-on-error; the
+opt-out stays loud via a run-summary banner + the results JSON's
+`migrate_lenient` field; the manifest key
+`[database.api] migrate_lenient = true` sets the same behavior),
+`--replay-all` (bypass the `platform._migrations` tracking and re-apply
+every file — clean DBs / idempotent sets / drift repair), `--verbose`
+(unmutes quiet stages —
 dependency installs, browser downloads — and echoes each stage's full
 captured output; failure tails print regardless), `--metrics FILE` (stage
 timings; TSV or JSON via `--metrics-format tsv|json`, default tsv),
@@ -5060,9 +5067,15 @@ an already-migrated database (ops-harness band, admin-CLI run, boot, or a
   probe adoption, checksum drift named + DB untouched; builds the generated app
   once and `cargo check`s the admin-CLI variant as the #551 compile pin) —
   wired into CI's `test-ops-integration` job and `just ops-boot-migration`.
-  Deferred to a later wave: #427's fail-on-error semantics, a `--replay-all`
-  escape hatch, the full speed acceptance, and the `testkit api` CI-lane
-  wiring (`ops_ci_lane_contract` stays ignore-marked).
+  **No original deferrals remain** (the wave-3 follow-ups): #427's strict
+  fail-on-error semantics, the `--replay-all` escape hatch, the tracking-aware
+  skip (a consecutive suite run applies ~0 files — seconds, not minutes), the
+  reset-clears-tracking semantics, and the loud `--migrate-lenient` opt-out all
+  landed in the ops migrate runner (see `crates/codegraph-ops/src/migrate.rs`,
+  the `db_integration` live legs, and `docs/ops-testing.md` §4's playbook
+  rows); the `testkit api` CI-lane wiring lands in the same wave (the
+  path-filtered `ops-api-suite` job + the un-ignored `ops_ci_lane_contract`
+  pin — PR #802).
 
 ### Consumer integration guide
 

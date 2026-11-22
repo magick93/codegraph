@@ -13,9 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::OpsConfig;
-use crate::db::{
-    psql_exec, psql_exec_file, psql_exec_file_ok, psql_exec_file_with_vars, psql_query,
-};
+use crate::db::{psql_exec, psql_exec_file_ok, psql_exec_file_with_vars, psql_query};
 use crate::error::{OpsError, OpsResult};
 use crate::ext::{HookPolicy, run_hooks};
 use crate::output;
@@ -197,6 +195,12 @@ pub struct WorkersArgs {
     /// Reuse registry-known services already running on needed ports instead
     /// of taking them over.
     pub reuse: bool,
+    /// Tolerate per-file migration errors instead of failing the migrate
+    /// stage (`--migrate-lenient` or the manifest key; issue #427).
+    pub migrate_lenient: bool,
+    /// Re-apply every migration file, bypassing the tracking table
+    /// (`--replay-all`; issue #427).
+    pub replay_all: bool,
 }
 
 /// Port for the worker at 0-based index `i`: `3001 + i`.
@@ -374,9 +378,16 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
     output::section("3. Database");
     config.metrics.begin("DB reset + migrate + seed");
 
+    // Issue #427: the workers lane uses the SAME shared runner as the api
+    // suite — tracking-aware skip, STRICT fail-on-error (per-file summary),
+    // and the same lenient/replay opt-outs. The old tolerate-and-count
+    // apply_migrations was the silent-partial-band class #427 exists to kill.
     if let Some(reset) = &config.manifest.database.api.reset_sql {
         let reset_path = config.root_dir.join(reset);
         let _ = psql_exec_file_ok(&config.api_db, &reset_path).await;
+        // Reset semantics: a reset DB must re-band (stale tracking rows
+        // would make the runner skip files against wiped schemas).
+        crate::migrate::clear_tracking(&config.api_db).await?;
         counters.pass(format!("Reset applied ({})", reset.display()));
     }
 
@@ -397,11 +408,35 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
         Err(e) => output::warn(format!("schema creation failed (continuing): {e}")),
     }
 
-    let (applied, failed) = apply_migrations(&workers_out.join("migrations"), &config.api_db).await;
-    if failed > 0 {
-        output::warn(format!("{failed} migration file(s) failed (tolerated)"));
+    let options = crate::migrate::MigrateOptions {
+        grant: config.grant_options.clone(),
+        lenient: args.migrate_lenient
+            || config
+                .manifest
+                .database
+                .api
+                .migrate_lenient
+                .unwrap_or(false),
+        replay_all: args.replay_all,
+    };
+    let report =
+        crate::migrate::run_migrations(&workers_out.join("migrations"), &config.api_db, &options)
+            .await?;
+    if report.skipped > 0 {
+        counters.pass(format!(
+            "Migrations: {} applied, {} already tracked",
+            report.applied, report.skipped
+        ));
+    } else {
+        counters.pass(format!("Migrations: {} applied", report.applied));
     }
-    counters.pass(format!("Migrations: {applied} applied, {failed} failed"));
+    if options.lenient {
+        output::warn(format!(
+            "MIGRATE LENIENT: {} migration error(s) tolerated — the band is \
+             PARTIAL and was NOT recorded in platform._migrations",
+            report.failed
+        ));
+    }
 
     let org_a = hurl_org_id(config, "org_id_a", DEFAULT_ORG_A);
     let org_b = hurl_org_id(config, "org_id_b", DEFAULT_ORG_B);
@@ -888,35 +923,6 @@ fn cargo_build(build_dir: &Path, release: bool, cornucopia_db_url: &str) -> (boo
     }
 }
 
-/// Apply generated migrations to the database target, one psql invocation
-/// per file (mirrors dual-test.sh B2); per-file failures are tolerated but
-/// counted. Returns (applied, failed).
-async fn apply_migrations(dir: &Path, target: &crate::pg::PgTarget) -> (usize, usize) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        output::warn(format!("no migrations dir at {} — skipping", dir.display()));
-        return (0, 0);
-    };
-    let mut files: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "sql"))
-        .collect();
-    files.sort();
-    let mut applied = 0usize;
-    let mut failed = 0usize;
-    for f in files {
-        let name = file_name(&f);
-        match psql_exec_file(target, &f).await {
-            Ok(()) => applied += 1,
-            Err(e) => {
-                failed += 1;
-                output::warn(format!("migration {name} failed: {e}"));
-            }
-        }
-    }
-    (applied, failed)
-}
-
 /// Org id from `manifest.hurl` with a fallback default.
 fn hurl_org_id(config: &OpsConfig, field: &str, default: &str) -> String {
     let Some(hurl) = config.manifest.hurl.as_ref() else {
@@ -1183,6 +1189,7 @@ mod tests {
                     seed_sql: None,
                     grant_role: None,
                     grant_strict: None,
+                    migrate_lenient: None,
                 },
                 e2e: None,
                 e2e_app: None,

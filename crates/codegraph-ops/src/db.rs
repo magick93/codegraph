@@ -62,6 +62,30 @@ pub async fn psql_exec_file_ok(target: &PgTarget, path: &Path) -> OpsResult<()> 
     }
 }
 
+/// Run `psql -q -v ON_ERROR_STOP=1 -f <path>`: the FIRST statement error
+/// stops the file and psql exits non-zero. Without ON_ERROR_STOP, psql
+/// prints the error and CONTINUES, exiting 0 — a half-applied migration
+/// file would read as success and the per-file fail-on-error decision
+/// (issue #427) would never see it. The migrate runner's phases use this;
+/// reset/seed callers keep the tolerant [`psql_exec_file`].
+pub async fn psql_exec_file_strict(target: &PgTarget, path: &Path) -> OpsResult<()> {
+    if !path.is_file() {
+        return Err(OpsError::PathNotFound(path.to_path_buf()));
+    }
+    let file_arg = path.to_string_lossy().into_owned();
+    let cmd = psql_command(target, &["-q", "-v", "ON_ERROR_STOP=1", "-f", &file_arg])?;
+    let out = run_psql(cmd).await?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(command_failure(
+            &format!("psql -v ON_ERROR_STOP=1 -f {}", path.display()),
+            "",
+            &out,
+        ))
+    }
+}
+
 /// Run `psql -q -f <path>` with `-v name=value` psql variables — for seed
 /// scripts that reference `:'var'` placeholders. Returns Err if psql exits
 /// non-zero or the file is missing.

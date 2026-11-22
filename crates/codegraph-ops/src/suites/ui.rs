@@ -415,6 +415,7 @@ mod tests {
                     seed_sql: None,
                     grant_role: None,
                     grant_strict: None,
+                    migrate_lenient: None,
                 },
                 e2e: e2e.then(|| OpsDbTarget {
                     host: "localhost".into(),
@@ -426,6 +427,7 @@ mod tests {
                     seed_sql: None,
                     grant_role: None,
                     grant_strict: None,
+                    migrate_lenient: None,
                 }),
                 e2e_app: None,
             },

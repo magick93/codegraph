@@ -27,6 +27,7 @@ fn manifest_with(profile: Option<&str>, provider: &str) -> OpsManifest {
                 seed_sql: None,
                 grant_role: None,
                 grant_strict: None,
+                migrate_lenient: None,
             },
             e2e: None,
             e2e_app: None,

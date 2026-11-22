@@ -78,6 +78,12 @@ pub struct ResultsReport {
     /// runs' JSON stays byte-identical to pre-#357 output.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hook_failures: Vec<String>,
+    /// The migrate stage ran LENIENT (`--migrate-lenient` or the manifest
+    /// key): per-file migration errors were tolerated, loudly (issue #427).
+    /// Omitted when false, so strict runs' JSON is byte-identical to
+    /// pre-#427 output.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub migrate_lenient: bool,
     pub stages: Vec<StageTiming>,
     pub exit: i32,
 }
@@ -125,6 +131,7 @@ impl ResultsReport {
             failures: Vec::new(),
             transient_resolved: 0,
             hook_failures: Vec::new(),
+            migrate_lenient: false,
             stages: metrics
                 .stages()
                 .into_iter()
@@ -228,6 +235,24 @@ mod tests {
         assert_eq!(value["stages"][0]["name"], "DB migrate");
         assert_eq!(value["stages"][0]["duration_secs"], 0);
         assert!(value.get("hook_failures").is_none());
+        // Issue #427: strict runs omit migrate_lenient entirely — the
+        // results JSON stays byte-identical to pre-#427 output.
+        assert!(value.get("migrate_lenient").is_none());
+    }
+
+    /// Issue #427: a lenient migrate stage is VISIBLE in the machine-
+    /// readable report — `migrate_lenient: true`, never a silent opt-out.
+    #[test]
+    fn migrate_lenient_serializes_when_active_and_omits_when_strict() {
+        let metrics = Metrics::new();
+        let mut report = ResultsReport::new("api", &PathBuf::from("m.toml"), None, &metrics);
+        assert!(!report.migrate_lenient);
+        report.migrate_lenient = true;
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"migrate_lenient\":true"), "{json}");
+        let strict = ResultsReport::new("api", &PathBuf::from("m.toml"), None, &metrics);
+        let json = serde_json::to_string(&strict).unwrap();
+        assert!(!json.contains("migrate_lenient"), "{json}");
     }
 
     #[test]

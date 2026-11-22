@@ -11,7 +11,6 @@ use crate::config::OpsConfig;
 use crate::db::{psql_exec, psql_exec_file_ok, psql_query};
 use crate::error::{OpsError, OpsResult};
 use crate::ext::{HookPolicy, run_hooks};
-use crate::migrate::run_api_migrations_with_options;
 use crate::output;
 use crate::proc::{ManagedProcess, Supervisor};
 use crate::results::SuiteFailure;
@@ -61,6 +60,12 @@ pub struct ApiArgs {
     /// Run the Workers-topology api path (gateway + per-domain workers +
     /// the hurl contracts) instead of the monolith binary suite.
     pub workers: bool,
+    /// Tolerate per-file migration errors instead of failing the migrate
+    /// stage (`--migrate-lenient` or the manifest key; issue #427).
+    pub migrate_lenient: bool,
+    /// Re-apply every migration file, bypassing the tracking table
+    /// (`--replay-all`; issue #427).
+    pub replay_all: bool,
 }
 
 /// True when a failed hurl file may be retried: the number of attempts used
@@ -158,6 +163,8 @@ pub async fn run_api(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
                 results_file: args.results_file.clone(),
                 allow_gen_rev_mismatch: args.allow_gen_rev_mismatch,
                 reuse: args.reuse,
+                migrate_lenient: args.migrate_lenient,
+                replay_all: args.replay_all,
             },
         )
         .await;
@@ -303,6 +310,23 @@ async fn run_api_inner(
     stage_regeneration(config, args, &mut counters, hook_failures).await?;
 
     // ---- Summary ----
+    if args.migrate_lenient
+        || config
+            .manifest
+            .database
+            .api
+            .migrate_lenient
+            .unwrap_or(false)
+    {
+        // Issue #427: the lenient opt-out is NEVER silent — a banner in the
+        // run summary beside the results JSON's migrate_lenient field.
+        output::warn(
+            "MIGRATE LENIENT is ACTIVE (--migrate-lenient / [database.api] \
+             migrate_lenient): migration errors above were TOLERATED, not \
+             fixed — the database may be in a partial state and nothing was \
+             recorded in platform._migrations",
+        );
+    }
     let ok = counters.summary();
     supervisor.shutdown_all().await;
     Ok((counters, ok))
@@ -642,10 +666,38 @@ async fn stage_database(
         if let Some(reset) = &config.manifest.database.api.reset_sql {
             let reset_path = config.root_dir.join(reset);
             let _ = psql_exec_file_ok(&config.api_db, &reset_path).await;
+            // Reset semantics (issue #427): a reset DB must re-band. The
+            // reset wiped the domain schemas; stale rows in the tracking
+            // table would make the runner SKIP every file against a database
+            // that no longer has them. clear_tracking is unconditionally
+            // safe (an absent table/schema is tolerated).
+            crate::migrate::clear_tracking(&config.api_db).await?;
         }
         if migration_dir.is_dir() {
-            run_api_migrations_with_options(&migration_dir, &config.api_db, &config.grant_options)
-                .await?;
+            let options = crate::migrate::MigrateOptions {
+                grant: config.grant_options.clone(),
+                lenient: args.migrate_lenient
+                    || config
+                        .manifest
+                        .database
+                        .api
+                        .migrate_lenient
+                        .unwrap_or(false),
+                replay_all: args.replay_all,
+            };
+            let report =
+                crate::migrate::run_migrations(&migration_dir, &config.api_db, &options).await?;
+            if report.skipped > 0 && report.applied == 0 {
+                output::ok(format!(
+                    "All {} migration file(s) already tracked — nothing to apply",
+                    report.skipped
+                ));
+            } else if report.skipped > 0 {
+                output::info(format!(
+                    "Applied {} migration file(s), skipped {} already-tracked",
+                    report.applied, report.skipped
+                ));
+            }
         } else {
             output::warn(format!(
                 "no migrations dir at {} — skipping migration",

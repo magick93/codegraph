@@ -147,6 +147,21 @@ pub struct Cli {
     /// artifacts-*) that suites otherwise assemble on failure (#358).
     #[arg(long, global = true)]
     no_bundle: bool,
+
+    /// Tolerate per-file migration errors instead of failing the migrate
+    /// stage (issue #427: fail-on-error is the DEFAULT). The opt-out stays
+    /// loud: per-file warnings, a run-summary banner and a dedicated
+    /// results-JSON field. The manifest's
+    /// `[database.api] migrate_lenient = true` sets the same behavior.
+    #[arg(long, global = true)]
+    migrate_lenient: bool,
+
+    /// Re-apply every migration file, bypassing the `platform._migrations`
+    /// tracking (issue #427). For clean databases, idempotent sets and drift
+    /// repair — over an existing band it fails loudly on non-idempotent
+    /// files, which is correct.
+    #[arg(long, global = true)]
+    replay_all: bool,
 }
 
 #[derive(Subcommand)]
@@ -388,6 +403,8 @@ pub async fn main() -> i32 {
                 allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
                 reuse: cli.reuse,
                 workers: *workers,
+                migrate_lenient: cli.migrate_lenient,
+                replay_all: cli.replay_all,
             };
             output::bold("Running API integration tests");
             run_api(&config, &args).await
@@ -410,6 +427,8 @@ pub async fn main() -> i32 {
                     allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
                     reuse: cli.reuse,
                     workers: false,
+                    migrate_lenient: cli.migrate_lenient,
+                    replay_all: cli.replay_all,
                 };
                 if let Err(e) = run_api(&config, &args).await {
                     return fail_suite(&cli, &config, "api", e);
@@ -465,6 +484,8 @@ pub async fn main() -> i32 {
                 results_file: cli.results.as_ref().map(|p| p.display().to_string()),
                 allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
                 reuse: cli.reuse,
+                migrate_lenient: cli.migrate_lenient,
+                replay_all: cli.replay_all,
             };
             output::bold("Running workers-topology tests");
             run_workers(&config, &args).await
@@ -582,6 +603,8 @@ async fn run_full(cli: &Cli, config: &OpsConfig) -> i32 {
         allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
         reuse: cli.reuse,
         workers: false,
+        migrate_lenient: cli.migrate_lenient,
+        replay_all: cli.replay_all,
     };
     let api_code = match run_api(config, &api_args).await {
         Ok(()) => None,

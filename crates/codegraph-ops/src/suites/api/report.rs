@@ -26,6 +26,15 @@ pub(super) fn write_api_report(
         report.failed = counters.failures;
         report.failures = counters.failure_log.clone();
         report.hook_failures = hook_failures.to_vec();
+        // Issue #427: the lenient opt-out is visible in the machine-readable
+        // report, never silent. Omitted (false) on strict runs.
+        report.migrate_lenient = args.migrate_lenient
+            || config
+                .manifest
+                .database
+                .api
+                .migrate_lenient
+                .unwrap_or(false);
         report.exit = i32::from(!ok);
         let _ = report.write(Path::new(results_file));
     }
