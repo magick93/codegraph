@@ -415,7 +415,10 @@ fn open_with_created_id(s: &mut String, id_param: &Option<String>) {
 /// server-differentiated outcome: the ok leg polls the seeded record's
 /// round-trip (the DB write precedes the POST response), the failure legs
 /// assert the error span's message text through the page class.
-pub(crate) fn render_action_spec(spec: &super::spec_payload::ActionSpec) -> String {
+pub(crate) fn render_action_spec(
+    spec: &super::spec_payload::ActionSpec,
+    personas_import: &str,
+) -> String {
     use super::spec_payload::ActionActKind;
 
     let class = format!("{}Page", to_pascal_case(&spec.view_name));
@@ -426,6 +429,17 @@ pub(crate) fn render_action_spec(spec: &super::spec_payload::ActionSpec) -> Stri
         spec.view_name, class
     ));
     s.push_str("import { test, expect } from '@playwright/test';\n");
+    // Issue #809: a guarded view's action tests must reach the view. The
+    // load's client-side guard denies a sessionless context and redirects
+    // to the denial target — mid-click, which Playwright reports as
+    // "element was detached from the DOM, retrying" until the timeout. The
+    // bound persona also authenticates the spec's fixture seeds (the
+    // `request` fixture inherits asPersona's headers).
+    if let Some(persona) = &spec.persona {
+        s.push_str(&format!(
+            "import {{ asPersona, {persona} }} from '{personas_import}';\n"
+        ));
+    }
     s.push_str("import { apiUrl } from '../pages/support/api';\n\n");
     s.push_str(&format!(
         "import {{ {class} }} from '../pages/{}-page';\n\n",
@@ -435,6 +449,9 @@ pub(crate) fn render_action_spec(spec: &super::spec_payload::ActionSpec) -> Stri
         "test.describe('{} actions', () => {{\n",
         js_string(&spec.label)
     ));
+    if let Some(persona) = &spec.persona {
+        s.push_str(&format!("\tasPersona({persona});\n"));
+    }
 
     for action in &spec.tests {
         let pascal = to_pascal_case(&action.component);

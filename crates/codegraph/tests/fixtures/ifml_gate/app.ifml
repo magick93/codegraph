@@ -65,6 +65,27 @@ view "RefundRequestDetail" {
     }
 }
 
+// Issue #809: a GUARDED view carrying actions. The action spec must bind a
+// persona the view permits — the load's client-side guard denies a
+// sessionless context and redirects to the denial target mid-click
+// ("element was detached from the DOM, retrying" until the timeout). The
+// guarded id route also exercises the auth family's `beforeAll` seeding
+// (issue #808) live: the seed posts through the permitted persona's key.
+view "GuardedRefundDetail" {
+    params { id: Uuid };
+    label "Guarded Refund Request";
+    requires: [ApproveRefund];
+
+    component "guarded_info" {
+        type: details;
+        data: RefundRequest;
+        fields: [title, amount, status];
+
+        on escalate -> action("Escalate");
+        on approve -> action("Approve");
+    }
+}
+
 action "Inspect" {
     target: RefundRequest;
 }

@@ -1298,6 +1298,7 @@ fn action_spec_renders_legs_through_the_pom() {
         label: "Refund Request".to_string(),
         route: "/refundrequestdetail".to_string(),
         id_param: Some("id".to_string()),
+        persona: None,
         tests: vec![ActionTest {
             title: "action escalate on info: 200 then 409".to_string(),
             component: "info".to_string(),
@@ -1357,7 +1358,68 @@ fn action_spec_renders_legs_through_the_pom() {
 }
 
 fn render_spec_action(spec: &super::spec_payload::ActionSpec) -> String {
-    super::render::render_action_spec(spec)
+    super::render::render_action_spec(spec, "./support/personas")
+}
+
+// ── Issue #809: guarded action views seed the persona ───────────────────────
+
+/// An action spec for a GUARDED view binds the permitted persona at describe
+/// scope: the view's client-side guard denies a sessionless context and
+/// redirects to the denial target — the redirect races the action click and
+/// Playwright reports "element was detached from the DOM, retrying" until
+/// the timeout (issue #809). The persona also authenticates the spec's
+/// fixture seeds (the `request` fixture inherits `asPersona`'s headers).
+///
+/// The unguarded shape stays byte-identical: no import, no `asPersona`.
+#[test]
+fn guarded_action_specs_seed_the_permitted_persona() {
+    use super::spec_payload::{ActionAct, ActionActKind, ActionSpec, ActionTest};
+
+    let base = |persona: Option<&str>| ActionSpec {
+        view_name: "PositionDetail".to_string(),
+        label: "Position Detail".to_string(),
+        route: "/positiondetail".to_string(),
+        id_param: Some("positionId".to_string()),
+        persona: persona.map(str::to_string),
+        tests: vec![ActionTest {
+            title: "action activate_position on position: 200 then 403".to_string(),
+            component: "position".to_string(),
+            op_snake: "activate_position".to_string(),
+            fixture: Fixture {
+                casing: DtoKeyCasing::default(),
+                base_path: "/api/v1/core/position".to_string(),
+                entries: vec![("title".to_string(), "'Seed title'".to_string())],
+                deps: Vec::new(),
+            },
+            acts: vec![
+                ActionAct {
+                    kind: ActionActKind::Ok,
+                    round_trip: None,
+                },
+                ActionAct {
+                    kind: ActionActKind::Forbidden,
+                    round_trip: None,
+                },
+            ],
+            collection_add: None,
+        }],
+    };
+
+    let guarded = super::render::render_action_spec(&base(Some("hrAdmin")), "./support/personas");
+    assert!(
+        guarded.contains("import { asPersona, hrAdmin } from './support/personas';"),
+        "a guarded action spec must import the persona + asPersona (issue #809):\n{guarded}"
+    );
+    assert!(
+        guarded.contains("asPersona(hrAdmin);"),
+        "the describe must bind the permitted persona before the tests:\n{guarded}"
+    );
+
+    let unguarded = super::render::render_action_spec(&base(None), "./support/personas");
+    assert!(
+        !unguarded.contains("asPersona") && !unguarded.contains("personas"),
+        "an unguarded action spec must not gain persona scaffolding:\n{unguarded}"
+    );
 }
 
 // ── Issue #692: the collection-add POM method + action legs ─────────────────
@@ -1493,6 +1555,7 @@ fn collection_add_spec_drives_the_pom_method_with_the_parent_fixture() {
         label: "Pay Run Line".to_string(),
         route: "/payrunlinedetail".to_string(),
         id_param: Some("id".to_string()),
+        persona: None,
         tests: vec![ActionTest {
             title: "action add_line on lines: 200 then 404".to_string(),
             component: "lines".to_string(),

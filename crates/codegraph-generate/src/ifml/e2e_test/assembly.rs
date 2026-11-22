@@ -1400,6 +1400,7 @@ impl IfmlE2eTestGenerator {
                 label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
                 route: view_route(&vc.name),
                 id_param: Some(id_param),
+                persona: None,
                 tests,
             },
         ))

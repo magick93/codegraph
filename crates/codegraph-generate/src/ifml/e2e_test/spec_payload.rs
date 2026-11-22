@@ -204,6 +204,12 @@ pub struct ActionSpec {
     /// The view's id param binding `ui.open({ id })` (`None` renders a
     /// param-less open — though an action view without one emits no spec).
     pub id_param: Option<String>,
+    /// The persona the describe binds via `asPersona` (issue #809): a
+    /// GUARDED view's action tests must reach the view, and the load's
+    /// client-side guard denies a sessionless context (redirecting to the
+    /// denial target mid-click). `None` for unguarded views and when the
+    /// auth plane is off — byte-identical output.
+    pub persona: Option<String>,
     pub tests: Vec<ActionTest>,
 }
 
