@@ -79,7 +79,7 @@ view "GuardedRefundDetail" {
     component "guarded_info" {
         type: details;
         data: RefundRequest;
-        fields: [title, amount, status];
+        fields: [title, requesterEmail, amount, urgent, submittedAt, status, reason, escalation];
 
         on escalate -> action("Escalate");
         on approve -> action("Approve");
