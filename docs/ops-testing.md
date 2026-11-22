@@ -268,6 +268,20 @@ Three independent gates keep a suite from testing stale code:
    (path-dep build outside a git checkout) only warns — never spuriously
    fatal.
 
+**Profiles.** The freshness gates are profile-aware: whichever binary
+actually ran is the one checked. `--release` steers BOTH builds — the
+generated app AND the graph-binary regeneration
+(`cargo run --release -p <graph> -- run`, issue #307; debug regeneration is
+dramatically slower on large models and every suite regenerates by
+default). The api suite boots the release app binary under `--release`
+(and under `--skip-build` when only a release binary exists); e2e and
+workers regeneration ALWAYS build and run the release graph binary, so
+their profile is inherent rather than flag-steered. `testkit doctor`
+reports presence/age for both profiles of every binary; the binary-vs-src
+staleness comparison runs against the profile-resolved binary only, so a
+fresh release binary is never mislabeled by a stale debug twin (or vice
+versa).
+
 The check runs in every suite that regenerates: api stage 0 and stage 11
 (`--regen`), e2e stage 2, workers stage 2.
 

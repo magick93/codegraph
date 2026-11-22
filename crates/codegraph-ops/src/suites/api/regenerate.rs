@@ -8,11 +8,18 @@ use crate::proc::run_streaming;
 
 use super::capture::tail_lines;
 
-/// Build the `cargo run -p {graph} -- run ...` argument vector for the regen
-/// stage. Only manifest flags whose values are `Some` are passed — including
-/// the manifest `profile`, without which regeneration could never exercise a
-/// non-default provider.
-pub(super) fn regenerate_args(config: &OpsConfig, graph_binary: &str) -> Vec<String> {
+/// Build the `cargo run [-p {graph}] -- run ...` argument vector for the
+/// regen stage. `release` rides the `cargo` position (`--release` before
+/// `-p`), so the graph binary builds/runs in the requested profile (issue
+/// #307: a stale debug binary otherwise silently regenerates with old
+/// generator code). Only manifest flags whose values are `Some` are passed —
+/// including the manifest `profile`, without which regeneration could never
+/// exercise a non-default provider.
+pub(super) fn regenerate_args(
+    config: &OpsConfig,
+    graph_binary: &str,
+    release: bool,
+) -> Vec<String> {
     let mut args = vec![
         "run".to_string(),
         "-p".to_string(),
@@ -20,6 +27,9 @@ pub(super) fn regenerate_args(config: &OpsConfig, graph_binary: &str) -> Vec<Str
         "--".to_string(),
         "run".to_string(),
     ];
+    if release {
+        args.insert(1, "--release".to_string());
+    }
     if let Some(schemas) = &config.manifest.schemas_dir {
         args.push("--schemas".to_string());
         args.push(schemas.to_string_lossy().into_owned());
@@ -89,12 +99,7 @@ pub(super) fn regenerate(
     graph_binary: &str,
     release: bool,
 ) -> OpsResult<String> {
-    let mut args = regenerate_args(config, graph_binary);
-    if release {
-        // Build/run the graph binary in the requested profile; a stale debug
-        // binary otherwise silently regenerates with old generator code.
-        args.insert(1, "--release".to_string());
-    }
+    let args = regenerate_args(config, graph_binary, release);
     let mut cmd = Command::new("cargo");
     cmd.args(&args).current_dir(&config.root_dir);
     // Streams live under [generate] — a 56-minute regen is never silent.
