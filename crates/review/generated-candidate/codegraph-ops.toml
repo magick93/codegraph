@@ -16,20 +16,6 @@ api_port = 3000
 ui_port = 5173
 bind_addr = "0.0.0.0"
 
-[database.api]
-host = "localhost"
-port = 5432
-user = "postgres"
-password = "postgres"
-database = "postgres"
-
-[database.e2e]
-host = "localhost"
-port = 54322
-user = "postgres"
-password = "postgres"
-database = "postgres"
-
 [capabilities]
 has_cli = true
 has_ui = true
@@ -50,3 +36,27 @@ limited_key = true
 [bundle]
 max_mb = 200
 keep = 3
+
+[database.api]
+# Fixture-owned: the stack in supabase/config.toml pins db port 54350 (Kong
+# health on 54351). The live gate retargets this whole block (host/port/user/
+# password/database) at its resolved base target before invoking the suite.
+host = "localhost"
+port = 54350
+user = "postgres"
+password = "postgres"
+database = "postgres"
+
+[database.e2e]
+host = "localhost"
+port = 54350
+user = "postgres"
+password = "postgres"
+database = "postgres"
+
+[supabase]
+dir = "supabase"
+health_url = "http://localhost:54351/auth/v1/health"
+anon_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+service_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
+jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"

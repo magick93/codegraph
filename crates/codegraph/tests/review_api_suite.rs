@@ -23,7 +23,20 @@
 //! The test runs the FULL `api` suite against the fixture
 //! `crates/review/generated-candidate/` on a scratch database (unique per run,
 //! dropped at the end): migration → server boot → hurl contracts → curl smoke
-//! → RLS checks → graceful shutdown.
+//! → RLS checks → graceful shutdown. The suite OWNS the migration stage now:
+//! `stage_database` applies the band and writes `platform._migrations`, and
+//! the app's boot migrator must apply NOTHING over it (issue #756) — asserted
+//! from the app log. There is no test-side bookkeeping shim anymore.
+//!
+//! The base Postgres target is SHAPE B (issue #709/#764): the shared
+//! `test_framework::postgres::resolve_base_target()` (DATABASE_URL when it is
+//! reachable and can host per-run databases, else the pinned Supabase-image
+//! container on 127.0.0.1:15432) must pass
+//! `codegraph_ops::supabase::compatibility_gate` — `Run`. A plain Postgres
+//! target ABORTS loudly: the RLS legs need the Supabase band (the `auth`
+//! schema and the image's reserved roles), and a silent skip would make the
+//! gate vacuous. The fixture's `[supabase]` manifest section + `supabase/`
+//! project are the MANUAL full-stack fallback, not a gate dependency.
 //!
 //! Before the suite runs, the fixture is regenerated FROM CLEAN (issue #694:
 //! the previous generation's files are swept, then the same pipeline as the
@@ -34,9 +47,10 @@
 //! this run's, never an older generation's renumbered leftovers.
 //!
 //! Self-contained but slow: the first run builds the fixture app from cold
-//! (~10-20 minutes); warm runs are a few minutes. Needs Postgres
-//! (`DATABASE_URL`, default `postgres://postgres:postgres@localhost:5432/postgres`),
-//! `psql` and `hurl` on PATH. Skips gracefully when the tools are missing.
+//! (~10-20 minutes); warm runs are a few minutes. Needs a Supabase-compatible
+//! Postgres (or docker for the pinned fallback container), `psql` and `hurl`
+//! on PATH. Skips gracefully when the TOOLS are missing; never when the
+//! database cannot serve the band.
 //!
 //! ```text
 //! cargo test -p codegraph --test review_api_suite -- --ignored --nocapture
@@ -48,19 +62,46 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use codegraph_ops::db::{psql_exec, psql_query};
 use codegraph_ops::pg::PgTarget;
+use codegraph_ops::supabase::{CompatibilityGate, compatibility_gate};
+use test_framework::postgres::resolve_base_target;
+
+#[path = "test_framework/mod.rs"]
+mod test_framework;
 
 /// Which environment variable the caller may use to point at the cluster.
 const DATABASE_URL_ENV: &str = "DATABASE_URL";
-const DEFAULT_DATABASE_URL: &str = "postgres://postgres:postgres@localhost:5432/postgres";
 
 #[path = "review_api_suite_regen.rs"]
 mod review_api_suite_regen;
 
 use review_api_suite_regen::fixture_dir;
 
-fn admin_target() -> PgTarget {
-    let url = std::env::var(DATABASE_URL_ENV).unwrap_or_else(|_| DEFAULT_DATABASE_URL.to_string());
-    PgTarget::from_url(&url).expect("invalid DATABASE_URL")
+/// Resolve the base Postgres target and HARD-assert it serves the Supabase
+/// band (issue #708's shared predicate, shape B from issue #709). The RLS
+/// legs depend on the image's `auth` schema and reserved roles, so a plain
+/// `postgres:<n>` target is a lane misconfiguration — fail in seconds,
+/// naming the pinned image, never skip.
+async fn supabase_compatible_base() -> PgTarget {
+    let base = resolve_base_target().await.unwrap_or_else(|e| {
+        panic!(
+            "review_api_suite could not resolve a Postgres base target: {e}. \
+             Point DATABASE_URL at {} or make docker available for the pinned \
+             fallback container (issue #709).",
+            codegraph_ops::supabase::SUPABASE_POSTGRES_IMAGE
+        )
+    });
+    match compatibility_gate(&base).await {
+        CompatibilityGate::Run => {}
+        CompatibilityGate::Skip { reason } | CompatibilityGate::Fail { reason } => {
+            panic!(
+                "review_api_suite requires a Supabase-compatible Postgres base target \
+                 (shape B, issue #709/#764) at {}:{} — the RLS legs need the image's \
+                 `auth` schema and reserved roles. {reason}",
+                base.host, base.port
+            );
+        }
+    }
+    base
 }
 
 fn skip_if_no_tooling() -> bool {
@@ -99,11 +140,13 @@ async fn provision_fixture(gate: &review_api_suite_regen::FixtureGate) -> Result
     gate.provision().await
 }
 
-/// Rewrite the `[database.api]` block of the fixture manifest to point at the
-/// scratch database. Host/port/user/password ride `DATABASE_URL` (whose
-/// default matches the checked-in manifest exactly), `database` becomes the
-/// scratch name. Everything else — smoke entity, hurl contracts, org ids,
-/// ports — is copied verbatim.
+/// Rewrite the `[database.api]` block of the fixture manifest at the resolved
+/// base target. The WHOLE block is retargeted — host/port/user/password and
+/// the per-run scratch database — because the base target is no longer
+/// assumed to be the manifest's `localhost:54350` (shape B may resolve the
+/// pinned fallback container on `127.0.0.1:15432`). Everything else — smoke
+/// entity, hurl contracts, org ids, ports, the manual `[supabase]` section —
+/// is copied verbatim.
 fn retarget_manifest_at_scratch(fixture_manifest: &str, target: &PgTarget) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut in_api_block = false;
@@ -115,7 +158,10 @@ fn retarget_manifest_at_scratch(fixture_manifest: &str, target: &PgTarget) -> St
             continue;
         }
         if in_api_block {
+            let port = target.port.to_string();
             let rewritten = [
+                ("host", target.host.as_str()),
+                ("port", port.as_str()),
                 ("user", target.user.as_str()),
                 ("password", target.password.as_str()),
                 ("database", target.db.as_str()),
@@ -129,7 +175,11 @@ fn retarget_manifest_at_scratch(fixture_manifest: &str, target: &PgTarget) -> St
                         .starts_with('=')
             });
             if let Some((key, value)) = rewritten {
-                out.push(format!("{key} = \"{value}\""));
+                if key == "port" {
+                    out.push(format!("port = {value}"));
+                } else {
+                    out.push(format!("{key} = \"{value}\""));
+                }
                 continue;
             }
         }
@@ -140,51 +190,6 @@ fn retarget_manifest_at_scratch(fixture_manifest: &str, target: &PgTarget) -> St
         text.push('\n');
     }
     text
-}
-
-/// Record every migration filename into `seaql_migrations` — the table the
-/// generated app's boot migrator uses to skip already-applied files. The
-/// version is the full filename (see the generated `migration` crate's
-/// `RawSqlMigration`), so a verbatim name list keeps boot migrations a no-op.
-async fn record_boot_migrator_bookkeeping(
-    target: &PgTarget,
-    migration_dir: &Path,
-) -> Result<(), String> {
-    psql_exec(
-        target,
-        "CREATE TABLE IF NOT EXISTS seaql_migrations \
-         (version VARCHAR(255) PRIMARY KEY, applied_at BIGINT NOT NULL DEFAULT 0);",
-    )
-    .await
-    .map_err(|e| format!("create seaql_migrations: {e}"))?;
-
-    let mut names: Vec<String> = std::fs::read_dir(migration_dir)
-        .map_err(|e| format!("read migrations dir: {e}"))?
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "sql"))
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
-    names.sort();
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    for name in names {
-        if name.trim().is_empty() {
-            continue;
-        }
-        let escaped = name.replace('\'', "''");
-        psql_exec(
-            target,
-            &format!(
-                "INSERT INTO seaql_migrations (version, applied_at) \
-                 VALUES ('{escaped}', {millis}) ON CONFLICT (version) DO NOTHING;"
-            ),
-        )
-        .await
-        .map_err(|e| format!("record migration {name}: {e}"))?;
-    }
-    Ok(())
 }
 
 fn tail(text: &str, n: usize) -> String {
@@ -201,10 +206,10 @@ async fn review_fixture_api_suite_passes_in_app_pool_mode() {
     if skip_if_no_tooling() {
         return;
     }
-    let admin = admin_target();
+    let base = supabase_compatible_base().await;
     // Fail in seconds with a clear message when the cluster is unreachable.
-    if let Err(e) = psql_query(&admin, "SELECT 1").await {
-        panic!("Postgres not reachable at {}: {e}", admin.url());
+    if let Err(e) = psql_query(&base, "SELECT 1").await {
+        panic!("Postgres not reachable at {}: {e}", base.url());
     }
 
     println!("regenerating fixture from current templates…");
@@ -225,16 +230,16 @@ async fn review_fixture_api_suite_passes_in_app_pool_mode() {
 
     // ── scratch database ──────────────────────────────────────────────
     let scratch = scratch_db_name();
-    psql_exec(&admin, &format!("CREATE DATABASE {scratch};"))
+    psql_exec(&base, &format!("CREATE DATABASE {scratch};"))
         .await
         .expect("create scratch database");
     println!("scratch database: {scratch}");
 
-    let result = run_suite_on_scratch(&admin, &scratch).await;
+    let result = run_suite_on_scratch(&base, &scratch).await;
 
     // ── cleanup (best effort) ─────────────────────────────────────────
     let _ = psql_exec(
-        &admin,
+        &base,
         &format!("DROP DATABASE IF EXISTS {scratch} WITH (FORCE);"),
     )
     .await;
@@ -302,7 +307,7 @@ fn assert_generated_hurl_contracts(fixture: &Path, manifest: &str) {
 
 /// Body of the gate after the scratch database exists — split out so the
 /// caller can drop the database no matter how this finishes.
-async fn run_suite_on_scratch(admin: &PgTarget, scratch: &str) -> Result<(), String> {
+async fn run_suite_on_scratch(base: &PgTarget, scratch: &str) -> Result<(), String> {
     let fixture = fixture_dir();
     let manifest_path = fixture.join("codegraph-ops.toml");
     let fixture_manifest = std::fs::read_to_string(&manifest_path)
@@ -311,7 +316,7 @@ async fn run_suite_on_scratch(admin: &PgTarget, scratch: &str) -> Result<(), Str
     let scratch_target = PgTarget {
         db: scratch.to_string(),
         role: "review_apitest".into(),
-        ..admin.clone()
+        ..base.clone()
     };
     let retargeted = retarget_manifest_at_scratch(&fixture_manifest, &scratch_target);
 
@@ -337,52 +342,25 @@ async fn run_suite_on_scratch(admin: &PgTarget, scratch: &str) -> Result<(), Str
     );
     let log_file = config.log_file.clone();
 
-    // ── provision the schema BEFORE the suite runs ────────────────────
-    // The ops migrator and the app's boot migrator (the generated
-    // `migration` crate, a raw-SQL runner over the same files) do not share
-    // a tracking table: letting both run double-applies every file, and the
-    // second pass of the codelist seeds fails against the org-default
-    // trigger created later in the first pass. So the gate applies the
-    // migrations itself (same harness code the suite would use), records
-    // the applied filenames into `seaql_migrations` exactly as the boot
-    // migrator names them, and runs the suite with `--no-migrate`. The app
-    // then boots on an already-migrated schema — the same single
-    // application a production first boot performs.
-    println!("applying fixture migrations to {scratch}…");
-    codegraph_ops::migrate::run_api_migrations_with_options(
-        &fixture.join("migrations"),
-        &scratch_target,
-        &codegraph_ops::migrate::GrantOptions {
-            role: config
-                .manifest
-                .database
-                .api
-                .grant_role
-                .clone()
-                .unwrap_or_else(|| "app_user".into()),
-            strict: config.manifest.database.api.grant_strict.unwrap_or(false),
-        },
-    )
-    .await
-    .map_err(|e| format!("scratch migrations failed: {e}"))?;
-    record_boot_migrator_bookkeeping(&scratch_target, &fixture.join("migrations")).await?;
-
-    // The api suite truncates the log on server spawn; remove any stale copy
-    // anyway so the pool-mode assertion below can never read an old run.
+    // The suite truncates the log on server spawn; remove any stale copy
+    // anyway so the pool-mode / boot-migration assertions below can never
+    // read an old run.
     let _ = std::fs::remove_file(&log_file);
 
+    // ── the HONEST consumer path (issue #764 / #756) ──────────────────
+    // No test-side migration shim: the suite's own stage 2 applies the band
+    // (writing `platform._migrations`) and the app boots on it. The boot
+    // migrator must therefore apply ZERO files — asserted from the app log
+    // below. This is exactly what a production first boot does.
     println!(
-        "running `testkit api --no-migrate` against {scratch} (first run builds the fixture app — be patient)…"
+        "running `testkit api` against {scratch} (first run builds the fixture app — be patient)…"
     );
     let mut cmd = Command::new("cargo");
     cmd.args(["run", "-p", "testkit", "--release", "--", "--config"])
         .arg(temp.path())
         .arg("api")
-        // `no_migrate` is a flag of the `api` subcommand (not global): it
-        // must trail `api`.
-        .arg("--no-migrate")
         .current_dir(&fixture)
-        .env(DATABASE_URL_ENV, admin.url());
+        .env(DATABASE_URL_ENV, base.url());
     // The gate MUST exercise pool mode: never let an outer APP_DATABASE_URL
     // disable the app_user provisioning / pool-mode export.
     cmd.env_remove("APP_DATABASE_URL");
@@ -417,6 +395,23 @@ async fn run_suite_on_scratch(admin: &PgTarget, scratch: &str) -> Result<(), Str
         "the app must not fall back to legacy pool mode when APP_DATABASE_URL is exported"
     );
     println!("pool-mode proof: {}", tail(&pool_mode_line, 1));
+
+    // ── boot-migration proof (the #756 tracking table) ────────────────
+    // The suite applied the band; boot must see `platform._migrations`, skip
+    // every tracked file and apply NOTHING. A nonzero count here is the
+    // double-apply regression the shim used to mask.
+    let boot_line = app_log
+        .lines()
+        .find(|l| l.contains("boot-migrations:"))
+        .map(|l| l.to_string())
+        .unwrap_or_default();
+    assert!(
+        boot_line.contains("boot-migrations: 0 applied"),
+        "the app's boot migrator must apply nothing over the suite-applied band \
+         (issue #756: `platform._migrations` is the ONE tracking table), got:\n{}",
+        tail(&app_log, 40)
+    );
+    println!("boot-migration proof: {}", boot_line.trim());
 
     if !output.status.success() {
         // Full hurl output lands in {fixture}/test-results/hurl/*.log; the

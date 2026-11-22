@@ -3283,6 +3283,13 @@ own captures), GET field echo, zero-uuid 404, PUT roundtrip, DELETE 204 +
 GET 404 — `{{api_key}}` everywhere, minimal required-field bodies
 (codelist/inline-enum fields use the ref target's EnumValues via
 `codelist_enum_name_from_ref`, keeping JSON and mox runs byte-identical).
+Required FK parents include **value-object refs that resolve to an entity**
+(the `RsvpType.event -> EventBaseType` shape): the column is the DTO's
+`{name}_id`, the resolver falls back to the filename stem for path-style
+JSON `$ref`s (ingestion stores the raw path), and the preamble POST targets
+the PARENT's own domain when the reference crosses bounded contexts (#764 —
+the child-domain URL 404s). A required `EntityReference`/VO→entity with no
+resolvable entity target is omitted (the DTO cannot accept it).
 Once per run (the domain owning the FIRST entity) the authn/authz suite:
 `01_auth.hurl` (401s), `03_scope_denial_403.hurl` (read-only key write →
 403 `INSUFFICIENT_SCOPE`), `04_cross_tenant_404.hurl`, and
@@ -3295,9 +3302,11 @@ as Tera literals — URLs/headers/bodies/asserts are precomputed context.
 Gates: `cargo test -p codegraph --test hurl_contract_tests` (byte-golden +
 the `[hurl]` OpsManifest parse coupling, node-free);
 `--test review_api_suite -- --ignored` is the live acceptance gate
-(regenerate fixture → `testkit api` → app_user pool mode + 403 + 404 over
-real HTTP; the fixture manifest carries `[hurl]`, and the xfail tolerance
-for the 500-mapping gap is GONE — any failure is hard).
+(shape B: a Supabase-compatible base target, no stack spawn → suite-owned
+migration band → `testkit api` → app_user pool mode + `boot-migrations: 0
+applied` over `platform._migrations` + 403/404/RLS over real HTTP; the
+fixture manifest carries `[hurl]`, and the xfail tolerance for the
+500-mapping gap is GONE — any failure is hard).
 
 ### IFML test-side auth + journeys
 

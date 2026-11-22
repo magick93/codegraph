@@ -430,6 +430,53 @@ down stack. Shape A — `npx supabase start` inside the CI job — is a
 recorded alternative, deliberately out of scope: it needs Docker-in-Docker
 and 1–2 minutes of stack boot per PR.
 
+**The repo's own acceptance gate (`review_api_suite`, issue #764)** uses the
+same shape-B contract, and it is the reference wiring for a host-side run:
+
+- `crates/codegraph/tests/review_api_suite.rs` resolves its base target
+  through `test_framework::postgres::resolve_base_target()` —
+  `DATABASE_URL` when it is reachable **and** can host per-run databases,
+  else the pinned Supabase-image container on `127.0.0.1:15432` (reused
+  across warm runs).
+- It HARD-asserts `compatibility_gate == Run` before doing any slow work. A
+  plain `postgres:<n>` target aborts in seconds naming
+  `public.ecr.aws/supabase/postgres:17.6.1.132`; the 403/404/RLS legs are
+  not skippable (a silent skip would make the gate vacuous).
+- It retargets the WHOLE `[database.api]` block (host/port/user/password +
+  the per-run scratch database) at the resolved base target, then invokes
+  the plain `testkit api` — no `--no-migrate`. Stage 2 applies the band and
+  writes `platform._migrations`; the app's boot migrator then applies ZERO
+  files (asserted from the app log as `boot-migrations: 0 applied`). The
+  pre-#756 test-side `seaql_migrations` shim is gone: one tracking table is
+  the honest consumer path.
+- It drops the scratch database at the end and exports nothing that would
+  disable `APP_DATABASE_URL` pool mode.
+
+**The committed fixture manifest shape**
+(`crates/review/generated-candidate/codegraph-ops.toml`) is generated
+EXCEPT for a hand-maintained `[supabase]` section (and comment header). The
+drift pin (`review_fixture_drift_tests`) compares the generated half
+line-for-line with comments and that section normalized out; the section's
+contract lives in `crates/codegraph/tests/review_fixture_maintained.rs`
+(every in-place refresh — the documented maintenance helper AND the PR-CI
+`grafeo_candidate_inspect_output` wipe — carries it forward, and the
+fixture-owned `supabase/` project is a committed extra). The section is the
+**manual full-stack fallback**: it points `[database.api]` at the fixture
+stack (db port 54350 ⇔ `[database.api].port` ⇔ the Kong health URL on
+54351), and `crates/review/generated-candidate/supabase/config.toml` pins
+ports 54350+ deliberately disjoint from every other local stack
+(crewbase 54321-54327, trader-rex 54331-54337, workers-gate 54340-54349),
+speaks the pinned CLI's `[local_smtp]` key spelling (issue #729), and
+disables the CLI's own migration/seed passes (the harness applies the
+generated band). Manual run:
+
+```bash
+cd crates/review/generated-candidate
+npx --yes supabase@3.2.0 start
+cargo run -p testkit -- api
+```
+
+
 **What this mode does NOT exercise:** GoTrue and PostgREST are not
 installed by the postgres image and are not required by the suite's core
 legs (migrate → app boot → hurl contracts → curl smoke → RLS; the hurl
