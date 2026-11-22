@@ -16,6 +16,7 @@ mod metrics_middleware;
 mod middleware;
 mod qs_query;
 mod server;
+mod boot_migrate;
 
 mod webhook_api;
 mod webhook_dispatch;

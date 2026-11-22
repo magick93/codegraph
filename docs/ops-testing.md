@@ -439,12 +439,15 @@ flows, Supabase client auth, browser sessions — are **shadowed** in this
 lane; they remain the consumer `testkit e2e` lane's job.
 
 **CI lane status:** the codegraph repo's own CI does **not yet** run the
-testkit api lane — wiring it surfaced issue #756 (a generated app without
-the admin CLI cannot boot over an already-applied band: the boot re-seed
-hits the #700 tenant trigger with no session org). The lane steps land
-with the #756 fix; until then the contract pin
+testkit api lane. Wiring it surfaced issue #756 (a generated app without
+the admin CLI could not boot over an already-applied band: the boot re-seed
+hit the #700 tenant trigger with no session org) — that blocker is FIXED:
+every migration plane now records/reads ONE `platform._migrations` table and
+boot adopts legacy bands instead of re-applying them (`boot_migration_tests`,
+wired into `test-ops-integration`). The lane wiring itself is a later wave;
+the contract pin
 (`ops_ci_lane_contract::the_testkit_api_lane_is_wired_into_ci_and_mirrored_in_the_justfile`)
-is ignore-marked naming it. The codegraph repo's `test-ops-integration`
+stays ignore-marked until then. The codegraph repo's `test-ops-integration`
 job (Supabase-image service + the fail-closed `CODEGRAPH_REQUIRE_SUPABASE`
 gate, issue #708) is the reference pattern for the DB tier; see the "Ops
 Harness" section of `AGENTS.md` for the consumer integration guide.

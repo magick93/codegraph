@@ -8,15 +8,22 @@ pub mod domain;
 pub mod entity;
 pub mod error;
 pub mod integrations;
-pub mod middleware;
+{% if project.has_extension_points %}pub mod integration_dispatch;
+pub mod integration_catalog;
+pub mod integration_router;
+pub mod integration_config;
+{% endif %}pub mod middleware;
 pub mod metrics_middleware;
 {% if project.persistence_provider == "cornucopia" %}pub mod db_client;
+{% endif %}{% if project.hooks_api_crate %}pub mod hook_adapters;
 {% endif %}{% if has_webhooks %}
-pub mod webhook_api;
-pub mod webhook_dispatch;
+pub mod webhook_api;{% endif %}{% if has_webhooks or has_function_events %}
+pub mod webhook_dispatch;{% endif %}{% if has_webhooks %}
 pub mod webhook_router;
-{% endif %}{% if has_events %}
-pub mod events;{% endif %}
+{% endif %}{% if has_media %}
+pub mod media;{% endif %}{% if has_events %}
+pub mod events;
+pub mod event_handlers;{% endif %}
 {% if has_seed %}
 pub mod seed;
 {% endif %}
@@ -29,5 +36,7 @@ pub mod atproto;
 pub mod config;
 pub mod doctor;
 pub mod migration;
+{% else %}
+pub mod boot_migrate;
 {% endif %}
 "#

@@ -9,7 +9,6 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
-use migration::MigratorTrait;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::{SwaggerUi, Url};
 use tower_http::cors::{Any, CorsLayer};
@@ -203,17 +202,16 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     let db = sea_orm::Database::connect(&db_url).await?;
 
-    // Apply pending migrations on startup. When the admin CLI is enabled the
-    // app has src/migration.rs — the SAME engine `cosmos-app migrate` uses
-    // (raw SQL files, dollar-quote-aware statement splitting, tracked in
-    // schema_migrations). Sharing one engine and one tracking table keeps
-    // boot idempotent against CLI runs — running the SeaORM Migrator here
-    // instead would re-apply every file a CLI run already applied (its
-    // seaql_migrations tracking is invisible to this runner) and die on the
-    // first seeded codelist. Without the CLI module, fall back to the
-    // always-generated SeaORM migration crate.
+    // Apply pending migrations on startup. Both runners track applied files
+    // in ONE table (issue #756) — `platform._migrations` — with the FNV-1a
+    // checksum of each file's original bytes, so boot is idempotent against
+    // an admin-CLI run AND against an ops-harness band. When the admin CLI is
+    // enabled the app has src/migration.rs (the SAME engine `cosmos-app
+    // migrate` uses); without it, src/boot_migrate.rs resolves the files the
+    // same way and adopts a legacy `seaql_migrations` / `schema_migrations`
+    // band instead of re-applying it.
     
-    if let Err(e) = migration::Migrator::up(&db, None).await {
+    if let Err(e) = crate::boot_migrate::run_boot_migrations(&db).await {
         tracing::error!("Failed to apply database migrations: {e}");
         return Err(e.into());
     }

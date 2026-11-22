@@ -36,4 +36,6 @@ pub mod atproto;
 pub mod config;
 pub mod doctor;
 pub mod migration;
+{% else %}
+pub mod boot_migrate;
 {% endif %}

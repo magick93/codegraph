@@ -144,3 +144,5 @@ jobs:
         run: cargo test -p codegraph --test service_ops_hurl_gate -- --ignored --nocapture
       - name: Design-invariant live gate (issue #666 slices 4d+4e)
         run: cargo test -p codegraph --test ddd_invariants_live_gate -- --ignored --nocapture
+      - name: Boot-migration tracking gate (issue #756)
+        run: cargo test -p codegraph --test boot_migration_tests -- --ignored --nocapture
