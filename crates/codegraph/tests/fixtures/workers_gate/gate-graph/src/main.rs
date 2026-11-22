@@ -67,7 +67,12 @@ async fn main() -> Result<()> {
             profile,
             profiles_config,
         } => {
-            let ddd = ddd_files.unwrap_or_else(|| vec![PathBuf::from("design/leave.ddd")]);
+            let ddd = ddd_files.unwrap_or_else(|| {
+                vec![
+                    PathBuf::from("design/leave.ddd"),
+                    PathBuf::from("design/inventory.ddd"),
+                ]
+            });
             let args = codegraph::driver::RunArgs {
                 schemas: None,
                 classifier: None,

@@ -384,6 +384,20 @@ impl IfmlE2eTestGenerator {
             if let Some(policy) = &model.policy {
                 spec.personas = self.build_persona_tests(policy, &human_actors, vc, &denial);
             }
+            // Issue #809: a guarded view's action tests must bind a persona
+            // that the view permits, or the load's client-side guard
+            // redirects mid-click (the detach loop). The view's persona
+            // tests already encode the permit decision; resolve before
+            // `spec` moves into the spec family.
+            let action_persona =
+                if auth_enabled && (!vc.roles.is_empty() || !vc.requires.is_empty()) {
+                    spec.personas
+                        .iter()
+                        .find(|p| p.permitted)
+                        .map(|p| super::auth::persona_id(&p.actor))
+                } else {
+                    None
+                };
             if has_tests(&spec) {
                 specs.push(spec);
             }
@@ -408,7 +422,7 @@ impl IfmlE2eTestGenerator {
                 workflow_specs.push((vc.name.clone(), workflow_tests));
             }
             // WS6: the manifest-proven action specs + POM surface per view.
-            if let Some((pom_actions, action_spec)) = self
+            if let Some((pom_actions, mut action_spec)) = self
                 .build_action_spec(
                     db,
                     config,
@@ -418,6 +432,7 @@ impl IfmlE2eTestGenerator {
                 )
                 .await
             {
+                action_spec.persona = action_persona;
                 actions_by_view.insert(vc.name.clone(), pom_actions);
                 action_specs.push(action_spec);
             }
@@ -833,7 +848,7 @@ impl IfmlE2eTestGenerator {
                     "{}.action.spec.ts",
                     to_kebab_case(&action_spec.view_name)
                 )),
-                content: render_action_spec(action_spec),
+                content: render_action_spec(action_spec, self.support().personas_import),
             });
         }
 

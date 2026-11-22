@@ -244,6 +244,18 @@ fn emit_adapter(
     }
     emit_include_imports(tree, domain, includes, &mut code);
     wln!(code);
+    // Issue #810: preserve the typed database error. `tokio-postgres`'s
+    // Display renders a server error as the bare string "db error" — the
+    // SQLSTATE/message/detail/hint live on the error's source, so the
+    // domain classifier (which logs the Debug form) must receive the real
+    // error, never a stringified copy.
+    wln!(
+        code,
+        "/// Preserve a database error's source detail (issue #810).\n\
+         fn db_err(e: tokio_postgres::Error) -> Box<dyn std::error::Error> {{\n\
+         \x20   Box::new(e)\n\
+         }}\n"
+    );
     wln!(
         code,
         "/// Cornucopia (SQL-first) repository for {entity_name}.\n\
@@ -363,13 +375,13 @@ fn emit_adapter_create(tree: &EntityTree, code: &mut CodeWriter) {
     if args.is_empty() {
         wln!(
             code,
-            "        let id = {qmod}::create_{snake}().bind(tx).one().await.map_err(|e| e.to_string())?;",
+            "        let id = {qmod}::create_{snake}().bind(tx).one().await.map_err(db_err)?;",
             snake = tree.table_name
         );
     } else {
         wln!(
             code,
-            "        let id = {qmod}::create_{snake}().bind(tx, {args}).one().await.map_err(|e| e.to_string())?;",
+            "        let id = {qmod}::create_{snake}().bind(tx, {args}).one().await.map_err(db_err)?;",
             snake = tree.table_name,
             args = args.join(", "),
         );
@@ -411,7 +423,7 @@ fn emit_adapter_create(tree: &EntityTree, code: &mut CodeWriter) {
             wln!(code, "        for item in &cmd.{} {{", j.field_name);
             wln!(
                 code,
-                "            {qmod}::link_{snake}_{junction}().bind(tx, &id, item).await.map_err(|e| e.to_string())?;",
+                "            {qmod}::link_{snake}_{junction}().bind(tx, &id, item).await.map_err(db_err)?;",
                 qmod = qmod,
                 snake = tree.table_name,
                 junction = j.sql_table_name
@@ -426,7 +438,7 @@ fn emit_adapter_create(tree: &EntityTree, code: &mut CodeWriter) {
             wln!(code, "            for item in ids {{");
             wln!(
                 code,
-                "                {qmod}::link_{snake}_{junction}().bind(tx, &id, item).await.map_err(|e| e.to_string())?;",
+                "                {qmod}::link_{snake}_{junction}().bind(tx, &id, item).await.map_err(db_err)?;",
                 qmod = qmod,
                 snake = tree.table_name,
                 junction = j.sql_table_name
@@ -501,7 +513,7 @@ fn emit_adapter_find_by_id(tree: &EntityTree, code: &mut CodeWriter) {
         wln!(code, "        let response = if include_deleted {{");
         wln!(
             code,
-            "            if let Some(row) = {qmod}::get_{snake}_including_deleted().bind(db, &id).opt().await.map_err(|e| e.to_string())? {{",
+            "            if let Some(row) = {qmod}::get_{snake}_including_deleted().bind(db, &id).opt().await.map_err(db_err)? {{",
             snake = tree.table_name
         );
         emit_response_expr(
@@ -518,7 +530,7 @@ fn emit_adapter_find_by_id(tree: &EntityTree, code: &mut CodeWriter) {
         wln!(code, "        }} else {{");
         wln!(
             code,
-            "            if let Some(row) = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())? {{",
+            "            if let Some(row) = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(db_err)? {{",
             snake = tree.table_name
         );
         emit_response_expr(
@@ -536,7 +548,7 @@ fn emit_adapter_find_by_id(tree: &EntityTree, code: &mut CodeWriter) {
     } else {
         wln!(
             code,
-            "        let response = if let Some(row) = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())? {{",
+            "        let response = if let Some(row) = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(db_err)? {{",
             snake = tree.table_name
         );
         emit_response_expr(tree, code, "row", "            ", "            Some(");
@@ -574,7 +586,7 @@ fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut CodeWriter) {
         wln!(code, "        let response = if include_deleted {{");
         wln!(
             code,
-            "            if let Some(row) = {qmod}::get_{snake}_scoped_including_deleted().bind(db, &id, &parent_id).opt().await.map_err(|e| e.to_string())? {{",
+            "            if let Some(row) = {qmod}::get_{snake}_scoped_including_deleted().bind(db, &id, &parent_id).opt().await.map_err(db_err)? {{",
             snake = tree.table_name
         );
         emit_response_expr(
@@ -591,7 +603,7 @@ fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut CodeWriter) {
         wln!(code, "        }} else {{");
         wln!(
             code,
-            "            if let Some(row) = {qmod}::get_{snake}_scoped().bind(db, &id, &parent_id).opt().await.map_err(|e| e.to_string())? {{",
+            "            if let Some(row) = {qmod}::get_{snake}_scoped().bind(db, &id, &parent_id).opt().await.map_err(db_err)? {{",
             snake = tree.table_name
         );
         emit_response_expr(
@@ -609,7 +621,7 @@ fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut CodeWriter) {
     } else {
         wln!(
             code,
-            "        let response = if let Some(row) = {qmod}::get_{snake}_scoped().bind(db, &id, &parent_id).opt().await.map_err(|e| e.to_string())? {{",
+            "        let response = if let Some(row) = {qmod}::get_{snake}_scoped().bind(db, &id, &parent_id).opt().await.map_err(db_err)? {{",
             snake = tree.table_name
         );
         emit_response_expr(tree, code, "row", "            ", "            Some(");
@@ -639,7 +651,7 @@ fn emit_adapter_update(tree: &EntityTree, code: &mut CodeWriter) {
     let binds = update_bind_args(tree);
     wln!(
         code,
-        "        {qmod}::update_{snake}().bind(tx, {binds}{id_arg}).await.map_err(|e| e.to_string())?;",
+        "        {qmod}::update_{snake}().bind(tx, {binds}{id_arg}).await.map_err(db_err)?;",
         snake = tree.table_name,
         binds = binds.join(", "),
         id_arg = if binds.is_empty() {
@@ -666,7 +678,7 @@ fn emit_adapter_update(tree: &EntityTree, code: &mut CodeWriter) {
         );
         wln!(
             code,
-            "            {qmod}::unlink_{snake}_{junction}().bind(tx, &id).await.map_err(|e| e.to_string())?;",
+            "            {qmod}::unlink_{snake}_{junction}().bind(tx, &id).await.map_err(db_err)?;",
             qmod = qmod,
             snake = tree.table_name,
             junction = j.sql_table_name
@@ -674,7 +686,7 @@ fn emit_adapter_update(tree: &EntityTree, code: &mut CodeWriter) {
         wln!(code, "            for item in ids {{");
         wln!(
             code,
-            "                {qmod}::link_{snake}_{junction}().bind(tx, &id, item).await.map_err(|e| e.to_string())?;",
+            "                {qmod}::link_{snake}_{junction}().bind(tx, &id, item).await.map_err(db_err)?;",
             qmod = qmod,
             snake = tree.table_name,
             junction = j.sql_table_name
@@ -703,7 +715,7 @@ fn emit_adapter_delete(tree: &EntityTree, code: &mut CodeWriter) {
     // (404) instead of a silent 204.
     wln!(
         code,
-        "        let deleted = {qmod}::delete_{snake}().bind(tx, &id).await.map_err(|e| e.to_string())?;",
+        "        let deleted = {qmod}::delete_{snake}().bind(tx, &id).await.map_err(db_err)?;",
         snake = tree.table_name
     );
     wln!(
@@ -755,20 +767,20 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut CodeWriter, ux_sort: bool) {
         wln!(code, "        let total = if include_deleted {{");
         wln!(
             code,
-            "            {qmod}::count_{snake}_including_deleted().bind(db).one().await.map_err(|e| e.to_string())? as u64",
+            "            {qmod}::count_{snake}_including_deleted().bind(db).one().await.map_err(db_err)? as u64",
             snake = tree.table_name
         );
         wln!(code, "        }} else {{");
         wln!(
             code,
-            "            {qmod}::count_{snake}().bind(db).one().await.map_err(|e| e.to_string())? as u64",
+            "            {qmod}::count_{snake}().bind(db).one().await.map_err(db_err)? as u64",
             snake = tree.table_name
         );
         wln!(code, "        }};");
     } else {
         wln!(
             code,
-            "        let total = {qmod}::count_{snake}().bind(db).one().await.map_err(|e| e.to_string())? as u64;",
+            "        let total = {qmod}::count_{snake}().bind(db).one().await.map_err(db_err)? as u64;",
             snake = tree.table_name
         );
     }
@@ -777,7 +789,7 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut CodeWriter, ux_sort: bool) {
         wln!(code, "        if include_deleted {{");
         wln!(
             code,
-            "            for row in {qmod}::list_{snake}_including_deleted().bind(db, &page_size_i, &offset).all().await.map_err(|e| e.to_string())? {{",
+            "            for row in {qmod}::list_{snake}_including_deleted().bind(db, &page_size_i, &offset).all().await.map_err(db_err)? {{",
             snake = tree.table_name
         );
         emit_filter_checks(code, tree, "                ");
@@ -795,7 +807,7 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut CodeWriter, ux_sort: bool) {
         wln!(code, "        }} else {{");
         wln!(
             code,
-            "            for row in {qmod}::list_{snake}().bind(db, &page_size_i, &offset).all().await.map_err(|e| e.to_string())? {{",
+            "            for row in {qmod}::list_{snake}().bind(db, &page_size_i, &offset).all().await.map_err(db_err)? {{",
             snake = tree.table_name
         );
         emit_filter_checks(code, tree, "                ");
@@ -814,7 +826,7 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut CodeWriter, ux_sort: bool) {
     } else {
         wln!(
             code,
-            "        for row in {qmod}::list_{snake}().bind(db, &page_size_i, &offset).all().await.map_err(|e| e.to_string())? {{",
+            "        for row in {qmod}::list_{snake}().bind(db, &page_size_i, &offset).all().await.map_err(db_err)? {{",
             snake = tree.table_name
         );
         emit_filter_checks(code, tree, "            ");
@@ -952,38 +964,38 @@ fn emit_adapter_search(tree: &EntityTree, code: &mut CodeWriter) {
         wln!(code, "        let ids = if include_deleted {{");
         wln!(
             code,
-            "            {qmod}::search_{snake}_including_deleted().bind(db, &query.to_string(), &page_size_i, &offset).all().await.map_err(|e| e.to_string())?",
+            "            {qmod}::search_{snake}_including_deleted().bind(db, &query.to_string(), &page_size_i, &offset).all().await.map_err(db_err)?",
             snake = tree.table_name
         );
         wln!(code, "        }} else {{");
         wln!(
             code,
-            "            {qmod}::search_{snake}().bind(db, &query.to_string(), &page_size_i, &offset).all().await.map_err(|e| e.to_string())?",
+            "            {qmod}::search_{snake}().bind(db, &query.to_string(), &page_size_i, &offset).all().await.map_err(db_err)?",
             snake = tree.table_name
         );
         wln!(code, "        }};");
         wln!(code, "        let total = if include_deleted {{");
         wln!(
             code,
-            "            {qmod}::search_count_{snake}_including_deleted().bind(db, &query.to_string()).one().await.map_err(|e| e.to_string())? as u64",
+            "            {qmod}::search_count_{snake}_including_deleted().bind(db, &query.to_string()).one().await.map_err(db_err)? as u64",
             snake = tree.table_name
         );
         wln!(code, "        }} else {{");
         wln!(
             code,
-            "            {qmod}::search_count_{snake}().bind(db, &query.to_string()).one().await.map_err(|e| e.to_string())? as u64",
+            "            {qmod}::search_count_{snake}().bind(db, &query.to_string()).one().await.map_err(db_err)? as u64",
             snake = tree.table_name
         );
         wln!(code, "        }};");
     } else {
         wln!(
             code,
-            "        let ids = {qmod}::search_{snake}().bind(db, &query.to_string(), &page_size_i, &offset).all().await.map_err(|e| e.to_string())?;",
+            "        let ids = {qmod}::search_{snake}().bind(db, &query.to_string(), &page_size_i, &offset).all().await.map_err(db_err)?;",
             snake = tree.table_name
         );
         wln!(
             code,
-            "        let total = {qmod}::search_count_{snake}().bind(db, &query.to_string()).one().await.map_err(|e| e.to_string())? as u64;",
+            "        let total = {qmod}::search_count_{snake}().bind(db, &query.to_string()).one().await.map_err(db_err)? as u64;",
             snake = tree.table_name
         );
     }
@@ -1019,20 +1031,20 @@ fn emit_adapter_semantic_search(tree: &EntityTree, code: &mut CodeWriter) {
         wln!(code, "        let ids = if include_deleted {{");
         wln!(
             code,
-            "            {qmod}::semantic_{snake}_including_deleted().bind(db, &vec_str, &limit_i).all().await.map_err(|e| e.to_string())?",
+            "            {qmod}::semantic_{snake}_including_deleted().bind(db, &vec_str, &limit_i).all().await.map_err(db_err)?",
             snake = tree.table_name
         );
         wln!(code, "        }} else {{");
         wln!(
             code,
-            "            {qmod}::semantic_{snake}().bind(db, &vec_str, &limit_i).all().await.map_err(|e| e.to_string())?",
+            "            {qmod}::semantic_{snake}().bind(db, &vec_str, &limit_i).all().await.map_err(db_err)?",
             snake = tree.table_name
         );
         wln!(code, "        }};");
     } else {
         wln!(
             code,
-            "        let ids = {qmod}::semantic_{snake}().bind(db, &vec_str, &limit_i).all().await.map_err(|e| e.to_string())?;",
+            "        let ids = {qmod}::semantic_{snake}().bind(db, &vec_str, &limit_i).all().await.map_err(db_err)?;",
             snake = tree.table_name
         );
     }
@@ -1062,7 +1074,7 @@ fn emit_adapter_tree(tree: &EntityTree, code: &mut CodeWriter) {
     );
     wln!(
         code,
-        "        let rows = {qmod}::tree_{snake}().bind(db, &root_id, &max_depth).all().await.map_err(|e| e.to_string())?;",
+        "        let rows = {qmod}::tree_{snake}().bind(db, &root_id, &max_depth).all().await.map_err(db_err)?;",
         snake = tree.table_name
     );
     if as_json {
@@ -1074,7 +1086,7 @@ fn emit_adapter_tree(tree: &EntityTree, code: &mut CodeWriter) {
         );
         wln!(
             code,
-            "        let worker_rows = {qmod}::tree_{snake}_workers().bind(db, &pos_ids).all().await.map_err(|e| e.to_string())?;",
+            "        let worker_rows = {qmod}::tree_{snake}_workers().bind(db, &pos_ids).all().await.map_err(db_err)?;",
             snake = tree.table_name
         );
         wln!(
@@ -1099,7 +1111,7 @@ fn emit_adapter_tree(tree: &EntityTree, code: &mut CodeWriter) {
     if as_json {
         wln!(
             code,
-            "            let mut val = serde_json::to_value(resp).map_err(|e| e.to_string())?;"
+            "            let mut val = serde_json::to_value(resp).map_err(db_err)?;"
         );
         for inc in &tree.tree_include {
             wln!(
@@ -1255,7 +1267,7 @@ fn emit_adapter_design_query(
         wln!(code, "        let mut items = Vec::new();");
         wln!(
             code,
-            "        for row in {qmod}::{fn_name}().bind(db{bind_args}).all().await.map_err(|e| e.to_string())? {{"
+            "        for row in {qmod}::{fn_name}().bind(db{bind_args}).all().await.map_err(db_err)? {{"
         );
         emit_response_expr(tree, code, "row", "            ", "            let resp = ");
         wln!(code, "            ;");
@@ -1276,7 +1288,7 @@ fn emit_adapter_design_query(
     } else {
         wln!(
             code,
-            "        let response = if let Some(row) = {qmod}::{fn_name}().bind(db{bind_args}).opt().await.map_err(|e| e.to_string())? {{"
+            "        let response = if let Some(row) = {qmod}::{fn_name}().bind(db{bind_args}).opt().await.map_err(db_err)? {{"
         );
         emit_response_expr(tree, code, "row", "            ", "            Some(");
         wln!(code, "            )");
@@ -1385,7 +1397,7 @@ fn emit_adapter_design_finder(
         wln!(code, "        let mut items = Vec::new();");
         wln!(
             code,
-            "        for row in {qmod}::{fn_name}().bind(db{bind_args}).all().await.map_err(|e| e.to_string())? {{"
+            "        for row in {qmod}::{fn_name}().bind(db{bind_args}).all().await.map_err(db_err)? {{"
         );
         emit_response_expr(tree, code, "row", "            ", "            let resp = ");
         wln!(code, "            ;");
@@ -1406,7 +1418,7 @@ fn emit_adapter_design_finder(
     } else {
         wln!(
             code,
-            "        let response = if let Some(row) = {qmod}::{fn_name}().bind(db{bind_args}).opt().await.map_err(|e| e.to_string())? {{"
+            "        let response = if let Some(row) = {qmod}::{fn_name}().bind(db{bind_args}).opt().await.map_err(db_err)? {{"
         );
         emit_response_expr(tree, code, "row", "            ", "            Some(");
         wln!(code, "            )");
@@ -1467,7 +1479,7 @@ fn emit_filter_checks(code: &mut CodeWriter, tree: &EntityTree, pad: &str) {
         wln!(
             code,
             "{pad}if let Some(val) = filters.get(\"{key}\") {{\n\
-             {pad}    let ids = {qmod}::filter_{qname}().bind(db, val).all().await.map_err(|e| e.to_string())?;\n\
+             {pad}    let ids = {qmod}::filter_{qname}().bind(db, val).all().await.map_err(db_err)?;\n\
              {pad}    if !ids.contains(&row.id) {{ continue; }}\n\
              {pad}}}",
             key = nf.filter_key,
@@ -1514,7 +1526,7 @@ pub(crate) fn emit_response_expr(
     for j in &tree.junction_tables {
         wln!(
             code,
-            "{pad}let {field}_rows: Vec<uuid::Uuid> = {qmod}::list_{snake}_{junction}().bind(db, &{pid}).all().await.map_err(|e| e.to_string())?.into_iter().collect();",
+            "{pad}let {field}_rows: Vec<uuid::Uuid> = {qmod}::list_{snake}_{junction}().bind(db, &{pid}).all().await.map_err(db_err)?.into_iter().collect();",
             field = j.field_name,
             qmod = qmod(tree),
             snake = tree.table_name,
@@ -1608,7 +1620,7 @@ fn emit_child_reads_cornucopia(
         wln!(code, "{pad}let {field}_rows = {{", field = child.field_name);
         wln!(
             code,
-            "{pad}    let rows = {qmod}::list_{snake}_{child_table}().bind(db, &{parent_id_expr}).all().await.map_err(|e| e.to_string())?;",
+            "{pad}    let rows = {qmod}::list_{snake}_{child_table}().bind(db, &{parent_id_expr}).all().await.map_err(db_err)?;",
             child_table = child.sql_table_name,
         );
         wln!(
@@ -1719,7 +1731,7 @@ fn emit_child_replace(tree: &EntityTree, code: &mut CodeWriter) {
         wln!(code, "        if let Some(items) = &cmd.{field} {{");
         wln!(
             code,
-            "            {qmod}::delete_{snake}_{child_table}().bind(tx, &id).await.map_err(|e| e.to_string())?;",
+            "            {qmod}::delete_{snake}_{child_table}().bind(tx, &id).await.map_err(db_err)?;",
             child_table = child.sql_table_name,
         );
         if child.is_array {
@@ -1756,7 +1768,7 @@ fn emit_child_insert_one(
     }
     wln!(
         code,
-        "{pad}{qmod}::insert_{snake}_{child_table}().bind(tx, {}).await.map_err(|e| e.to_string())?;",
+        "{pad}{qmod}::insert_{snake}_{child_table}().bind(tx, {}).await.map_err(db_err)?;",
         binds.join(", "),
         child_table = child.sql_table_name,
     );

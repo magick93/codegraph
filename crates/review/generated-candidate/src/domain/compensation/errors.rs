@@ -44,7 +44,17 @@ impl CompensationError {
     /// canonical "violates row-level security policy" message. Both mean the
     /// caller is not permitted the operation → HTTP 403. Everything else is
     /// an internal error.
-    pub fn from_repo_err(e: impl std::fmt::Display) -> Self {
+    ///
+    /// The HTTP envelope stays generic, but the log carries the FULL detail
+    /// (issue #810): `tokio-postgres` renders a server error as the bare
+    /// string "db error" — the SQLSTATE, message, detail and hint live on
+    /// the error's source, reachable only through its Debug form.
+    pub fn from_repo_err(e: impl std::fmt::Display + std::fmt::Debug) -> Self {
+        tracing::error!(
+            error = %e,
+            error_debug = ?e,
+            "database/repository error mapped to a domain error"
+        );
         let msg = e.to_string();
         if msg.contains("INSUFFICIENT_SCOPE")
             || msg.contains("ROLE_FORBIDDEN")
@@ -63,18 +73,21 @@ impl CompensationError {
 #[cfg(not(target_arch = "wasm32"))]
 impl From<sea_orm::DbErr> for CompensationError {
     fn from(e: sea_orm::DbErr) -> Self {
+        tracing::error!(error = %e, error_debug = ?e, "database error");
         Self::InternalError(e.to_string())
     }
 }
 
 impl From<Box<dyn std::error::Error>> for CompensationError {
     fn from(e: Box<dyn std::error::Error>) -> Self {
+        tracing::error!(error = %e, error_debug = ?e, "database error");
         Self::InternalError(e.to_string())
     }
 }
 
 impl From<Box<dyn std::error::Error + Send + Sync>> for CompensationError {
     fn from(e: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        tracing::error!(error = %e, error_debug = ?e, "database error");
         Self::InternalError(e.to_string())
     }
 }

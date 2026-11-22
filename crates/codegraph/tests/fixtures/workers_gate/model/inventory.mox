@@ -12,3 +12,27 @@ class InventoryPartType {
     /// Bin location.
     String [0..1] binLocation
 }
+
+/// Lifecycle of a stock adjustment proposal.
+enum StockAdjustmentStatus {
+    Draft = 0
+    Posted = 1
+}
+
+/// A proposed stock adjustment.
+///
+/// The #810 class pin: a MACHINE-BEARING entity whose status is a plain
+/// modeled feature (a codelist enum, NOT a domains.toml workflow-managed
+/// field). The machine is declared on the design (`design/inventory.ddd`),
+/// so the generated CREATE body carries the modeled initial state and the
+/// workers slice's cornucopia create must persist it.
+class StockAdjustmentType {
+    /// Operator-facing reference.
+    String reference
+
+    /// Lifecycle status (the machine's bound feature).
+    StockAdjustmentStatus status
+
+    /// Free-text note.
+    String [0..1] note
+}

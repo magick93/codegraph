@@ -3344,6 +3344,19 @@ all. Nightly gate: `auth` + `journeys` T3 categories in
 `ifml_codegen_gate.rs`. Gate: `cargo test -p codegraph --test
 ifml_auth_setup_tests` (5 pins, node-free).
 
+**The seeded auth-spec emission contract (#808)**: a guarded id route's
+`beforeAll` seeding renders `request.post(apiUrl(...))` — it MUST also emit
+the `../pages/support/api` import and the seeding persona's key
+(`const seedKey = apiKeyFor({first permitted persona}); const seedHeaders =
+…; headers: seedHeaders`), because an unauthenticated seed 401s (a
+`seededId` of `undefined` 400s every seeded view) and a row created under
+another identity/org is invisible to the persona under test. The
+un-seeded auth surface carries neither (byte-identical). Pin:
+`seeded_auth_specs_import_api_url_and_carry_seed_headers`
+(`ifml_auth_setup_tests`). The `ifml_gate` fixture's
+`GuardedRefundDetail` (requires + id param) exercises the same seeding
+path live in the nightly auth category.
+
 ### Testing layers
 
 Two layers per the TDD discipline: (a) node-free PR-CI pins
@@ -5825,6 +5838,18 @@ which classifies repo errors by marker: `INSUFFICIENT_SCOPE` /
 everything else stays `InternalError`. The tree handler classifies into
 `AppError::forbidden`.
 
+**DB errors keep their source detail (#810)**: `from_repo_err` takes
+`Display + Debug` and logs BOTH before mapping (the HTTP envelope stays
+generic); the `tokio_postgres`/`deadpool`/`sea_orm` `From` conversions log
+the same detail. This exists because `tokio-postgres` renders a server
+error as the bare string `db error` — the SQLSTATE/message/detail/hint
+live on the error's `source()`, so a stringified error loses the only
+diagnostic a 500 had. The cornucopia repository adapter therefore
+preserves the typed error (`db_err` boxes it) instead of flattening to a
+String. Pin: `template_harness::database_errors_keep_their_source_detail`
+(+ the emitted code compiles through `cornucopia_include_compile_tests`
+and the workers wasm gate).
+
 ### What was removed
 
 `api/scope.tera` (per-route scope guard, both topologies) and the
@@ -5943,6 +5968,17 @@ plain-Postgres portability paths added).
   regen. `DEFAULT_HURL_SKIPS` left untouched (hr-specs consumer compat —
   moving its entries needs coordination on that repo's manifests);
   fixture-specific skips live in the fixture manifest.
+  **The machine-bearing create leg (#810)**: the leave entity's status is
+  domains.toml workflow-managed (DTO-excluded, DDL-defaulted), so its create
+  never carries the machine state. The `design/inventory.ddd` + inventory
+  model carry a machine on an ordinary modeled codelist status instead, so
+  the generated CRUD contract's create leg seeds the modeled initial state
+  and the cornucopia create must persist it under the workers slice — the
+  class a consumer's "machine-bearing create 500s" came from, with the DB
+  detail now surfaced by the #810 logging (a failed create logs the
+  SQLSTATE/message/detail/hint; the envelope stays generic).
+  `gate-graph`'s default `--ddd-files` threads BOTH designs (the ops
+  harness's regeneration passes no ddd flags).
 - **WS3 — UX-spec required-FK seeding**: the IFML UX family was the last
   fixture family broken for required-FK entities (`createUxRow` posted an
   FK-less body → guaranteed 422). `build_view_ux_test` now rides
@@ -6023,6 +6059,18 @@ plain-Postgres portability paths added).
   changes are IFML-plane only — the entity plane (kit `3.0.0-next.24`) keeps
   its own shapes (same object-yield class likely lurks there; recorded,
   entity templates outside this plane's ownership).
+  **Guarded views' action specs bind a persona (#809)**: a guarded view's
+  client-side guard denies a sessionless spec context and redirects to the
+  denial target — mid-click, which Playwright reports as "element was
+  detached from the DOM, retrying" until the timeout (the PositionDetail
+  detach loop). `ActionSpec.persona` is set for guarded views when
+  `ifml_e2e_auth` is on (the first PERMITTED persona from the view's
+  persona tests) and `render_action_spec` binds it at describe scope via
+  `asPersona` — which also authenticates the spec's fixture seeds (the
+  `request` fixture inherits the headers). Unguarded views and flag-off
+  output are byte-identical. Pin:
+  `ifml::e2e_test::tests::guarded_action_specs_seed_the_permitted_persona`
+  + the gate's `GuardedRefundDetail` action category (nightly).
 
 Upstream asks drafted under `docs/proposals/` (001 transition binding,
 002 module/table uniqueness, 003 executable service bodies, 004 aggregate
