@@ -17,6 +17,7 @@
 //! (different key: FK constraint names per (schema, table)).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::Path;
 
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
@@ -347,6 +348,134 @@ fn record_fk(
     }
 }
 
+/// Issue #807 (Stage 0): the query-target-table consistency gate.
+///
+/// Every cornucopia query file the run emits targets `{domain}.{table}` —
+/// the file name IS the target table (`render_entity_sql`'s FROM clause and
+/// the emitted `queries/{domain}/{table}.sql` path derive from the same
+/// tree). A target absent from the DDL universe is the plane-disagreement
+/// class the #807 consumer hit: the queries plane says the table exists,
+/// the DDL never creates it, and `cornucopia-queries`' build.rs (which
+/// compiles every query against the live migrated database) fails the
+/// consumer build on the missing relation. Divergence is a generation-time
+/// ERROR naming the query file, the domain, and both planes — never a
+/// silent mismatch. Also checked: any `queries/{domain}/*.sql` file
+/// lingering in the output tree after the stale sweep (a sweep gap or a
+/// hand-seeded file would otherwise be the one survivor the build.rs still
+/// compiles). Returns one human-readable line per divergence (empty =
+/// clean); errors from the underlying context builders propagate.
+pub async fn check_query_target_tables(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    order: &[GenerationEntry],
+    parent_candidates: &[ParentCandidate],
+    output_dir: &Path,
+) -> Result<Vec<String>> {
+    // ── The DDL plane's table universe: every entry's own table plus every
+    // child table of every context, flattened (the same composition
+    // `check_child_table_consistency` walks).
+    let ddl = DdlGenerator::new(Path::new("")).with_parent_candidates(parent_candidates.to_vec());
+    let mut ddl_tables: HashSet<(String, String)> = HashSet::new();
+    for entry in generation_entries(config, order) {
+        let ctx = ddl
+            .query_ddl_context(db, &entry.schema_title, &entry.domain, config)
+            .await?;
+        ddl_tables.insert((ctx.schema_name.clone(), ctx.table_name.clone()));
+        for child in flatten_ddl_children(&ctx.child_tables) {
+            ddl_tables.insert((child.schema_name.clone(), child.table_name.clone()));
+        }
+    }
+
+    // ── Planned query targets: one query file per enumerated entity whose
+    // tree table is non-empty (the cornucopia plane's emission rule —
+    // `tree.table_name.is_empty()` emits nothing).
+    let emitter = RepositoryImplEmitter;
+    let mut planned: Vec<(String, String, String)> = Vec::new();
+    for entry in generation_entries(config, order) {
+        let tree = emitter
+            .query_entity_tree(db, &entry.schema_title, &entry.domain, config, None)
+            .await?;
+        if tree.table_name.is_empty() {
+            continue;
+        }
+        planned.push((
+            entry.domain.clone(),
+            tree.table_name.clone(),
+            entry.schema_title.clone(),
+        ));
+    }
+
+    // ── On-disk survivors: every `queries/{domain}/*.sql` file present
+    // AFTER the stale sweep (the gate runs post-sweep in the pipeline, so
+    // a file still on disk is one cornucopia's build.rs will compile).
+    let mut on_disk: Vec<(String, String)> = Vec::new();
+    let queries_root = output_dir.join("queries");
+    if queries_root.is_dir()
+        && let Ok(domain_entries) = std::fs::read_dir(&queries_root)
+    {
+        for domain_child in domain_entries.flatten() {
+            let domain_path = domain_child.path();
+            if !domain_path.is_dir() {
+                continue;
+            }
+            let Some(domain) = domain_path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if let Ok(file_entries) = std::fs::read_dir(&domain_path) {
+                for file_child in file_entries.flatten() {
+                    let name = match file_child.path().file_name().and_then(|n| n.to_str()) {
+                        Some(n) => n.to_string(),
+                        None => continue,
+                    };
+                    let Some(stem) = name.strip_suffix(".sql") else {
+                        continue;
+                    };
+                    on_disk.push((domain.to_string(), stem.to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(query_target_divergence_lines(
+        &ddl_tables,
+        &planned,
+        &on_disk,
+    ))
+}
+
+/// The pure comparison behind [`check_query_target_tables`]: planned and
+/// on-disk query targets against the DDL universe. `planned` carries
+/// (domain, table, owner schema title); `on_disk` carries (domain, table).
+pub(crate) fn query_target_divergence_lines(
+    ddl_tables: &HashSet<(String, String)>,
+    planned: &[(String, String, String)],
+    on_disk: &[(String, String)],
+) -> Vec<String> {
+    let mut divergences: BTreeSet<String> = BTreeSet::new();
+    for (domain, table, owner) in planned {
+        let key = (domain.clone(), table.clone());
+        if !ddl_tables.contains(&key) {
+            divergences.insert(format!(
+                "{domain}/{owner}: the cornucopia queries plane would emit \
+                 `queries/{domain}/{table}.sql` targeting `{domain}.{table}`, but the DDL never \
+                 creates it — the planes disagree on whether this entity has a table (#807)"
+            ));
+        }
+    }
+    for (domain, table) in on_disk {
+        let key = (domain.clone(), table.clone());
+        if !ddl_tables.contains(&key) {
+            divergences.insert(format!(
+                "{domain}/{table}: a cornucopia query file `queries/{domain}/{table}.sql` \
+                 lingers in the output tree targeting `{domain}.{table}`, but the DDL never \
+                 creates it — cornucopia-queries' build.rs would compile it against the live \
+                 database and fail on the missing relation (#807)"
+            ));
+        }
+    }
+    divergences.into_iter().collect()
+}
+
 fn generation_entries<'a>(
     config: &DomainConfig,
     order: &'a [GenerationEntry],
@@ -473,5 +602,85 @@ postgres_schema = "payroll"
         record_fk(&mut owners, &mut duplicates, "common", "a", "fk_a_id", "x");
         record_fk(&mut owners, &mut duplicates, "common", "b", "fk_a_id", "y");
         assert!(duplicates.is_empty());
+    }
+
+    /// Issue #807: a planned query target absent from the DDL universe is
+    /// the plane-disagreement class — the line names the query file, the
+    /// domain, and both planes.
+    #[test]
+    fn planned_query_target_missing_from_ddl_is_reported() {
+        let mut universe = HashSet::new();
+        universe.insert(("recruiting".to_string(), "application".to_string()));
+        let planned = vec![(
+            "recruiting".to_string(),
+            "disposition".to_string(),
+            "Disposition".to_string(),
+        )];
+        let lines = query_target_divergence_lines(&universe, &planned, &[]);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let line = &lines[0];
+        assert!(
+            line.contains("queries/recruiting/disposition.sql"),
+            "{line}"
+        );
+        assert!(line.contains("recruiting.disposition"), "{line}");
+        assert!(line.contains("DDL never creates it"), "{line}");
+        assert!(line.contains("#807"), "{line}");
+    }
+
+    /// A lingering query file (the stale-sweep gap class — cornucopia's
+    /// build.rs still compiles it) is reported even when nothing in the
+    /// current plan emits it.
+    #[test]
+    fn lingering_query_file_missing_from_ddl_is_reported() {
+        let mut universe = HashSet::new();
+        universe.insert(("recruiting".to_string(), "application".to_string()));
+        let on_disk = vec![("recruiting".to_string(), "disposition".to_string())];
+        let lines = query_target_divergence_lines(&universe, &[], &on_disk);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].contains("lingers in the output tree"),
+            "{}",
+            lines[0]
+        );
+        assert!(lines[0].contains("recruiting.disposition"), "{}", lines[0]);
+    }
+
+    /// Aligned planes report nothing: every planned AND on-disk target is
+    /// a table the DDL creates (the standing fixture shape).
+    #[test]
+    fn aligned_query_targets_report_nothing() {
+        let mut universe = HashSet::new();
+        universe.insert(("recruiting".to_string(), "application".to_string()));
+        universe.insert((
+            "recruiting".to_string(),
+            "application_history_step".to_string(),
+        ));
+        let planned = vec![(
+            "recruiting".to_string(),
+            "application".to_string(),
+            "Application".to_string(),
+        )];
+        let on_disk = vec![(
+            "recruiting".to_string(),
+            "application_history_step".to_string(),
+        )];
+        let lines = query_target_divergence_lines(&universe, &planned, &on_disk);
+        assert!(lines.is_empty(), "{lines:?}");
+    }
+
+    /// Cross-domain targeting diverges even when the same table name exists
+    /// in another schema — the (schema, table) pair is the identity.
+    #[test]
+    fn same_table_name_in_another_domain_is_still_a_divergence() {
+        let mut universe = HashSet::new();
+        universe.insert(("common".to_string(), "disposition".to_string()));
+        let planned = vec![(
+            "recruiting".to_string(),
+            "disposition".to_string(),
+            "Disposition".to_string(),
+        )];
+        let lines = query_target_divergence_lines(&universe, &planned, &[]);
+        assert_eq!(lines.len(), 1, "{lines:?}");
     }
 }

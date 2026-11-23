@@ -263,6 +263,34 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
+    // Issue #807 (Stage 0): the query-target-table consistency gate — every
+    // cornucopia query target table must exist in the DDL universe (the
+    // plane-disagreement class behind the phantom entity), checked BEFORE
+    // any tree is written. Runs only when the plan carries BOTH planes:
+    // without `ddl` there is no universe to check against, and without
+    // `cornucopia_queries` there is no query plane to diverge (a lingering
+    // query file under a dropped queries plane compiles nowhere —
+    // cornucopia-queries' build.rs is not emitted either).
+    if entity_gens.iter().any(|g| g.name() == "ddl")
+        && entity_gens.iter().any(|g| g.name() == "cornucopia_queries")
+    {
+        let divergences = crate::consistency::check_query_target_tables(
+            ctx.db(),
+            ctx.config,
+            order,
+            &parent_candidates,
+            ctx.output_dir,
+        )
+        .await?;
+        if !divergences.is_empty() {
+            return Err(Error::Config(format!(
+                "query-target-table divergence (issue #807): the cornucopia queries plane \
+                 targets tables the DDL never creates:\n  - {}",
+                divergences.join("\n  - ")
+            )));
+        }
+    }
+
     write_entity_results(entity_results, &mut report)?;
 
     // Codelists are not entities — SQL migrations + Rust enums run separately.

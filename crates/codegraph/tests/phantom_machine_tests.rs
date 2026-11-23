@@ -308,3 +308,81 @@ async fn fresh_generation_emits_only_declared_surfaces() {
         "hooks lifecycle-trait plane is in the plan"
     );
 }
+
+/// (4) The query-target-table consistency gate (#807 class-killer), driven
+/// directly over the fixture's graph: a cornucopia query file targeting a
+/// table the DDL never creates — the exact artifact shape the #807
+/// consumer's stale `disposition.sql` had — diverges by name. (In the
+/// pipeline the stale sweep removes such files before this gate runs; the
+/// gate is the net for whatever the sweep does not cover — a plan-level
+/// mint or a sweep gap — and this pin holds its detection live.)
+#[tokio::test]
+async fn query_target_gate_names_a_table_the_ddl_never_creates() {
+    let fixture = write_fixture();
+    let output = fixture.out();
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().unwrap();
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let mox_files = vec![fixture.mox.clone()];
+    codegraph::ingest::mox_ingest::ingest_mox_files(
+        &engine,
+        &engine,
+        &mox_files,
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap();
+    let ddd_files = vec![fixture.ddd.clone()];
+    codegraph::ingest::ddd_ingest::ingest_ddd_files(&engine, &engine, &ddd_files, &config)
+        .await
+        .unwrap();
+
+    let order = codegraph_generate::compute_generation_order(&engine, &config)
+        .await
+        .unwrap();
+
+    // Aligned planes on a clean tree: the planned targets all exist in the
+    // DDL universe, and no query file lingers.
+    let clean = codegraph_generate::consistency::check_query_target_tables(
+        &engine,
+        &config,
+        &order,
+        &[],
+        &output,
+    )
+    .await
+    .unwrap();
+    assert!(
+        clean.is_empty(),
+        "aligned planes must report no divergence: {clean:?}"
+    );
+
+    // The consumer's stale survivor: a query file whose target table no
+    // migration creates (the pre-rename `disposition.sql` shape).
+    let stale = output.join("queries/recruiting/disposition.sql");
+    fs::create_dir_all(stale.parent().unwrap()).unwrap();
+    fs::write(
+        &stale,
+        "-- Cornucopia queries for Disposition (domain: recruiting)\n",
+    )
+    .unwrap();
+
+    let divergences = codegraph_generate::consistency::check_query_target_tables(
+        &engine,
+        &config,
+        &order,
+        &[],
+        &output,
+    )
+    .await
+    .unwrap();
+    assert_eq!(divergences.len(), 1, "{divergences:?}");
+    let line = &divergences[0];
+    assert!(line.contains("recruiting.disposition"), "{line}");
+    assert!(
+        line.contains("queries/recruiting/disposition.sql"),
+        "{line}"
+    );
+    assert!(line.contains("DDL never creates it"), "{line}");
+    assert!(line.contains("#807"), "{line}");
+}
