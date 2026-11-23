@@ -705,9 +705,12 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.20.3"
+version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
+checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
+dependencies = [
+ "allocator-api2",
+]
 
 [[package]]
 name = "byteorder"
@@ -720,6 +723,15 @@ name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+
+[[package]]
+name = "castaway"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dec551ab6e7578819132c713a93c022a05d60159dc86e7a7050223577484c55a"
+dependencies = [
+ "rustversion",
+]
 
 [[package]]
 name = "cc"
@@ -1001,6 +1013,7 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
+ "xstate-core",
 ]
 
 [[package]]
@@ -1081,6 +1094,20 @@ name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
+
+[[package]]
+name = "compact_str"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dfdd1c2274d9aa354115b09dc9a901d6c5576818cdf70d14cae2bdb47df00ab"
+dependencies = [
+ "castaway",
+ "cfg-if",
+ "itoa",
+ "rustversion",
+ "ryu",
+ "static_assertions",
+]
 
 [[package]]
 name = "concolor"
@@ -1179,6 +1206,12 @@ name = "core_detect"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
+
+[[package]]
+name = "cow-utils"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "417bef24afe1460300965a25ff4a24b8b45ad011948302ec221e8a0a81eb2c79"
 
 [[package]]
 name = "cpufeatures"
@@ -2448,10 +2481,31 @@ checksum = "d56e28588da92eee5c3201a6eff33fabdd49b62269c8938d4ff050ce4d900deb"
 dependencies = [
  "displaydoc",
  "litemap",
+ "serde",
  "tinystr",
  "writeable",
  "zerovec",
 ]
+
+[[package]]
+name = "icu_locale_fallback"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "251af8e57c9400e3eb58242fe5b8b1152b2a64fdf4cf632f923c38ccee6f2fa9"
+dependencies = [
+ "icu_locale_core",
+ "icu_locale_fallback_data",
+ "icu_provider",
+ "potential_utf",
+ "tinystr",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_locale_fallback_data"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "decf2a22ec8fa68f1a0c1129a3f8583f8f8bc24e8b9ccbe98ead99f62a4dc3a8"
 
 [[package]]
 name = "icu_normalizer"
@@ -2502,12 +2556,36 @@ checksum = "d27bbb9d3abbefac45d55f647c9de1d44aafcd1186eb91879afef17c396c3e73"
 dependencies = [
  "displaydoc",
  "icu_locale_core",
+ "serde",
+ "stable_deref_trait",
  "writeable",
  "yoke",
  "zerofrom",
  "zerotrie",
  "zerovec",
 ]
+
+[[package]]
+name = "icu_segmenter"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82d07aafccd67af15d02512a6adf5896fbc5ed00f2e99b471d2efa14016db3db"
+dependencies = [
+ "icu_collections",
+ "icu_locale_fallback",
+ "icu_provider",
+ "icu_segmenter_data",
+ "potential_utf",
+ "smallvec",
+ "utf8_iter",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_segmenter_data"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae293c039020f9ec10710af98d29ce6aa2051486638b49c9a6409f3b4a9e98ad"
 
 [[package]]
 name = "ident_case"
@@ -2957,6 +3035,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "nonmax"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "610a5acd306ec67f907abe5567859a3c693fb9886eb1f012ab8f2a47bef3db51"
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3153,6 +3237,197 @@ dependencies = [
 ]
 
 [[package]]
+name = "owo-colors"
+version = "4.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13c45bb4a6ae1280ec0803b1ef9d3455eb50f01efbbe1447ab020f1d54fba9d8"
+
+[[package]]
+name = "oxc-miette"
+version = "2.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4356a61f2ed4c9b3610245215fbf48970eb277126919f87db9d0efa93a74245c"
+dependencies = [
+ "cfg-if",
+ "owo-colors",
+ "oxc-miette-derive",
+ "textwrap",
+ "thiserror",
+ "unicode-segmentation",
+ "unicode-width 0.2.3",
+]
+
+[[package]]
+name = "oxc-miette-derive"
+version = "2.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b237422b014f8f8fff75bb9379e697d13f8d57551a22c88bebb39f073c1bf696"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "oxc_allocator"
+version = "0.77.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "423acea26b6422fa0778e91fdcb81b19148b8dd72c3f5ec9c1722b65dc220da2"
+dependencies = [
+ "allocator-api2",
+ "bumpalo",
+ "hashbrown 0.15.5",
+ "oxc_data_structures",
+ "rustc-hash",
+]
+
+[[package]]
+name = "oxc_ast"
+version = "0.77.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5229e6d1c3f0e2f89c674f99b4bde8a4d5faf2ed4fc2ad34225d31bea546439"
+dependencies = [
+ "bitflags 2.13.2",
+ "oxc_allocator",
+ "oxc_ast_macros",
+ "oxc_data_structures",
+ "oxc_estree",
+ "oxc_regular_expression",
+ "oxc_span",
+ "oxc_syntax",
+]
+
+[[package]]
+name = "oxc_ast_macros"
+version = "0.77.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aeeaf11189a12a302cd387a2b51c14b6c82bdb9d69d589987c59136fe31144cb"
+dependencies = [
+ "phf 0.12.1",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "oxc_data_structures"
+version = "0.77.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3d5134e4f3d2702f4bc9bbbca6b9dd7110a7d40257f595c6e13aec61d73eb4d"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
+name = "oxc_diagnostics"
+version = "0.77.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b25255412a4f73e67e43146f32c723db06ace776a2ee6ba6b44c047aa3c4572"
+dependencies = [
+ "cow-utils",
+ "oxc-miette",
+ "percent-encoding",
+]
+
+[[package]]
+name = "oxc_ecmascript"
+version = "0.77.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da6a69b71ba225327213e77146573d1ccc05d180d2be37d4a934ba7e96d7d0b2"
+dependencies = [
+ "num-bigint 0.4.8",
+ "num-traits",
+ "oxc_ast",
+ "oxc_span",
+ "oxc_syntax",
+]
+
+[[package]]
+name = "oxc_estree"
+version = "0.77.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7587710fe0e28f02015ae47964ebbb2bc3853302c1112632c163cd824fa1fd99"
+
+[[package]]
+name = "oxc_index"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "967ae797e1f284bd1385f2d8e8ab94293ad27f623c76839ecf66827521365f5b"
+
+[[package]]
+name = "oxc_parser"
+version = "0.77.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fe05c3cc2e9dd89de8f3ecaa250372b044a0194ce1b14526b26ace04d6a5770"
+dependencies = [
+ "bitflags 2.13.2",
+ "cow-utils",
+ "memchr",
+ "num-bigint 0.4.8",
+ "num-traits",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_data_structures",
+ "oxc_diagnostics",
+ "oxc_ecmascript",
+ "oxc_regular_expression",
+ "oxc_span",
+ "oxc_syntax",
+ "rustc-hash",
+ "seq-macro",
+]
+
+[[package]]
+name = "oxc_regular_expression"
+version = "0.77.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44971f48da170fc5d21abf764573d8647b4801b3129993bbbe06759d648a23a4"
+dependencies = [
+ "bitflags 2.13.2",
+ "oxc_allocator",
+ "oxc_ast_macros",
+ "oxc_diagnostics",
+ "oxc_span",
+ "phf 0.12.1",
+ "rustc-hash",
+ "unicode-id-start",
+]
+
+[[package]]
+name = "oxc_span"
+version = "0.77.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91aabd5bfacf5897d534fa72b23f9f7da99f51bfa2c7bed7683f556b5009607"
+dependencies = [
+ "compact_str",
+ "oxc-miette",
+ "oxc_allocator",
+ "oxc_ast_macros",
+ "oxc_estree",
+]
+
+[[package]]
+name = "oxc_syntax"
+version = "0.77.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "307d590d5ff2e5e7b9851bdda04027a93cbae22a924723a3c0e7c1af03662ce4"
+dependencies = [
+ "bitflags 2.13.2",
+ "cow-utils",
+ "nonmax",
+ "oxc_allocator",
+ "oxc_ast_macros",
+ "oxc_data_structures",
+ "oxc_estree",
+ "oxc_index",
+ "oxc_span",
+ "phf 0.12.1",
+ "rustc-hash",
+ "ryu-js",
+ "unicode-id-start",
+]
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3238,7 +3513,7 @@ dependencies = [
 [[package]]
 name = "phero-backend-common"
 version = "0.4.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
 dependencies = [
  "anyhow",
  "serde_json",
@@ -3247,12 +3522,12 @@ dependencies = [
 [[package]]
 name = "phero-dates"
 version = "0.4.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
 
 [[package]]
 name = "phero-diagnostics"
 version = "0.4.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
 dependencies = [
  "phero-parser",
 ]
@@ -3260,7 +3535,7 @@ dependencies = [
 [[package]]
 name = "phero-driver"
 version = "0.4.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
 dependencies = [
  "anyhow",
  "ariadne 0.6.0",
@@ -3268,6 +3543,7 @@ dependencies = [
  "dsntk-feel-parser",
  "dsntk-recognizer",
  "phero-diagnostics",
+ "phero-evidence",
  "phero-expr",
  "phero-ifml",
  "phero-ir",
@@ -3278,17 +3554,29 @@ dependencies = [
  "salsa 0.28.5",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "sigil-diag",
  "sigil-model",
  "sigil-resolve",
  "sigil-syntax",
  "xstate-ir",
+ "xstate-parser",
+]
+
+[[package]]
+name = "phero-evidence"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]
 name = "phero-expr"
 version = "0.4.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3304,7 +3592,7 @@ dependencies = [
 [[package]]
 name = "phero-ifml"
 version = "0.4.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3319,7 +3607,7 @@ dependencies = [
 [[package]]
 name = "phero-ir"
 version = "0.4.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
 dependencies = [
  "serde",
  "serde_json",
@@ -3329,7 +3617,7 @@ dependencies = [
 [[package]]
 name = "phero-parser"
 version = "0.4.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
 dependencies = [
  "chumsky 0.10.1",
  "serde",
@@ -3339,12 +3627,12 @@ dependencies = [
 [[package]]
 name = "phero-strings"
 version = "0.4.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
 
 [[package]]
 name = "phero-syntax"
 version = "0.4.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3356,7 +3644,7 @@ dependencies = [
 [[package]]
 name = "phero-verify"
 version = "0.4.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
 dependencies = [
  "creusot-std",
 ]
@@ -3364,7 +3652,7 @@ dependencies = [
 [[package]]
 name = "phero-vocab"
 version = "0.4.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=958acd0b1870b296bd80f5f7c6bf876d9a1187c4#958acd0b1870b296bd80f5f7c6bf876d9a1187c4"
 dependencies = [
  "anyhow",
  "phero-ir",
@@ -3381,7 +3669,7 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd6780a80ae0c52cc120a26a1a42c1ae51b247a253e4e06113d23d2c2edd078"
 dependencies = [
- "phf_macros",
+ "phf_macros 0.11.3",
  "phf_shared 0.11.3",
 ]
 
@@ -3391,7 +3679,9 @@ version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "913273894cec178f401a31ec4b656318d95473527be05c0752cc41cdc32be8b7"
 dependencies = [
+ "phf_macros 0.12.1",
  "phf_shared 0.12.1",
+ "serde",
 ]
 
 [[package]]
@@ -3415,13 +3705,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "phf_generator"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cbb1126afed61dd6368748dae63b1ee7dc480191c6262a3b4ff1e29d86a6c5b"
+dependencies = [
+ "fastrand",
+ "phf_shared 0.12.1",
+]
+
+[[package]]
 name = "phf_macros"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f84ac04429c13a7ff43785d75ad27569f2951ce0ffd30a3321230db2fc727216"
 dependencies = [
- "phf_generator",
+ "phf_generator 0.11.3",
  "phf_shared 0.11.3",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "phf_macros"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d713258393a82f091ead52047ca779d37e5766226d009de21696c4e667044368"
+dependencies = [
+ "phf_generator 0.12.1",
+ "phf_shared 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -3542,6 +3855,8 @@ version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d83eb9bc6d8e5cf568e7a1101d60ee05e81ed50ea106026f3d18deeb046d7661"
 dependencies = [
+ "serde_core",
+ "writeable",
  "zerovec",
 ]
 
@@ -3980,6 +4295,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "ryu-js"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f232fd0249f55adbe7f15bee58bbbd3d40708000b84e6482066d2ba599e08a9"
+
+[[package]]
 name = "salsa"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4258,6 +4579,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
+name = "seq-macro"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bc711410fbe7399f390ca1c3b60ad0f53f80e95c5eb935e52268a0e2cd49acc"
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4502,6 +4829,12 @@ checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "smawk"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8e2fb0f499abb4d162f2bedad68f5ef91a1682b5a03596ddb67efd37768d100"
 
 [[package]]
 name = "socket2"
@@ -4888,6 +5221,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "textwrap"
+version = "0.16.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ecfad6c3abc80a577f2b91c1e412ee57e7a060d430b553c1b0c940974ebcd49"
+dependencies = [
+ "icu_segmenter",
+ "smawk",
+ "unicode-width 0.2.3",
+]
+
+[[package]]
 name = "thin-vec"
 version = "0.2.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4980,6 +5324,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1e27c91459209c2986af3dcf603a5a74a4368754ce37414f59acc971167f643"
 dependencies = [
  "displaydoc",
+ "serde_core",
  "zerovec",
 ]
 
@@ -5339,6 +5684,12 @@ name = "unicode-bidi"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
+
+[[package]]
+name = "unicode-id-start"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0825d2e09dcae814a4273c1e1435979d414ede25b2ee235b1545da6682483765"
 
 [[package]]
 name = "unicode-ident"
@@ -5964,12 +6315,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
+name = "xstate-core"
+version = "0.2.1"
+source = "git+https://github.com/yestechgroup/restingstate.git?rev=da0c804d3c30a0bcc938562e39a4b7d7505c663b#da0c804d3c30a0bcc938562e39a4b7d7505c663b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "xstate-ir",
+]
+
+[[package]]
 name = "xstate-ir"
 version = "0.2.1"
-source = "git+https://github.com/yestechgroup/restingstate.git?rev=380580b6407f6530c6fb89e1ce87621567f009c5#380580b6407f6530c6fb89e1ce87621567f009c5"
+source = "git+https://github.com/yestechgroup/restingstate.git?rev=da0c804d3c30a0bcc938562e39a4b7d7505c663b#da0c804d3c30a0bcc938562e39a4b7d7505c663b"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "xstate-parser"
+version = "0.2.1"
+source = "git+https://github.com/yestechgroup/restingstate.git?rev=da0c804d3c30a0bcc938562e39a4b7d7505c663b#da0c804d3c30a0bcc938562e39a4b7d7505c663b"
+dependencies = [
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_parser",
+ "oxc_span",
+ "serde_json",
+ "thiserror",
+ "xstate-ir",
 ]
 
 [[package]]
@@ -6057,6 +6434,7 @@ dependencies = [
  "displaydoc",
  "yoke",
  "zerofrom",
+ "zerovec",
 ]
 
 [[package]]
@@ -6065,6 +6443,7 @@ version = "0.11.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb0464e17806c1d976d5cba29399c7f08e516e279e2ba493f63123b5fca67dd8"
 dependencies = [
+ "serde",
  "yoke",
  "zerofrom",
  "zerovec-derive",

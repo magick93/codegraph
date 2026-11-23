@@ -6180,7 +6180,8 @@ enumerated, reviewed diff). Template size budget is 500 lines
 - **Deliberate pins** (bump only with their stated gate green):
   - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
   - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up. Currently `=0.6.0` (0.6 replaced the on-disk format; WAL durability moved from the default features into the opt-in `storage` feature, which codegraph-grafeo enables; `GRAFEO_STORAGE_GENERATION` in `schema_ddl.rs` versions the engine's on-disk format inside the persisted-graph cache inputs hash — bump it on every grafeo minor that changes the file format so consumers cold-re-ingest instead of migrating `.graph-cache/graph.grafeo` in place). MSRV moved to 1.99.0 with 0.6.0.
-  - `phero-*` @ 4f497e1 (yestechgroup/pherolang) — v0.4.0 plus the shared surface kernel (epic pherolang#328, SK1–SK6 via PRs #336/#337). `phero-ir|driver|expr|ifml` are the four crates we consume; sigil stays on 69115a7 (upstream's own pin, so lockstep is a no-op). This bump is API-only for us: one `CompileInputs` bundle on the `compile_*_str` entry points and the shared diagnostic record; see **Pherolang 0.4 pin** below. Previous pins: `phero-*` @ 298267e (the 0.3 rebrand + DDD epic DD1–DD9, `docs/pherolang-upgrade.md`) and `rex-*` @ 1fe0ca9 (the 0.2-era PR #174 dedup sweep — artifacts then carried `rexVersion` with `formatVersion` 1).
+  - `phero-*` @ 958acd0b (yestechgroup/pherolang) — the machine-reference era (pherolang#387/#388): `.ddd` machines may be authored in TypeScript/XState (`machine <field>: <Enum> from "path.machine.ts";`) and the compiled artifact embeds the canonical `xstate_ir::Machine` JSON (`machineIr`) + provenance (`machineProvenance`: path/machineId/contentSha256); `DDD_MODEL_FORMAT_VERSION` 2 → 3. Also carried: resolved event identities (`Design.emits` vs `.evt` contracts), intent traceability (`.intent`), DF1–DF4 design-contract hardening, and the `extend` child-op alias RETIRED (the grammar accepts only `children <Class>`). `phero-ir|driver|expr|ifml|syntax|backend-common` are the crates we consume; sigil stays on 69115a7 (upstream's own pin, so lockstep is a no-op). Gate: `pherolang_fixture_sweep` (+ `DDD_GOLDEN_BLESS=1` when the artifact stamps move). Previous pins: `phero-*` @ 4f497e1 (v0.4.0 + the shared surface kernel, epic pherolang#328 SK1–SK6 via PRs #336/#337), `phero-*` @ 298267e (the 0.3 rebrand + DDD epic DD1–DD9, `docs/pherolang-upgrade.md`), and `rex-*` @ 1fe0ca9 (the 0.2-era PR #174 dedup sweep — artifacts then carried `rexVersion` with `formatVersion` 1).
+  - `xstate-core` @ da0c804d (yestechgroup/restingstate) — the machine kernel (issue #815, Lane 1 of epic #812): re-exports `xstate_ir` (the `Machine` IR the pherolang artifact embeds as `machineIr`), the fail-closed `validate_machine_json` boundary, and the interpreter/snapshot surface Stages 2–3 build on. Pinned by rev; pherolang itself pins this same rev for its machine-reference work, so exactly ONE restingstate version exists in the tree — **move only in lockstep with a `phero-*` bump**. `default-features = false` (tokio-free, wasm32-safe). Gate: `machine_kernel_tests`.
   - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
   - Rust toolchain: root `rust-toolchain.toml` pins the channel (currently `1.100.0` — issue #627). `dtolnay/rust-toolchain@stable` reads it, so local and CI compilers cannot drift (the PR #626 clippy-lint-drift class is structurally closed). The pin moves MONTHLY alongside the Tier-0 lockfile refresh, never silently: bump the channel AND the `PINNED_CHANNEL` literal in `crates/codegraph/tests/ci_toolchain_contract.rs` in the same commit (the contract test enforces the pairing and the file's presence/shape — components rustfmt+clippy, target wasm32-unknown-unknown for the #517/#550 gates).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
@@ -6188,11 +6189,32 @@ enumerated, reviewed diff). Template size budget is 500 lines
 - **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list — each tracked by an issue; delete the entry there when cleared): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo, #534), `RUSTSEC-2026-0386` (tokio 1.53.1 unsound `AsyncFd` — rides the monthly lockfile refresh, #533), and `RUSTSEC-2026-0442` (arrow-data 60 unsound — transitive via grafeo; pre-dates the pherolang 194056b bump, rides the monthly lockfile refresh), `RUSTSEC-2026-0486` (rustix 1.1.5 unsound xattr zero-length buffer — transitive via the file-walking stack; a rustix patch bump rides the monthly lockfile refresh, #678). `RUSTSEC-2026-0308` (salsa 0.23) **cleared** with the pherolang 0.3 pin (salsa 0.28.5 in the tree) — #535 closed on that evidence.
 - **dependabot**: scoped to GitHub Actions only (`.github/dependabot.yml`); Cargo automation is consciously declined for the reasons above.
 
-## Pherolang 0.4 pin (shared surface kernel, epic pherolang#328)
+## Pherolang pin (machine-reference era, pherolang#387/#388)
 
-The live pin is `phero-*` @ `4f497e1` (v0.4.0 + SK1–SK6, PRs #336/#337).
-The move is **API-only for our ingest path**:
+The live pin is `phero-*` @ `958acd0b` (v0.4.0 line + the machine-reference
+era, 28 commits past the 4f497e1 shared-surface-kernel pin). For our ingest
+path the move is DATA-shaped, not API-shaped: no `compile_*_str` signature
+moved, but the compiled `.ddd` artifact changed shape —
 
+- `DDD_MODEL_FORMAT_VERSION` 2 → 3 and a new `domainFingerprint` provenance
+  block, so the committed DDD golden re-blessed (`library.ddd.json`: exactly
+  those two deltas — the fixture carries no machine references, so no
+  `machineIr` moved).
+- `Design.machine_ir: Option<serde_json::Value>` — the canonical
+  (keys-sorted-recursive) `xstate_ir::Machine` JSON of a REFERENCED
+  machine (`machine <field>: <Enum> from "…ts";`), absent on inline
+  machines and machine-less designs.
+- `Design.machine_provenance: Option<MachineProvenance>` — `{ path,
+  machineId, contentSha256 }` (camelCase), the hash over the canonical IR,
+  recomputable from the artifact alone.
+
+codegraph mirrors both onto `DddDesignNode` (issue #815, `GRAPH_FORMAT_
+VERSION` 14 → 15) and pins `xstate-core` @ da0c804d (restingstate) for the
+`Machine` type + `validate_machine_json`; see the dependency-policy entries
+above. The `extend` child-op alias was RETIRED upstream in the same window
+(DF4) — our sources already spell `children <Class>`, so no fixture moved.
+
+The historical SK1–SK6 record (the 4f497e1 bump, PRs #336/#337):
 - The public `compile_*_str` entry points take one inert
   `phero_driver::CompileInputs` instead of parallel `(path, payload)` slices.
   Build it with `CompileInputs::from_domains` plus
@@ -6209,7 +6231,8 @@ The move is **API-only for our ingest path**:
 - The one committed-fixture change is the provenance stamp:
   `tests/fixtures/ddd/library.ddd.json` re-blessed `pheroVersion` 0.3.0 →
   0.4.0 — the documented rev-canary re-bless in `ddd_golden_tests.rs`, not a
-  shape change. `formatVersion` stays 2.
+  shape change. `formatVersion` stayed 2 at that bump (the 958acd0b bump
+  later moved it to 3 — see the section header above).
 
 ## Pherolang 0.3 upgrade (rebrand + the DDD/IR epic)
 
