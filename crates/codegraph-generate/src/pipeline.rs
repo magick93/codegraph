@@ -150,11 +150,39 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // are no longer in the generation order (e.g. reclassified as VOs).
     // The filesystem-scanning `generate_mod_files` pass would otherwise pick
     // them up and emit broken `pub mod` declarations.
+    //
+    // Issue #807: the per-entity families outside the backend source tree
+    // (cornucopia queries, CLI commands, hooks lifecycle traits) sweep with
+    // the same expected-set contract, gated on the plan carrying the
+    // family's generator. The expected module keys come from the graph's
+    // `pg_table_name` — the declared-table spelling (#668) IS the file
+    // stem on every plane, so a title re-derivation would mis-key models
+    // that declare explicit table names.
+    let mut expected_modules: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
+    for entry in order {
+        if let Ok(Some(schema)) = ctx
+            .db()
+            .get_schema_in_domain(&entry.schema_title, &entry.domain)
+            .await
+            && !schema.pg_table_name.is_empty()
+        {
+            expected_modules.insert((entry.domain.clone(), schema.pg_table_name));
+        }
+    }
+    let stale_surfaces = crate::output::StaleSurfaceGates {
+        cornucopia_queries: ctx.plan_has_entity("cornucopia_queries"),
+        cli_commands: ctx.plan_has_entity("cli_command"),
+        lifecycle_traits: ctx.plan_has_entity("lifecycle_trait"),
+        hooks_base: ctx.hooks_base,
+    };
     clean_generated_output(
         ctx.output_dir,
         order,
         &ctx.config.defaults.type_suffix,
         ctx.workers_topology,
+        &stale_surfaces,
+        &expected_modules,
     );
 
     // Clean stale IFML route directories from previous runs.  Both the

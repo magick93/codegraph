@@ -1,0 +1,42 @@
+// Issue #807 repro fixture (reduced): a machine declared on a NON-ROOT
+// entity used to mint a phantom `SchemaNode` titled after the machine's
+// FIELD name (`Disposition`) — an entity-phase enumeration rider that no
+// other plane (DDL included) knew about, so the cornucopia queries plane
+// emitted SQL against a table DDL never created and the consumer's
+// cornucopia-queries build.rs failed `cargo check`.
+//
+// Shape: aggregate root CandidateType contains Application[]; Application
+// is a NON-ROOT entity carrying the enum-typed machine field plus a
+// contained sibling value ApplicationHistoryStep with scalar members (the
+// wrong-sibling columns the phantom query file used to select).
+package nz.example.recruiting
+
+enum ApplicationDisposition {
+    New as "N" = 0
+    Screening as "S" = 1
+    Interviewing as "I" = 2
+    Offer as "O" = 3
+    Hired as "H" = 4
+    Rejected as "R" = 5
+}
+
+class CandidateType {
+    String candidateId
+    contains Application[] applications opposite candidate
+}
+
+class Application {
+    container CandidateType candidate opposite applications
+    ApplicationDisposition disposition
+    String dispositionReason
+    date appliedOn
+    date dispositionDate
+    contains ApplicationHistoryStep[] history
+}
+
+class ApplicationHistoryStep {
+    readonly String code
+    readonly String reasonCode
+    readonly String reasonDescription
+    readonly date recordedOn
+}

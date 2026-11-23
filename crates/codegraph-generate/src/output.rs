@@ -179,11 +179,29 @@ pub(crate) fn prefix_migration_path(mut file: GeneratedFile, seq: usize) -> Gene
 /// `src/api/{domain}/`) target the per-domain worker crate at
 /// `workers/{domain}/`; UI route and UI test scans stay at the output root
 /// (the frontend is shared).
+///
+/// Per-entity artifact families beyond the backend source tree (issue
+/// #807): the cornucopia queries plane (`queries/{domain}/{module}.sql`),
+/// the CLI command plane (`cli/src/commands/{domain}/{module}.rs`), and
+/// the hooks lifecycle-trait plane (`{hooks}/src/generated/{domain}/
+/// {module}.rs`) key their files on the same (domain, module) pair — and
+/// every one of them re-materializes a stale survivor into the consumer
+/// build: `cornucopia-queries`' build.rs compiles every query file against
+/// the live migrated database (a stale file is the #807 `relation … does
+/// not exist` break), the CLI mod.rs is regenerated from the enumeration
+/// so a survivor becomes an unreferenced dead file, and `src/generated/`
+/// mod.rs is FILESYSTEM-SCANNED so a survivor re-declares itself while
+/// importing DTO types that no longer exist. When the run's plan carries
+/// the corresponding generator, stale files outside the expected module
+/// set are removed; the `mod.rs` glue files are always preserved. Whole
+/// domain directories the config no longer declares are removed wholesale.
 pub(crate) fn clean_generated_output(
     output_dir: &Path,
     generation_order: &[GenerationEntry],
     suffix: &str,
     workers_topology: bool,
+    stale_surfaces: &StaleSurfaceGates,
+    expected_modules: &std::collections::HashSet<(String, String)>,
 ) {
     // Build the set of (domain, module_name) pairs that SHOULD exist after
     // this run.
@@ -423,6 +441,160 @@ pub(crate) fn clean_generated_output(
                 }
             }
         }
+    }
+
+    // ── Issue #807: the per-entity artifact families outside the backend
+    // source tree. Each family keys its files on (domain, module) where
+    // module is the schema's `pg_table_name`; a model rename or removal
+    // leaves the old files behind, and every family re-materializes its
+    // survivor into the consumer build (cornucopia-queries' build.rs
+    // compiles every query file against the live migrated DB; the hooks
+    // `src/generated` mod.rs is filesystem-scanned; the CLI mod.rs is
+    // regenerated from the enumeration, leaving the survivor unreferenced).
+    // Swept only when this run's plan carries the family's generator, so a
+    // plan change never destroys output the consumer still generates
+    // elsewhere. `mod.rs` glue is always preserved.
+    if stale_surfaces.any() {
+        for family in stale_surfaces.families() {
+            let root = family.root(output_dir, stale_surfaces.hooks_base);
+            if !root.is_dir() {
+                continue;
+            }
+            if let Ok(domain_entries) = fs::read_dir(&root) {
+                for domain_child in domain_entries.flatten() {
+                    let domain_path = domain_child.path();
+                    if !domain_path.is_dir() {
+                        continue;
+                    }
+                    let domain = match domain_path.file_name().and_then(|n| n.to_str()) {
+                        Some(n) => n.to_string(),
+                        None => continue,
+                    };
+                    if !domains.contains(domain.as_str()) {
+                        tracing::debug!(
+                            domain = %domain,
+                            path = %domain_path.display(),
+                            family = family.name,
+                            "removing stale per-entity artifact domain directory"
+                        );
+                        let _ = fs::remove_dir_all(&domain_path);
+                        continue;
+                    }
+                    if let Ok(file_entries) = fs::read_dir(&domain_path) {
+                        for child in file_entries.flatten() {
+                            let path = child.path();
+                            if path.is_dir() {
+                                continue;
+                            }
+                            let name = match path.file_name().and_then(|n| n.to_str()) {
+                                Some(n) => n.to_string(),
+                                None => continue,
+                            };
+                            if name == "mod.rs" {
+                                continue;
+                            }
+                            let Some(module) = family.file_stem(&name) else {
+                                continue;
+                            };
+                            let key = (domain.clone(), module.to_string());
+                            if !expected_modules.contains(&key) {
+                                tracing::debug!(
+                                    domain = %domain,
+                                    file = %name,
+                                    path = %path.display(),
+                                    family = family.name,
+                                    "removing stale per-entity artifact"
+                                );
+                                let _ = fs::remove_file(&path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Which per-entity artifact families this run's plan carries (issue #807).
+/// Each swept family is gated on its generator so a profile that drops the
+/// plane never destroys the files the plane owns.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct StaleSurfaceGates<'a> {
+    /// `queries/{domain}/{module}.sql` — the cornucopia queries plane
+    /// (`cornucopia_queries`). The #807 break surface: a stale file here
+    /// is compiled by `cornucopia-queries`' build.rs against the live DB.
+    pub cornucopia_queries: bool,
+    /// `cli/src/commands/{domain}/{module}.rs` — the CLI command plane
+    /// (`cli_command`).
+    pub cli_commands: bool,
+    /// `{hooks}/src/generated/{domain}/{module}.rs` — the hooks
+    /// lifecycle-trait plane (`lifecycle_trait`). The mod.rs here is
+    /// filesystem-scanned, so a survivor re-declares itself.
+    pub lifecycle_traits: bool,
+    /// The hooks crate base (the lifecycle traits live under
+    /// `{base}/src/generated/`; `None` = the output root).
+    pub hooks_base: Option<&'a Path>,
+}
+
+impl StaleSurfaceGates<'_> {
+    fn any(&self) -> bool {
+        self.cornucopia_queries || self.cli_commands || self.lifecycle_traits
+    }
+
+    fn families(&self) -> Vec<StaleSurfaceFamily<'static>> {
+        let mut out = Vec::new();
+        if self.cornucopia_queries {
+            out.push(StaleSurfaceFamily {
+                name: "queries",
+                dir: Path::new("queries"),
+                extension: "sql",
+            });
+        }
+        if self.cli_commands {
+            out.push(StaleSurfaceFamily {
+                name: "cli",
+                dir: Path::new("cli/src/commands"),
+                extension: "rs",
+            });
+        }
+        if self.lifecycle_traits {
+            out.push(StaleSurfaceFamily {
+                name: "hooks",
+                dir: Path::new("src/generated"),
+                extension: "rs",
+            });
+        }
+        out
+    }
+}
+
+/// One swept artifact family: a root directory holding
+/// `{root}/{domain}/{module}.{extension}` files.
+struct StaleSurfaceFamily<'a> {
+    name: &'a str,
+    dir: &'a Path,
+    extension: &'a str,
+}
+
+impl StaleSurfaceFamily<'_> {
+    /// The family root for this run: the hooks family relocates under the
+    /// hooks crate base when the profile provides one (`{base}/src/
+    /// generated`, the `LifecycleTraitGenerator` convention), the others
+    /// stay at the output root.
+    fn root<'b>(&self, output_dir: &'b Path, hooks_base: Option<&'b Path>) -> PathBuf {
+        match self.name {
+            "hooks" => hooks_base.unwrap_or(output_dir).join(self.dir),
+            _ => output_dir.join(self.dir),
+        }
+    }
+
+    /// The module name a file in this family carries: the file stem for
+    /// the family's extension, `None` for anything else (left untouched).
+    fn file_stem<'b>(&self, file_name: &'b str) -> Option<&'b str> {
+        file_name
+            .strip_suffix(self.extension)
+            .and_then(|stem| stem.strip_suffix('.'))
+            .filter(|stem| !stem.is_empty())
     }
 }
 
