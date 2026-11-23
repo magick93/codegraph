@@ -644,6 +644,8 @@ postgres_schema = "grants"
             is_abstract: false,
             flags: DddDesignFlags::default(),
             machine_json: None,
+            machine_ir_json: None,
+            machine_provenance_json: None,
             child_operations: Vec::new(),
             aggregate_boundary: None,
             invariants,

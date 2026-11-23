@@ -142,6 +142,8 @@ fn design(class: &str, title: Option<&str>, flags: DddDesignFlags) -> DddDesignN
         is_abstract: false,
         flags,
         machine_json: None,
+        machine_ir_json: None,
+        machine_provenance_json: None,
         child_operations: Vec::new(),
         aggregate_boundary: None,
         invariants: Vec::new(),

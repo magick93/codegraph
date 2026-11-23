@@ -93,6 +93,17 @@ impl GrafeoEngine {
         for design in &model.designs {
             let flags_json = json_string(&design.flags)?;
             let machine_json = design.machine_json.as_ref().map(json_string).transpose()?;
+            // Issue #815 (pherolang#388): the referenced machine's compiled
+            // IR + provenance ride as their own serde-serialized blobs.
+            // BOTH are absent when the design carries no referenced machine
+            // (the `aggregate_json` discipline — absence is the undecided
+            // arm), so a machine-less design persists exactly as before.
+            let machine_ir_json = design.machine_ir_json.as_ref().map(json_string).transpose()?;
+            let machine_provenance_json = design
+                .machine_provenance_json
+                .as_ref()
+                .map(json_string)
+                .transpose()?;
             // Issue #661: the design's `children <Class>` operations ride as
             // one serde-serialized blob (the `operations_json` precedent) —
             // always written, `[]` for an extend-less design, so a readback
@@ -113,7 +124,8 @@ impl GrafeoEngine {
             let gql = format!(
                 "INSERT (:DddDesign {{ application: '{}', module: '{}', class: '{}', \
                  resolved_title: {}, stereotype: '{}', is_abstract: {}, \
-                 flags_json: '{}', machine_json: {}, child_operations_json: '{}', \
+                 flags_json: '{}', machine_json: {}, machine_ir_json: {}, \
+                 machine_provenance_json: {}, child_operations_json: '{}', \
                  aggregate_json: {}, invariants_json: '{}', ordinal: {} }})",
                 escape_gql(&design.application),
                 escape_gql(&design.module),
@@ -123,6 +135,8 @@ impl GrafeoEngine {
                 design.is_abstract,
                 escape_gql(&flags_json),
                 opt_str(&machine_json),
+                opt_str(&machine_ir_json),
+                opt_str(&machine_provenance_json),
                 escape_gql(&child_operations_json),
                 opt_str(&aggregate_json),
                 escape_gql(&invariants_json),

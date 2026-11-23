@@ -478,6 +478,15 @@ pub fn ddd_model_graph_from_phero(
                         expression: inv.expression.clone(),
                     })
                     .collect(),
+                // Issue #815 (pherolang#388): a REFERENCED machine rides
+                // its compiled xstate-ir IR + provenance verbatim — the IR
+                // is opaque pass-through (already canonical upstream, keys
+                // sorted recursively) and the provenance serializes
+                // camelCase. Absent on inline machines and machine-less
+                // designs, so a machine-less artifact maps to a
+                // machine-less node (byte-identical discipline).
+                machine_ir_json: design.machine_ir.clone(),
+                machine_provenance_json: opt_json(design.machine_provenance.as_ref()),
                 ordinal,
             });
             if let Some(repo) = &design.repository {

@@ -4626,8 +4626,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
 - **Format bump discipline + doctor signal (P2) — the canonical
   "what is it now" lookup**: `GRAPH_FORMAT_VERSION` (codegraph-grafeo
   `schema_ddl.rs`) versions codegraph's graph artifact schema. **It is
-  `14` today**, and the committed artifact-kit conformance fixture is
-  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v14.md`.
+  `15` today**, and the committed artifact-kit conformance fixture is
+  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v15.md`.
   Bump it whenever the node/edge/property shape changes. The constant and
   the fixture move TOGETHER in ONE change: bump the constant, rename the
   fixture, update its canonical + `accepted` bodies, and move its
@@ -4641,11 +4641,16 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   so the bump checklist must list all five (a missed `include_str!` is a
   compile error; a missed doc comment goes stale silently). The
   `format_version_too_new` value is also a LITERAL in the fixture
-  (`formatVersion 15` while the constant is 14), NOT derived from
-  `GRAPH_FORMAT_VERSION`; so is the IN-CRATE kit KAT literal
-  (`crates/codegraph/src/artifact/kit.rs` `tests::kit_case_rejects_canonical_drift`,
-  a `#cfg(test)` `formatVersion` string the five fixture-name sites do not
-  cover — the #665 bump shipped it stale and CI's `test` job caught it).
+  (`formatVersion 16` while the constant is 15), NOT derived from
+  `GRAPH_FORMAT_VERSION`; so are the IN-CRATE kit KAT literals
+  (`crates/codegraph/src/artifact/kit.rs`
+  `tests::kit_case_rejects_canonical_drift` — a `#cfg(test)`
+  `formatVersion` string that must equal the SUPPORTED constant there —
+  and `crates/codegraph/tests/artifact_kit_tests.rs`
+  `kit_runner_rejects_a_failing_case`, whose literal must stay
+  too-NEW (supported + 1) or the diagnostic-mismatch case stops firing —
+  the five fixture-name sites do not cover either — the #665 bump shipped
+  one stale and CI's `test` job caught it; the #815 bump moved both).
   Only `crates/codegraph/tests/artifact_tests.rs`
   derives its too-new value (`FORMAT_VERSION + 1`), so a constant bump that
   forgets the fixture turns that rejection case into an ACCEPTED document
@@ -4659,7 +4664,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   DD4/DD5 authored aggregate boundaries + design invariants (#666), 12→13
   the DD7 declared error vocabulary (`errors_json` on the application +
   module nodes, #665), 13→14 the modeled DTO boundary family (`DddDtoShape`,
-  #667) —
+  #667), 14→15 the machine kernel mirror (`machine_ir_json` +
+  `machine_provenance_json` on the design, #815) —
   the 2→3
   and 5→6 steps were never written up, so the lineage is only partially
   recorded). `GRAFEO_STORAGE_GENERATION`
@@ -4668,7 +4674,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   format. Both terms ride the inputs hash, so a bump forces a cold
   re-ingest instead of migrating `.graph-cache/` in place. `codegraph
   doctor` prints the cache state explicitly: `PASS graph-cache — warm
-  (inputs hash …, N nodes; graph format v14 / storage gen 2)` when the
+  (inputs hash …, N nodes; graph format v15 / storage gen 2)` when the
   marker matches the current inputs (the numbers are the live constants,
   not prose), or `INFO graph-cache — cold: inputs changed …` / `absent …`
   when the next run will re-ingest.

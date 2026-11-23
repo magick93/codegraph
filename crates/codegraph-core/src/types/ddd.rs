@@ -202,6 +202,28 @@ pub struct DddDesignNode {
     /// GRAPH_FORMAT_VERSION story as `aggregate_boundary`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invariants: Vec<DddInvariant>,
+    /// The compiled machine IR of a REFERENCED machine (issue #815 /
+    /// pherolang#388): the canonical `xstate_ir::Machine` JSON the authored
+    /// TypeScript/XState file parsed to, exactly as the pherolang artifact
+    /// embeds it (`machineIr` — keys sorted recursively upstream, so the
+    /// bytes are already deterministic). Absent on inline machines (the
+    /// DSL mirror in [`Self::machine_json`] covers those) and machine-less
+    /// designs. Opaque to codegraph-core (no xstate deps here); consumers
+    /// that need the structured form deserialize into
+    /// `xstate_core::Machine` (which re-exports `xstate_ir`).
+    /// Serde-defaulted for read-compat; a warm graph cache persisted
+    /// pre-#815 serves none — hence the GRAPH_FORMAT_VERSION 14 → 15
+    /// cold-re-ingest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_ir_json: Option<serde_json::Value>,
+    /// The provenance of [`Self::machine_ir_json`] (issue #815 /
+    /// pherolang#388): `{ path, machineId, contentSha256 }` (camelCase,
+    /// the phero-ir serde spelling) — the authored file path as resolved
+    /// from the declaring `.ddd` file, the machine id, and the SHA-256
+    /// over the canonical IR JSON. `None` when the design carries no
+    /// referenced machine. Same GRAPH_FORMAT_VERSION story as the IR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_provenance_json: Option<serde_json::Value>,
     /// Declaration order within the module.
     pub ordinal: usize,
 }
