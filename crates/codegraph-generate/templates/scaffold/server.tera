@@ -409,6 +409,11 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         workflow_service: {
             let svc = std::sync::Arc::new(
                 codegraph_workflow::engine::SeaOrmWorkflowService::new(db.clone())
+                {%- if has_machine_guards %}
+                    .with_guards(std::sync::Arc::new(
+                        {{ project.domain_types_crate }}::machines::DefaultMachineGuards,
+                    ))
+                {%- endif %}
             );
             svc
         },

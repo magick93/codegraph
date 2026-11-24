@@ -24,3 +24,12 @@ thiserror = "2"
 # domain-types crate links on both targets.
 xstate-core = { git = "https://github.com/yestechgroup/restingstate.git", rev = "da0c804d3c30a0bcc938562e39a4b7d7505c663b", default-features = false }
 {%- endif %}
+{%- if has_machine_guards %}
+# The guard seam (issue #816): the generated `MachineGuardImpls` dispatch
+# implements the workflow crate's `MachineGuards` trait, so the app can
+# register its guard implementations with the workflow service
+# (`with_guards`). Wasm32-safe (the workflow crate's kernel decision path
+# is sea_orm-free).
+{% if project.codegraph_workflow_base %}codegraph-workflow = { path = "{{ project.codegraph_workflow_base }}" }
+{% elif project.codegraph_rev %}codegraph-workflow = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }{% endif %}
+{%- endif %}

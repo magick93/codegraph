@@ -314,7 +314,10 @@ mod worker_impl {
             let client = crate::workflow_client::CornucopiaWorkflowClient::new(
                 state.client_source.clone(),
             );
-            let workflow_service = codegraph_workflow::GenericWorkflowService::new(client.clone());
+            let workflow_service = codegraph_workflow::GenericWorkflowService::new(client.clone(){%- if has_machine_guards %}
+                .with_guards(std::sync::Arc::new(
+                    {{ project.domain_types_crate }}::machines::DefaultMachineGuards,
+                )){%- endif %});
             let mut tx = client
                 .begin()
                 .await

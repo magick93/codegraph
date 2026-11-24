@@ -47,6 +47,7 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::DddDesignNode;
 use serde_json::Value;
+use xstate_core::xstate_ir::{ContextSchema, Machine, StateNode, StateType, Transition};
 
 use crate::ProjectConfig;
 use crate::error::{Error, Result};
@@ -61,6 +62,311 @@ use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 /// `serde_json` serialization.
 pub fn canonical_ir_json(value: &Value) -> String {
     phero_ir::canonical_json(value)
+}
+
+/// Whether ANY machine in the graph names a guard — the scaffold's
+/// `has_machine_guards` flag (the AppState `with_guards` wiring).
+pub async fn graph_has_machine_guards(db: &dyn GraphQuerier) -> bool {
+    db.get_ddd_models()
+        .await
+        .map(|models| {
+            models.iter().any(|m| {
+                m.designs.iter().any(|d| {
+                    d.machine_ir_json
+                        .as_ref()
+                        .is_some_and(|ir| !machine_guard_names(ir).is_empty())
+                })
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Guard names a machine IR references: every transition's authored guard
+/// (`{ name, params }`) plus every `setup.guards` declaration. Sorted and
+/// deduped — the seam's stable vocabulary (issue #816).
+pub fn machine_guard_names(ir: &Value) -> Vec<String> {
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    let visit_states = |states: &Vec<Value>, names: &mut BTreeSet<String>| {
+        for state in states {
+            if let Some(transitions) = state.get("transitions").and_then(Value::as_array) {
+                for t in transitions {
+                    if let Some(name) = t
+                        .get("guard")
+                        .and_then(|g| g.get("name"))
+                        .and_then(Value::as_str)
+                    {
+                        names.insert(name.to_string());
+                    }
+                }
+            }
+            if let Some(children) = state.get("children").and_then(Value::as_array) {
+                for child in children {
+                    if let Some(transitions) = child.get("transitions").and_then(Value::as_array) {
+                        for t in transitions {
+                            if let Some(name) = t
+                                .get("guard")
+                                .and_then(|g| g.get("name"))
+                                .and_then(Value::as_str)
+                            {
+                                names.insert(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    if let Some(states) = ir.get("states").and_then(Value::as_array) {
+        visit_states(states, &mut names);
+    }
+    if let Some(setup_guards) = ir
+        .get("setup")
+        .and_then(|s| s.get("guards"))
+        .and_then(Value::as_object)
+    {
+        for name in setup_guards.keys() {
+            names.insert(name.clone());
+        }
+    }
+    names.into_iter().collect()
+}
+
+/// Lower a `domains.toml` `[domains.x.entities.Y.workflow]` config into the
+/// canonical xstate-ir Machine (issue #816, Decision 2 — Plane B seeding).
+/// PURE and deterministic: states are the config's declared union (declared
+/// `states` + `terminal_states` + every transition endpoint), sorted; an
+/// empty `transitions` map lowers the documented default ("any non-terminal
+/// state can transition to any other state"); terminal states lower as
+/// final nodes; the machine's own data-guard/dual-status layers attach as
+/// NAMED kernel guards per target state (`data_guard:{to}`, `dual_status:{to}`,
+/// and `guards:{to}` when a target carries both) whose bodies the workflow
+/// engine registers. The event of a lowered edge is its target state name —
+/// the engine's API is target-addressed, and the kernel finds the edge by
+/// (from, to).
+pub fn workflow_config_to_machine(
+    workflow: &codegraph_config::WorkflowConfig,
+    machine_id: &str,
+) -> Machine {
+    // State universe: declared states + terminals + every endpoint, sorted.
+    let mut states: BTreeSet<String> = BTreeSet::new();
+    states.extend(workflow.states.iter().cloned());
+    states.extend(workflow.terminal_states.iter().cloned());
+    for (from, tos) in &workflow.transitions {
+        states.insert(from.clone());
+        states.extend(tos.iter().cloned());
+    }
+    states.insert(workflow.initial_state.clone());
+
+    let terminal: BTreeSet<&str> = workflow
+        .terminal_states
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+
+    // The (from → [to]) edge map: the config's own, or the documented
+    // complete-graph default when the map is empty.
+    let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    if workflow.transitions.is_empty() {
+        for from in &states {
+            if terminal.contains(from.as_str()) {
+                continue;
+            }
+            let tos: Vec<String> = states.iter().filter(|to| *to != from).cloned().collect();
+            edges.insert(from.clone(), tos);
+        }
+    } else {
+        for (from, tos) in &workflow.transitions {
+            let mut sorted: Vec<String> = tos.clone();
+            sorted.sort();
+            edges.insert(from.clone(), sorted);
+        }
+    }
+
+    // Deterministic guard naming per target state.
+    let mut data_targets: BTreeSet<&str> = workflow
+        .data_guards
+        .iter()
+        .map(|g| g.transition_to.as_str())
+        .collect();
+    let dual_targets: BTreeSet<&str> = workflow
+        .dual_status_guards
+        .keys()
+        .map(|s| s.as_str())
+        .collect();
+    data_targets.extend(dual_targets.iter().copied());
+
+    let guard_name_for = |target: &str| -> Option<String> {
+        let has_data = workflow
+            .data_guards
+            .iter()
+            .any(|g| g.transition_to == target);
+        let has_dual = workflow.dual_status_guards.contains_key(target);
+        match (has_data, has_dual) {
+            (true, true) => Some(format!("guards:{target}")),
+            (true, false) => Some(format!("data_guard:{target}")),
+            (false, true) => Some(format!("dual_status:{target}")),
+            (false, false) => None,
+        }
+    };
+
+    let mut state_nodes: Vec<StateNode> = Vec::new();
+    for name in &states {
+        let transitions: Vec<Transition> = edges
+            .get(name)
+            .map(|tos| {
+                tos.iter()
+                    .map(|to| Transition {
+                        event: to.clone(),
+                        target: Some(to.clone()),
+                        targets: Vec::new(),
+                        guard: guard_name_for(to).map(|guard_name| xstate_core::xstate_ir::Guard {
+                            name: guard_name,
+                            params: None,
+                        }),
+                        actions: Vec::new(),
+                        description: None,
+                        delay_ms: None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        state_nodes.push(StateNode {
+            name: name.clone(),
+            description: None,
+            initial: None,
+            entry: Vec::new(),
+            exit: Vec::new(),
+            transitions,
+            children: Vec::new(),
+            node_type: if terminal.contains(name.as_str()) {
+                StateType::Final
+            } else {
+                StateType::Atomic
+            },
+            tags: Vec::new(),
+            invoke: None,
+            on_done: Vec::new(),
+            output: None,
+        });
+    }
+
+    Machine {
+        id: machine_id.to_string(),
+        initial: workflow.initial_state.clone(),
+        context: ContextSchema { fields: Vec::new() },
+        states: state_nodes,
+        setup: None,
+    }
+}
+
+/// The two-representation cross-check (issue #816, Decision 2): when BOTH
+/// an artifact machine and a `WorkflowConfig` bind the same entity, their
+/// state/transition/initial surfaces must AGREE. Disagreement is a hard
+/// generation error naming BOTH sources — the two-representation drift
+/// class dies here. Comparison is by (from, to) edges and state names,
+/// never by event spelling (authored triggers differ from the lowered
+/// target-name events by design) or guards (the config's engine-level
+/// layers attach only to lowered edges).
+pub fn compare_machine_surfaces(
+    artifact_ir: &Value,
+    lowered_ir: &Value,
+    artifact_source: &str,
+    config_source: &str,
+) -> std::result::Result<(), String> {
+    let parse = |value: &Value, source: &str| -> std::result::Result<Machine, String> {
+        serde_json::from_value::<Machine>(value.clone()).map_err(|e| {
+            format!("machine from {source} does not parse as an xstate-ir Machine: {e}")
+        })
+    };
+    let artifact = parse(artifact_ir, artifact_source)?;
+    let lowered = parse(lowered_ir, config_source)?;
+
+    fn state_set(m: &Machine) -> BTreeSet<&str> {
+        m.states.iter().map(|s| s.name.as_str()).collect()
+    }
+    fn edge_set(m: &Machine) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for state in &m.states {
+            for t in &state.transitions {
+                if let Some(to) = &t.target {
+                    out.insert(format!("{}->{}", state.name, to));
+                }
+            }
+        }
+        out
+    }
+
+    let mut disagreements: Vec<String> = Vec::new();
+    let artifact_states = state_set(&artifact);
+    let lowered_states = state_set(&lowered);
+    let artifact_only: Vec<&str> = artifact_states
+        .difference(&lowered_states)
+        .copied()
+        .collect();
+    let lowered_only: Vec<&str> = lowered_states
+        .difference(&artifact_states)
+        .copied()
+        .collect();
+    if !artifact_only.is_empty() {
+        disagreements.push(format!(
+            "states only the artifact machine declares: [{}]",
+            artifact_only.join(", ")
+        ));
+    }
+    if !lowered_only.is_empty() {
+        disagreements.push(format!(
+            "states only the config declares: [{}]",
+            lowered_only.join(", ")
+        ));
+    }
+
+    let artifact_edges = edge_set(&artifact);
+    let lowered_edges = edge_set(&lowered);
+    let artifact_only_edges: Vec<&String> = artifact_edges.difference(&lowered_edges).collect();
+    let lowered_only_edges: Vec<&String> = lowered_edges.difference(&artifact_edges).collect();
+    if !artifact_only_edges.is_empty() {
+        disagreements.push(format!(
+            "transitions only the artifact machine declares: [{}]",
+            artifact_only_edges
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !lowered_only_edges.is_empty() {
+        disagreements.push(format!(
+            "transitions only the config declares: [{}]",
+            lowered_only_edges
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    if artifact.initial != lowered.initial {
+        disagreements.push(format!(
+            "initial state: artifact says `{}`, config says `{}`",
+            artifact.initial, lowered.initial
+        ));
+    }
+
+    if disagreements.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the artifact machine and the WorkflowConfig disagree for the same entity — the \
+             two representations must agree (fix the model or the config; the artifact machine \
+             is authoritative for the state surface):\n  artifact: {artifact_source}\n  config: \
+             {config_source}\n{}",
+            disagreements
+                .iter()
+                .map(|d| format!("  - {d}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))
+    }
 }
 
 /// One machine to emit, collected from the graph.
@@ -179,6 +485,7 @@ pub async fn machine_kernel_refusals(
     let mut refusals = Vec::new();
     let mut seen_ids: HashSet<String> = HashSet::new();
     let mut const_names: BTreeMap<String, String> = BTreeMap::new();
+    let mut guard_methods: BTreeMap<String, String> = BTreeMap::new();
 
     for model in &models {
         for design in &model.designs {
@@ -259,6 +566,23 @@ pub async fn machine_kernel_refusals(
                 continue;
             }
             const_names.insert(const_name, machine.id.clone());
+
+            // Guard-method-name collisions: two guard names rendering the
+            // same `guard_{snake}` method would make the seam trait
+            // unimplementable.
+            for guard in machine_guard_names(ir) {
+                let method = guard_method_name(&guard);
+                if let Some(other) = guard_methods.get(&method) {
+                    if other != &guard {
+                        refusals.push(format!(
+                            "{where_}: guard `{guard}` and guard `{other}` both render the seam \
+                             method `{method}` — rename one of the guards",
+                        ));
+                    }
+                } else {
+                    guard_methods.insert(method, guard);
+                }
+            }
 
             // A machine may not live in a domain named after the kernel
             // home — the domain's entity modules and the kernel registry
@@ -404,11 +728,24 @@ impl GlobalGenerator for MachineKernelGenerator {
         if entries.is_empty() {
             // Presence gating: no machine IR ⇒ nothing emitted. A stale
             // kernel from a previous run is swept — but ONLY kernel-shaped
-            // files (mod.rs + *.ir.json), never a real domain directory
-            // that happens to be named `machines`.
-            sweep_stale_kernel(&machines_dir, &BTreeSet::new());
+            // files (mod.rs + guards.rs + *.ir.json), never a real domain
+            // directory that happens to be named `machines`.
+            sweep_stale_kernel(&machines_dir, &BTreeSet::new(), false);
             return Ok(Vec::new());
         }
+
+        // The guard seam's vocabulary: every guard name the machines
+        // reference, sorted (issue #816).
+        let mut guard_names: Vec<String> = entries
+            .iter()
+            .flat_map(|e| {
+                let ir: Value = serde_json::from_str(&e.ir_json).unwrap_or(Value::Null);
+                machine_guard_names(&ir)
+            })
+            .collect();
+        guard_names.sort();
+        guard_names.dedup();
+        let has_guards = !guard_names.is_empty();
 
         let mut keep: BTreeSet<String> = BTreeSet::new();
         let mut files = Vec::new();
@@ -422,20 +759,38 @@ impl GlobalGenerator for MachineKernelGenerator {
         }
         files.push(GeneratedFile {
             path: machines_dir.join("mod.rs"),
-            content: registry_module(&entries),
+            content: registry_module(&entries, &guard_names),
         });
         keep.insert("machines/mod.rs".to_string());
-        sweep_stale_kernel(&machines_dir, &keep);
+
+        // The write-once guard impls (the ManualImpls precedent): emitted
+        // ONLY when absent — hand edits survive regeneration; the trait
+        // re-emits every run, so a renamed/removed guard fails the hand
+        // file's compile (E0407/E0046). When NO machine carries guards any
+        // more, the stale hand file is swept (it would not compile against
+        // the vanished trait).
+        let guards_path = machines_dir.join("guards.rs");
+        if has_guards {
+            if !guards_path.exists() {
+                files.push(GeneratedFile {
+                    path: guards_path.clone(),
+                    content: guard_impls_module(&guard_names),
+                });
+            }
+            keep.insert("machines/guards.rs".to_string());
+        }
+        sweep_stale_kernel(&machines_dir, &keep, has_guards);
 
         Ok(files)
     }
 }
 
 /// Sweeps kernel-shaped files from a previous run that the current model
-/// no longer carries: `mod.rs` and `**/*.ir.json` under the kernel dir.
-/// Anything else (a real domain directory's entity modules) is never
-/// touched.
-fn sweep_stale_kernel(machines_dir: &Path, keep: &BTreeSet<String>) {
+/// no longer carries: `mod.rs`, `guards.rs` (only when the current model
+/// carries no guards — a stale hand impl would not compile against the
+/// vanished trait), and `**/*.ir.json` under the kernel dir. Anything else
+/// (a real domain directory's entity modules) is never touched.
+fn sweep_stale_kernel(machines_dir: &Path, keep: &BTreeSet<String>, has_guards: bool) {
     let Ok(entries) = fs::read_dir(machines_dir) else {
         return;
     };
@@ -443,7 +798,9 @@ fn sweep_stale_kernel(machines_dir: &Path, keep: &BTreeSet<String>) {
         let path = entry.path();
         if path.is_file() {
             let rel = format!("machines/{}", entry.file_name().to_string_lossy());
-            if rel == "machines/mod.rs" && !keep.contains(&rel) {
+            let kernel_shaped =
+                rel == "machines/mod.rs" || (rel == "machines/guards.rs" && !has_guards);
+            if kernel_shaped && !keep.contains(&rel) {
                 let _ = fs::remove_file(&path);
             }
             continue;
@@ -489,7 +846,13 @@ fn sweep_stale_kernel(machines_dir: &Path, keep: &BTreeSet<String>) {
 /// and parse-once accessors over a sorted `BTreeMap`. Static data only —
 /// no DB handle, no AppState, no async — so it compiles on wasm32 and
 /// both topologies reach it through the shared domain-types crate.
-fn registry_module(entries: &[MachineEntry]) -> String {
+///
+/// When the machines carry named guards, the module additionally emits the
+/// `MachineGuardImpls` trait (one method per guard — the ManualImpls
+/// precedent; the write-once `guards.rs` implements it) and the fail-closed
+/// dispatch implementing the workflow crate's `MachineGuards` seam. A
+/// guard-less model renders BYTE-IDENTICAL to the Lane-1 module.
+fn registry_module(entries: &[MachineEntry], guard_names: &[String]) -> String {
     let mut out = String::new();
     out.push_str(
         "//! Machine kernel (issue #815): the compiled `.ddd` artifact's\n\
@@ -617,7 +980,139 @@ fn registry_module(entries: &[MachineEntry]) -> String {
          \x20   machine_json(machine_id).map(xstate_core::validate_machine_json)\n\
          }\n",
     );
+
+    // --- The guard seam (issue #816, the ManualImpls precedent) ---
+    if !guard_names.is_empty() {
+        out.push_str("\npub mod guards;\n\n/// The application's guard implementations (write-once `guards.rs`).\npub use guards::DefaultMachineGuards;\n");
+        out.push_str(
+            "\n/// Why a guard implementation answered the way it did.\n\
+             #[derive(Debug, Clone, PartialEq, Eq)]\n\
+             pub enum GuardImplError {\n\
+             \x20   /// The guard is still a stub — the wire 501 names the guard;\n\
+             \x20   /// never silently allowed.\n\
+             \x20   NotImplemented,\n\
+             \x20   /// The guard's implementation itself failed.\n\
+             \x20   Failed(String),\n\
+             }\n\n\
+             /// The compile-time guard seam: ONE method per named guard the\n\
+             /// application's machines reference. `machines/guards.rs`\n\
+             /// (WRITE-ONCE — the generator emits it only when absent; hand\n\
+             /// edits survive regeneration) implements this trait; this\n\
+             /// module re-emits the trait every run, so a renamed or removed\n\
+             /// guard fails the hand file's compile instead of drifting.\n\
+             pub trait MachineGuardImpls: Send + Sync {\n",
+        );
+        for guard in guard_names {
+            out.push_str(&format!(
+                "    /// Guard `{guard}` — authored in the machine definition; host-side\n\
+                 /// data arrives through `params` (the guard's `params` object).\n\
+                 fn {method}(\n\
+                 \x20   &self,\n\
+                 \x20   context: &serde_json::Value,\n\
+                 \x20   event: &serde_json::Value,\n\
+                 \x20   params: &serde_json::Value,\n\
+                 ) -> Result<bool, GuardImplError>;\n",
+                method = guard_method_name(guard),
+            ));
+        }
+        out.push_str("}\n\n");
+        // The fail-closed dispatch to the workflow crate's seam.
+        out.push_str(
+            "/// The kernel-facing adapter: routes a guard NAME to its trait\n\
+             /// method. A name no machine declared is NotImplemented — the\n\
+             /// fail-closed 501, never silently allowed (issue #816).\n\
+             impl codegraph_workflow::MachineGuards for DefaultMachineGuards {\n\
+             \x20   fn evaluate(\n\
+             \x20       &self,\n\
+             \x20       name: &str,\n\
+             \x20       context: &serde_json::Value,\n\
+             \x20       event: &serde_json::Value,\n\
+             \x20       params: &serde_json::Value,\n\
+             \x20   ) -> codegraph_workflow::GuardDecision {\n\
+             \x20       let mapped = |result: Result<bool, GuardImplError>| match result {\n\
+             \x20           Ok(true) => codegraph_workflow::GuardDecision::Allow,\n\
+             \x20           Ok(false) => {\n\
+             \x20               codegraph_workflow::GuardDecision::Deny(\n\
+             \x20                   \"denied by the guard implementation\".to_string(),\n\
+             \x20               )\n\
+             \x20           }\n\
+             \x20           Err(GuardImplError::NotImplemented) => {\n\
+             \x20               codegraph_workflow::GuardDecision::NotImplemented\n\
+             \x20           }\n\
+             \x20           Err(GuardImplError::Failed(message)) => {\n\
+             \x20               codegraph_workflow::GuardDecision::Failed(message)\n\
+             \x20           }\n\
+             \x20       };\n\
+             \x20       match name {\n",
+        );
+        for guard in guard_names {
+            out.push_str(&format!(
+                "            {name_literal} => mapped(self.{method}(context, event, params)),\n",
+                name_literal = rust_str_literal(guard),
+                method = guard_method_name(guard),
+            ));
+        }
+        out.push_str(
+            "            _ => codegraph_workflow::GuardDecision::NotImplemented,\n\
+             \x20       }\n\
+             \x20   }\n\
+             }\n",
+        );
+    }
     out
+}
+
+/// The write-once guard impls module (`machines/guards.rs`): one stub per
+/// named guard, failing closed with `GuardImplError::NotImplemented` —
+/// the wire 501 names the guard until the app fills it in. Emitted only
+/// when absent; the trait re-emits so signature drift fails this file.
+fn guard_impls_module(guard_names: &[String]) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "//! Machine guard implementations (issue #816 — write-once).\n\
+         //!\n\
+         //! The generator emits this file ONLY when absent: fill in the stubs\n\
+         //! below and your edits survive every regeneration. The trait lives in\n\
+         //! `machines/mod.rs` (regenerated each run), so renaming or removing a\n\
+         //! guard in the model fails THIS file's compile — update the impl to\n\
+         //! match. Stubs answer `NotImplemented`, which the kernel maps to a\n\
+         //! named 501 (never a silent allow).\n\n\
+         use serde_json::Value;\n\n\
+         use super::{GuardImplError, MachineGuardImpls};\n\n\
+         /// The application's guard implementations, registered with the\n\
+         /// workflow service (`with_guards`).\n\
+         pub struct DefaultMachineGuards;\n\n\
+         impl MachineGuardImpls for DefaultMachineGuards {\n",
+    );
+    for guard in guard_names {
+        out.push_str(&format!(
+            "    fn {method}(\n\
+             \x20       &self,\n\
+             \x20       _context: &Value,\n\
+             \x20       _event: &Value,\n\
+             \x20       _params: &Value,\n\
+             \x20   ) -> Result<bool, GuardImplError> {{\n\
+             \x20       Err(GuardImplError::NotImplemented)\n\
+             \x20   }}\n\n",
+            method = guard_method_name(guard),
+        ));
+    }
+    out.push_str("}\n");
+    out
+}
+
+/// The Rust method name for a guard: `guard_{snake}`, forced into a valid
+/// identifier (a leading digit gains the `guard_` prefix twice is fine —
+/// the snake form already carries it).
+fn guard_method_name(guard: &str) -> String {
+    let mut name = codegraph_naming::to_snake_case(guard);
+    if name.is_empty() {
+        name = "unnamed".to_string();
+    }
+    if name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        name = format!("guard_{name}");
+    }
+    format!("guard_{name}")
 }
 
 /// A string as a Rust literal (the `ts_string_literal` discipline —

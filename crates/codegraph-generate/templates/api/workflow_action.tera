@@ -154,6 +154,15 @@ pub async fn transition(
                 AppError::conflict(e.to_string()).with_correlation_id(correlation_id)
             }
             WorkflowError::NotFound => AppError::not_found(e.to_string()).with_correlation_id(correlation_id),
+            // The machine names a guard the app has not implemented yet —
+            // the fail-closed 501 names the guard (issue #816).
+            WorkflowError::UnimplementedGuard(_) => AppError {
+                status: axum::http::StatusCode::NOT_IMPLEMENTED,
+                code: "NOT_IMPLEMENTED",
+                message: e.to_string(),
+                details: None,
+                correlation_id: Some(correlation_id),
+            },
             _ => AppError::internal(e.to_string()).with_correlation_id(correlation_id),
         }
     })?;{% if has_extension_points %}

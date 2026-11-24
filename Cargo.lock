@@ -1088,6 +1088,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "xstate-core",
 ]
 
 [[package]]

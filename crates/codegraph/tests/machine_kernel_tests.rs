@@ -758,7 +758,6 @@ async fn an_invalid_machine_fails_the_emitter_before_any_tree() {
 }
 
 // ── band 4: the emitted module compiles (the #551 pin) ────────────────
-
 /// Scratch crate over the emitted machines module: xstate-core (the
 /// generated domain-types dep set — tokio-free, `default-features =
 /// false`) + serde_json. Native only here; the wasm32 story rides the
@@ -806,6 +805,496 @@ async fn the_emitted_machines_module_compiles_in_a_scratch_crate() {
     assert!(
         out.status.success(),
         "the emitted machines module must compile:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
+// ── band 5: the WorkflowConfig → IR lowering (issue #816, Decision 2) ──
+
+/// A WorkflowConfig fixture: a four-state leave machine with a data guard,
+/// a dual-status guard, and an explicit transition map.
+fn leave_workflow_config() -> codegraph_config::WorkflowConfig {
+    let toml = r#"
+status_field = "status"
+initial_state = "Draft"
+states = ["Draft", "Submitted", "Approved", "Rejected"]
+terminal_states = ["Approved", "Rejected"]
+
+[transitions]
+Draft = ["Submitted", "Rejected"]
+Submitted = ["Approved", "Rejected"]
+
+[[data_guards]]
+transition_to = "Submitted"
+rule = "days > 0"
+message = "leave days must be positive"
+
+[dual_status_guards]
+Submitted = "Reviewed"
+"#;
+    toml::from_str(toml).expect("the workflow fixture parses")
+}
+
+#[test]
+fn the_workflow_config_lowers_into_a_structurally_valid_machine() {
+    let config = leave_workflow_config();
+    let machine = machines::workflow_config_to_machine(&config, "payroll.leave_request");
+
+    assert_eq!(machine.id, "payroll.leave_request");
+    assert_eq!(machine.initial, "Draft");
+    let names: Vec<&str> = machine.states.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["Approved", "Draft", "Rejected", "Submitted"],
+        "states are the config's declared union, sorted"
+    );
+    // Terminal states lower as final nodes.
+    for name in ["Approved", "Rejected"] {
+        let state = machine.states.iter().find(|s| s.name == name).unwrap();
+        assert!(
+            matches!(state.node_type, xstate_core::xstate_ir::StateType::Final),
+            "{name} is terminal"
+        );
+    }
+    // The lowered machine passes the fail-closed structural boundary.
+    let json = serde_json::to_value(&machine).unwrap();
+    xstate_core::validate_machine_json(&machines::canonical_ir_json(&json))
+        .expect("a lowered config machine is structurally valid");
+
+    // Draft → Submitted carries the composed engine guard (data + dual).
+    let draft = machine.states.iter().find(|s| s.name == "Draft").unwrap();
+    let submitted = draft
+        .transitions
+        .iter()
+        .find(|t| t.target.as_deref() == Some("Submitted"))
+        .expect("Draft → Submitted exists");
+    assert_eq!(
+        submitted.guard.as_ref().map(|g| g.name.as_str()),
+        Some("guards:Submitted"),
+        "a target with both guard kinds composes one name"
+    );
+
+    // Draft → Rejected is dual-free and data-free: unguarded.
+    let rejected = draft
+        .transitions
+        .iter()
+        .find(|t| t.target.as_deref() == Some("Rejected"))
+        .unwrap();
+    assert!(rejected.guard.is_none());
+}
+
+#[test]
+fn the_lowering_is_byte_deterministic() {
+    let config = leave_workflow_config();
+    let a = machines::workflow_config_to_machine(&config, "payroll.leave_request");
+    let b = machines::workflow_config_to_machine(&config, "payroll.leave_request");
+    let ja = serde_json::to_value(&a).unwrap();
+    let jb = serde_json::to_value(&b).unwrap();
+    assert_eq!(
+        machines::canonical_ir_json(&ja),
+        machines::canonical_ir_json(&jb),
+        "the same config lowers to the same canonical machine JSON"
+    );
+}
+
+#[test]
+fn an_empty_transition_map_lowers_the_documented_default() {
+    // "When empty, any non-terminal state can transition to any other
+    // state" — the lowered machine carries the complete edges.
+    let toml = r#"
+status_field = "status"
+initial_state = "New"
+states = ["New", "Open", "Done"]
+terminal_states = ["Done"]
+"#;
+    let config: codegraph_config::WorkflowConfig = toml::from_str(toml).unwrap();
+    let machine = machines::workflow_config_to_machine(&config, "t.thing");
+    let new = machine.states.iter().find(|s| s.name == "New").unwrap();
+    let mut targets: Vec<&str> = new
+        .transitions
+        .iter()
+        .filter_map(|t| t.target.as_deref())
+        .collect();
+    targets.sort_unstable();
+    assert_eq!(
+        targets,
+        vec!["Done", "Open"],
+        "New reaches every other state"
+    );
+    // Done is final: no outbound edges.
+    let done = machine.states.iter().find(|s| s.name == "Done").unwrap();
+    assert!(done.transitions.is_empty());
+}
+
+// ── band 6: the two-representation cross-check ─────────────────────────
+
+fn leave_artifact_ir() -> serde_json::Value {
+    serde_json::json!({
+        "context": {"fields": []},
+        "id": "leave",
+        "initial": "Draft",
+        "setup": null,
+        "states": [
+            {
+                "children": [], "description": null, "entry": [], "exit": [],
+                "initial": null, "invoke": null, "name": "Draft",
+                "on_done": [], "output": null, "tags": [],
+                "transitions": [{
+                    "actions": [], "description": null, "event": "SUBMIT",
+                    "guard": null, "target": "Submitted", "targets": []
+                }, {
+                    "actions": [], "description": null, "event": "REJECT",
+                    "guard": null, "target": "Rejected", "targets": []
+                }],
+                "type": "atomic"
+            },
+            {
+                "children": [], "description": null, "entry": [], "exit": [],
+                "initial": null, "invoke": null, "name": "Submitted",
+                "on_done": [], "output": null, "tags": [],
+                "transitions": [{
+                    "actions": [], "description": null, "event": "APPROVE",
+                    "guard": null, "target": "Approved", "targets": []
+                }, {
+                    "actions": [], "description": null, "event": "REJECT",
+                    "guard": null, "target": "Rejected", "targets": []
+                }],
+                "type": "atomic"
+            },
+            {
+                "children": [], "description": null, "entry": [], "exit": [],
+                "initial": null, "invoke": null, "name": "Approved",
+                "on_done": [], "output": null, "tags": [],
+                "transitions": [],
+                "type": "final"
+            },
+            {
+                "children": [], "description": null, "entry": [], "exit": [],
+                "initial": null, "invoke": null, "name": "Rejected",
+                "on_done": [], "output": null, "tags": [],
+                "transitions": [],
+                "type": "final"
+            }
+        ]
+    })
+}
+
+#[test]
+fn the_cross_check_refuses_disagreement_naming_both_sources() {
+    let config = leave_workflow_config();
+    // The artifact machine lacks Draft → Rejected (the config declares it):
+    // a two-representation drift.
+    let mut artifact = leave_artifact_ir();
+    artifact["states"][0]["transitions"] = serde_json::json!([{
+        "actions": [], "description": null, "event": "SUBMIT",
+        "guard": null, "target": "Submitted", "targets": []
+    }]);
+    let lowered = machines::workflow_config_to_machine(&config, "payroll.leave_request");
+    let err = machines::compare_machine_surfaces(
+        &artifact,
+        &serde_json::to_value(&lowered).unwrap(),
+        "machines/leave.machine.ts",
+        "domains.toml [domains.payroll.entities.LeaveRequest.workflow]",
+    )
+    .expect_err("a state-surface disagreement must refuse");
+    let text = err.to_string();
+    assert!(
+        text.contains("machines/leave.machine.ts"),
+        "the artifact source is named: {text}"
+    );
+    assert!(
+        text.contains("domains.toml"),
+        "the config source is named: {text}"
+    );
+    assert!(
+        text.contains("Rejected"),
+        "the disagreeing state is named: {text}"
+    );
+}
+
+#[test]
+fn the_cross_check_accepts_agreement() {
+    let config = leave_workflow_config();
+    let artifact = leave_artifact_ir();
+    let lowered = machines::workflow_config_to_machine(&config, "payroll.leave_request");
+    machines::compare_machine_surfaces(
+        &artifact,
+        &serde_json::to_value(&lowered).unwrap(),
+        "machines/leave.machine.ts",
+        "domains.toml [domains.payroll]",
+    )
+    .expect("identical state + transition surfaces agree");
+}
+
+// ── band 7: the machine seed migration (0007) ──────────────────────────
+
+async fn seed_into(dir: &Path) -> Vec<PathBuf> {
+    let mock = MockEngine::builder().build();
+    mock.ingest_ddd_model(&model_graph(Vec::new()))
+        .await
+        .unwrap();
+    let mut config =
+        codegraph_config::config::parse_domain_config(Path::new("tests/fixtures/domains.toml"))
+            .unwrap();
+    // Attach a workflow to the fixture domain's entity config. EntityConfig
+    // is Deserialize-all-optional, so an empty table + the workflow parses.
+    let mut entity_cfg: codegraph_config::EntityConfig =
+        toml::from_str("").expect("an empty entity config parses");
+    let mut wf = leave_workflow_config();
+    wf.generate_action_endpoints = false;
+    entity_cfg.workflow = Some(wf);
+    if let Some(entry) = config.domains.get_mut("common") {
+        entry.entity_config.insert("Thing".to_string(), entity_cfg);
+    }
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).unwrap();
+    let generator = codegraph_generate::db::workflow_seed::WorkflowSeedGenerator::new(dir);
+    generator
+        .generate(&mock, &config, &[], &tera, &Default::default())
+        .await
+        .expect("the workflow seed generator emits")
+        .into_iter()
+        .map(|f| {
+            if let Some(parent) = f.path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(&f.path, &f.content).unwrap();
+            f.path
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_seed_emits_the_machine_envelope_migration_and_reconciliation() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = seed_into(dir.path()).await;
+    let names: Vec<String> = paths
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+
+    assert!(
+        names.iter().any(|n| n == "0007_workflow_machine_seed.sql"),
+        "the machine seed rides 0007 (0006 stays byte-identical for existing bands): {names:?}"
+    );
+
+    let seed =
+        fs::read_to_string(dir.path().join("migrations/0007_workflow_machine_seed.sql")).unwrap();
+    // The envelope carries the machine + its FNV hash.
+    assert!(
+        seed.contains("\"machine\""),
+        "the envelope embeds the machine: {seed}"
+    );
+    assert!(
+        seed.contains("\"machine_hash\""),
+        "the envelope records the drift hash: {seed}"
+    );
+    assert!(
+        seed.contains("guards:Submitted"),
+        "the lowered machine's composed guard rides the transition: {seed}"
+    );
+    // The reconciliation step: entity column pulled from the instance.
+    assert!(
+        seed.contains("IS DISTINCT FROM"),
+        "the reconcile UPDATE is idempotent: {seed}"
+    );
+    assert!(
+        !seed.contains("pending_approval:") || seed.to_lowercase().contains("not like"),
+        "parked states never reconcile into the column"
+    );
+}
+
+// ── band 8: the guard seam (the ManualImpls precedent) ─────────────────
+
+/// A machine whose transition names a guard — the artifact-machine shape
+/// that needs an app-side implementation.
+fn guarded_payrun_ir() -> serde_json::Value {
+    let mut ir = payrun_ir_json();
+    ir["states"][0]["transitions"][0]["guard"] = serde_json::json!({
+        "name": "amount_is_positive",
+        "params": {"floor": 1}
+    });
+    ir
+}
+
+async fn emit_guarded_into(dir: &Path) {
+    let mock = mock_with_payrun_codelist().await;
+    mock.ingest_ddd_model(&model_graph(vec![machine_design(
+        "payroll",
+        Some(guarded_payrun_ir()),
+        Some(provenance_json("payrun")),
+    )]))
+    .await
+    .unwrap();
+    let config =
+        codegraph_config::config::parse_domain_config(Path::new("tests/fixtures/domains.toml"))
+            .unwrap();
+    let generator = MachineKernelGenerator::new_with_base(dir.to_path_buf());
+    let files = generator
+        .generate(
+            &mock,
+            &config,
+            &[],
+            &tera::Tera::default(),
+            &Default::default(),
+        )
+        .await
+        .expect("the machine kernel generator must emit");
+    for f in files {
+        if let Some(parent) = f.path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&f.path, &f.content).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn the_guard_seam_trait_and_write_once_impl_are_emitted() {
+    let dir = tempfile::tempdir().unwrap();
+    emit_guarded_into(dir.path()).await;
+
+    let module = fs::read_to_string(dir.path().join("src/machines/mod.rs")).unwrap();
+    // The trait: one method per named guard, context/event/params signature.
+    assert!(
+        module.contains("pub trait MachineGuardImpls"),
+        "the seam trait is emitted: {module}"
+    );
+    assert!(
+        module.contains("fn guard_amount_is_positive"),
+        "one method per named guard: {module}"
+    );
+    assert!(
+        module.contains("params: &serde_json::Value"),
+        "guard params ride the signature: {module}"
+    );
+    // The regenerated dispatch routes the guard name to the trait method
+    // and fails closed on anything else.
+    assert!(
+        module.contains(r#""amount_is_positive" =>"#),
+        "the dispatch routes the name: {module}"
+    );
+
+    // The write-once hand file: stubs return the NotImplemented error.
+    let guards_path = dir.path().join("src/machines/guards.rs");
+    let guards = fs::read_to_string(&guards_path).unwrap();
+    assert!(
+        guards.contains("pub struct DefaultMachineGuards"),
+        "the write-once impl struct: {guards}"
+    );
+    assert!(
+        guards.contains("GuardImplError::NotImplemented"),
+        "stubs fail closed (the 501), never silently allow: {guards}"
+    );
+
+    // A second run keeps the hand file (write-once).
+    let before = fs::read_to_string(&guards_path).unwrap();
+    fs::write(&guards_path, format!("{before}\n// hand edit survives\n")).unwrap();
+    emit_guarded_into(dir.path()).await;
+    let after = fs::read_to_string(&guards_path).unwrap();
+    assert!(
+        after.contains("// hand edit survives"),
+        "hand edits survive regeneration (write-once)"
+    );
+}
+
+#[tokio::test]
+async fn a_machine_without_guards_emits_no_seam() {
+    // Byte identity: a guard-less machine keeps Lane 1's module shape —
+    // no trait, no write-once file, no codegraph_workflow dependency.
+    let dir = tempfile::tempdir().unwrap();
+    emit_into(dir.path()).await;
+    let module = fs::read_to_string(dir.path().join("src/machines/mod.rs")).unwrap();
+    assert!(
+        !module.contains("MachineGuardImpls"),
+        "no guards ⇒ no seam trait"
+    );
+    assert!(
+        !module.contains("codegraph_workflow"),
+        "no guards ⇒ no workflow dependency in the machines module"
+    );
+    assert!(
+        !dir.path().join("src/machines/guards.rs").exists(),
+        "no guards ⇒ no write-once file"
+    );
+}
+
+#[tokio::test]
+async fn losing_the_last_guard_sweeps_the_stale_seam() {
+    // First run with a guard, then regenerate WITHOUT it: guards.rs is
+    // swept and the declaration disappears (a stale hand file would not
+    // compile against the vanished trait).
+    let dir = tempfile::tempdir().unwrap();
+    emit_guarded_into(dir.path()).await;
+    assert!(dir.path().join("src/machines/guards.rs").exists());
+
+    emit_into(dir.path()).await;
+    assert!(
+        !dir.path().join("src/machines/guards.rs").exists(),
+        "the emitter sweeps the stale write-once file when no machine carries guards"
+    );
+    let module = fs::read_to_string(dir.path().join("src/machines/mod.rs")).unwrap();
+    assert!(!module.contains("pub mod guards;"));
+    assert!(!module.contains("MachineGuardImpls"));
+}
+
+/// Band 4b (the #551 pin, guarded shape): the emitted machines module WITH
+/// the guard seam compiles in a scratch crate carrying the domain-types
+/// guard dep set — xstate-core + serde_json + codegraph-workflow (path).
+/// The dispatch implements the workflow crate's `MachineGuards` trait, so
+/// the module cannot compile without it.
+#[tokio::test]
+async fn the_guarded_machines_module_compiles_with_the_workflow_dep() {
+    let dir = tempfile::tempdir().unwrap();
+    emit_guarded_into(dir.path()).await;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let crate_root = scratch.path();
+    fs::create_dir_all(crate_root.join("src/machines/payroll")).unwrap();
+    fs::copy(
+        dir.path().join("src/machines/mod.rs"),
+        crate_root.join("src/machines/mod.rs"),
+    )
+    .unwrap();
+    fs::copy(
+        dir.path().join("src/machines/guards.rs"),
+        crate_root.join("src/machines/guards.rs"),
+    )
+    .unwrap();
+    fs::copy(
+        dir.path().join("src/machines/payroll/payrun.ir.json"),
+        crate_root.join("src/machines/payroll/payrun.ir.json"),
+    )
+    .unwrap();
+    fs::write(crate_root.join("src/lib.rs"), "pub mod machines;\n").unwrap();
+
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("the workspace root")
+        .display()
+        .to_string();
+    fs::write(
+        crate_root.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"machines_guarded_scratch\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+             [dependencies]\nserde_json = \"1\"\n\
+             xstate-core = {{ git = \"https://github.com/yestechgroup/restingstate.git\", \
+             rev = \"da0c804d3c30a0bcc938562e39a4b7d7505c663b\", default-features = false }}\n\
+             codegraph-workflow = {{ path = \"{workspace}/crates/codegraph-workflow\" }}\n"
+        ),
+    )
+    .unwrap();
+
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.arg("check")
+        .arg("--manifest-path")
+        .arg(crate_root.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", scratch.path().join("target"))
+        .env("CARGO_TERM_COLOR", "never");
+    let out = cmd.output().expect("cargo check must run");
+    assert!(
+        out.status.success(),
+        "the guarded machines module must compile against the workflow crate:\n{}\n{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
     );

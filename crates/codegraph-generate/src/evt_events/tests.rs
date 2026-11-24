@@ -770,6 +770,7 @@ fn scaffold_ctx(has_events: bool) -> ScaffoldContext {
         has_events,
         has_function_events: false,
         has_media: false,
+        has_machine_guards: false,
         seed_crate_path: String::new(),
         migration_strategy: "sea-orm".to_string(),
     }
