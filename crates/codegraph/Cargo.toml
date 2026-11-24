@@ -81,3 +81,7 @@ proc-macro2 = "1"
 # The ONE structural-key corpus for the artifact snake_case-shadow detector
 # (issue #674) — see the workspace pin's comment for the closure.
 phero-backend-common = { workspace = true }
+# The machine kernel KATs (issue #815): the artifact IR parses into the
+# restingstate `Machine`, passes `validate_machine_json`, and round-trips
+# through the persisted-snapshot surface.
+xstate-core = { workspace = true }

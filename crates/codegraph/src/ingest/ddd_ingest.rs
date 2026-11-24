@@ -293,7 +293,20 @@ pub fn read_and_compile_ddd(path: &Path) -> Result<DddCompiled> {
         schemas: schema_imports,
         sigil,
     };
-    let inputs = CompileInputs::from_domains(&domain_pairs).with_imports(imports);
+    // Machine references (pherolang#388, issue #815): every
+    // `machine <field>: <Enum> from "<path>";` declaration's TypeScript
+    // source, resolved relative to the declaring file (the CLI's own
+    // gather; the driver is filesystem-free and refuses a declared
+    // reference whose content was not provided). Without this gather the
+    // compile hard-errors `referenced machine file '<path>' was not
+    // provided`.
+    let machine_sources =
+        phero_driver::project::gather_ddd_machines(&ddd_path, &source, &mut |resolved| {
+            std::fs::read_to_string(resolved).ok()
+        });
+    let inputs = CompileInputs::from_domains(&domain_pairs)
+        .with_imports(imports)
+        .with_machines(machine_sources);
     let compilation = compile_ddd_str(&ddd_path, &source, &inputs);
     Ok(DddCompiled {
         path: ddd_path,

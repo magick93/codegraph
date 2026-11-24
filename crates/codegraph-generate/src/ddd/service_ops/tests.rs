@@ -870,6 +870,8 @@ fn second_machine_design() -> codegraph_core::types::DddDesignNode {
         is_abstract: false,
         flags: codegraph_core::types::DddDesignFlags::default(),
         machine_json: Some(serde_json::to_value(machine).unwrap()),
+        machine_ir_json: None,
+        machine_provenance_json: None,
         child_operations: Vec::new(),
         aggregate_boundary: None,
         invariants: Vec::new(),

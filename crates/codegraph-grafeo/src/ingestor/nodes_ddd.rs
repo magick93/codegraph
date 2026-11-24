@@ -98,7 +98,11 @@ impl GrafeoEngine {
             // BOTH are absent when the design carries no referenced machine
             // (the `aggregate_json` discipline — absence is the undecided
             // arm), so a machine-less design persists exactly as before.
-            let machine_ir_json = design.machine_ir_json.as_ref().map(json_string).transpose()?;
+            let machine_ir_json = design
+                .machine_ir_json
+                .as_ref()
+                .map(json_string)
+                .transpose()?;
             let machine_provenance_json = design
                 .machine_provenance_json
                 .as_ref()

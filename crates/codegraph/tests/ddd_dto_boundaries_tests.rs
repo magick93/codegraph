@@ -1442,6 +1442,8 @@ async fn walker_refuses_an_item_projection_read_over_an_entity_without_read() {
         is_abstract: false,
         flags: Default::default(),
         machine_json: None,
+        machine_ir_json: None,
+        machine_provenance_json: None,
         aggregate_boundary: None,
         invariants: Vec::new(),
         child_operations: Vec::new(),

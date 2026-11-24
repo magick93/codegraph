@@ -6321,6 +6321,82 @@ grants in `policy_rls` (#670, decision-gated); plus the `.dmn` plane
 (#671), the `.uc`/`.cmmn` assessment (#672), the upstream semantic-graph
 analytics (#673) and the `artifact check`/`verify` receipts (#674).
 
+## Machine kernel (issue #815, Lane 1 of epic #812)
+
+pherolang#388 lets a `.ddd` machine be authored in TypeScript/XState —
+`machine <field>: <Enum> from "machines/payrun.machine.ts";` — and the
+compiled artifact embeds the canonical `xstate_ir::Machine` JSON
+(`machine_ir`, keys sorted recursively) plus provenance
+(`machine_provenance`: `{path, machineId, contentSha256}`). The machine
+kernel makes that embed a first-class generated artifact. Stages 2
+(MachineRuntime/actor interpretation) and 3 (drift checks) build ON this
+plane; nothing here interprets machines yet.
+
+- **Ingest front door**: `read_and_compile_ddd` gathers every machine
+  reference's TypeScript through
+  `phero_driver::project::gather_ddd_machines` (resolved relative to the
+  declaring file) and feeds `.with_machines(...)` — the driver is
+  filesystem-free and hard-errors `referenced machine file '<path>' was
+  not provided` otherwise. Both mirrors ride `DddDesignNode.machine_ir_
+  json` + `.machine_provenance_json` (`GRAPH_FORMAT_VERSION` 15; see the
+  bump lineage).
+- **Validation (fail-closed, twice)**: `machines::machine_kernel_refusals`
+  is BOTH the pre-generation pass (`ValidationPass::check_machine_kernel`,
+  check `machine_kernel`, Error severity — a refusal never half-writes a
+  tree) AND the emitter's own gate. It refuses, naming the machine +
+  diagnostic: (a) an IR that is not an `xstate_ir::Machine`, or fails
+  `xstate_core::validate_machine_json` (the restingstate fail-closed
+  boundary — unknown initial/child/targets); (b) provenance machineId ≠
+  the IR's own id (stale/tampered embed); (c) a machine id that is not a
+  safe file stem; (d) duplicate application-wide machine ids or registry-
+  const collisions; (e) a machine declared in a module named `machines`
+  (the kernel's own directory); (f) **the enum correspondence — OURS**:
+  every machine state must be a literal of the bound codelist enum (the
+  bound enum comes from the DSL mirror `machine_json`'s `enumType`; the
+  codelist resolves exact → suffix-stripped → suffixed; a design with no
+  mirror skips the arm — never guessed).
+- **Emitter** (`MachineKernelGenerator`, Global, `machine_kernel`; the
+  `media_storage`/`functions_sql` precedent — registers unconditionally,
+  presence-gated inside): one
+  `{domain_types}/src/machines/{domain}/{machine_id}.ir.json` per machine
+  (canonical bytes via `machines::canonical_ir_json`) +
+  `src/machines/mod.rs` — a static registry (`include_str!` embeds, a
+  `LazyLock<BTreeMap<&'static str, &'static str>>`, parse-once accessors
+  `machine_ids`/`machine_json`/`machine`/`machine_provenance`/
+  `validate_machine`) with provenance consts (`{NAME}_SOURCE_PATH`,
+  `{NAME}_CONTENT_SHA256`) as the Stage 2/3 drift-detection seam.
+  Placement is the domain-types crate (the mox_ops precedent:
+  sea_orm-free, wasm32-safe, worker crates depend on it — one home serves
+  both topologies). The scaffold declares `pub mod machines;` only when
+  the graph carries machine IRs, and the domain-types Cargo.toml template
+  gates the `xstate-core` pin (git @ da0c804d, `default-features = false`
+  — tokio-free) the same way, so a machine-less crate is byte-identical.
+  Stale kernel files (mod.rs + `*.ir.json` only) are swept on regen; a
+  real domain directory named `machines` is refused before it could
+  collide.
+- **Determinism**: the emitted JSON is the canonical serialization —
+  `machines::canonical_ir_json` (phero_ir's sorted-keys-recursive form).
+  The artifact IR arrives canonical already, so embeds are byte-stable
+  despite the IR's `HashMap`-borne `SetupConfig` maps. Stage 2 drift
+  checks MUST project through this helper, never raw `serde_json`
+  serialization.
+- **Gates**: `cargo test -p codegraph --test machine_kernel_tests` (15,
+  node-free: the xstate KATs — artifact IR → `xstate_core::xstate_ir::
+  Machine`, `validate_machine_json`, the persisted-snapshot round-trip;
+  the refusal classes; the TS-authored front door over
+  `tests/fixtures/machine_kernel/` (also compiled forever by
+  `pherolang_fixture_sweep`); the emitter contract + canonical-bytes KAT;
+  the scratch-crate `cargo check` compile pin native) + the standing
+  byte-identity canaries (no machine ⇒ zero files) +
+  `worker_wasm_compile_tests -- --ignored` (the domain-types plane stays
+  wasm-clean).
+- **Deferred (Stages 2–4)**: MachineRuntime (an interpreter surface over
+  the registry), content_sha256 recomputation/verification (upstream
+  `artifact check` owns the hash; codegraph only surfaces it), machine →
+  workflow-plane consumption, IFML transition buttons reading the IR,
+  hurl legs, doctor `--ddd-files` machine parity (the run path + the
+  validation pass own the checks).
+
 ## Include Path System (`?include=`)
 
 Generated list/GET handlers support `?include=` eager loading. Paths are
