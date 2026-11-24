@@ -164,6 +164,23 @@ pub(super) fn build_load_context(
         } else {
             None
         };
+        // The machine read-model route split (issue #817): a machine-ONLY
+        // entity (an authored machine, no config workflow) reads its model
+        // on `/machine` — no `/workflow` route exists to merge. Dual
+        // entities keep the workflow flag (the merged payload carries the
+        // machine object), so ONE derivation serves both.
+        let machine_only = comp
+            .workflow
+            .as_ref()
+            .and_then(|wf| wf.machine.as_ref())
+            .map(|m| m.route == "machine")
+            .unwrap_or(false);
+        let machine_query = if machine_only && remote && (fetch_item || fetch_form) {
+            Some(super::render::remote_pascal(&comp.name))
+                .map(|pascal| format!("get{pascal}Machine"))
+        } else {
+            None
+        };
 
         load_components.push(PageLoadComponentContext {
             name: sanitize_ident(&comp.name),
@@ -172,7 +189,9 @@ pub(super) fn build_load_context(
             route_name: comp.entity.to_lowercase(),
             api: comp.api.clone(),
             id_param: id_param.clone(),
-            workflow: comp.workflow.is_some(),
+            workflow: comp.workflow.is_some() && !machine_only,
+            machine: machine_only,
+            machine_query,
             paginate: fetch_list && (comp.table.as_ref().map(|t| t.pagination).unwrap_or(true)),
             fetch_list,
             fetch_item,

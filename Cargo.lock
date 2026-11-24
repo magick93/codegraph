@@ -889,6 +889,7 @@ dependencies = [
  "codegraph-naming",
  "codegraph-ops",
  "codegraph-type-contracts",
+ "codegraph-workflow",
  "futures",
  "heck 0.5.0",
  "hotpath",

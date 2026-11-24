@@ -25,7 +25,7 @@ use super::ux::{
     UxGeneration, apply_table_ux, page_ux_context, resolve_column_ux, timeline_from_plan,
     ux_props_for_entity,
 };
-use super::workflow::{component_workflow, js_quote, workflow_for_entity};
+use super::workflow::{component_workflow, js_quote, machine_surface_for, workflow_for_entity};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PageSvelteContext {
@@ -90,6 +90,10 @@ pub struct PageSvelteContext {
     /// The live workflow stream needs the `browser` instance guard
     /// (issue #574 S4c parity) — gates the `$app/environment` import.
     pub(super) needs_browser: bool,
+    /// Whether any component renders from a machine read model (issue
+    /// #817) — gates the shared transition-button helpers (one per page,
+    /// never per component).
+    pub(super) has_machine: bool,
     /// Whether any component's loader carries the auth-surface denial
     /// catch — gates the `redirect` import.
     pub(super) needs_redirect: bool,
@@ -452,7 +456,16 @@ pub struct RenderWorkflow {
     /// Ready-to-render transition buttons for details/form components:
     /// one per valid (from → to) edge, disabled client-side unless the
     /// current state matches the from-state (empty map: unless terminal).
+    /// EMPTY for machine-bearing components — their buttons render from
+    /// the read model's runtime edge set (issue #817).
     pub transitions: Vec<RenderTransition>,
+    /// The machine read model the component renders from (issue #817).
+    /// `Some` only when the entity's design binds an artifact machine;
+    /// the buttons then come from `machine.available_transitions` —
+    /// never from a declared-edge list — and the badge reads the read
+    /// model's `current_state`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine: Option<RenderMachine>,
     /// Ready-to-render badge: `<span class="workflow-state"
     /// data-testid="{component}-state" data-workflow-state={...}>...</span>`
     /// plus the terminal marker attribute when terminal states are known.
@@ -495,6 +508,26 @@ pub struct RenderTransition {
     pub to: String,
     pub disabled_expr: String,
     pub html: String,
+}
+
+/// The machine read model a component renders from (issue #817): the UI
+/// never runs a machine — buttons come from the DERIVED edge set.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RenderMachine {
+    /// The machine's registry id (provenance in the page source).
+    pub machine_id: String,
+    /// FNV-1a drift hash over the canonical IR — a stale render is
+    /// detectable client-side.
+    pub machine_hash: String,
+    /// The read-model route segment the data comes from: `"machine"` for
+    /// machine-only entities (`GET …/{id}/machine`) or `"workflow"` for
+    /// dual entities (the merged `/workflow` payload's `machine` object).
+    pub route: String,
+    /// The JS expression yielding the available edges
+    /// (`{live}?.current?.machine?.available_transitions ?? {fallback}
+    /// ?.workflow_state?.machine?.available_transitions ?? []`) —
+    /// substituted with the component's data paths.
+    pub transitions_expr: String,
 }
 
 /// Submit wiring for a form component: fetch + success navigation.
@@ -1240,8 +1273,19 @@ pub struct PageLoadComponentContext {
     pub(super) id_param: Option<String>,
     /// Whether the bound entity carries a workflow: the load merges the
     /// `/workflow` state into the payload so badges can read the
-    /// authoritative current state.
+    /// authoritative current state. TRUE only when the `/workflow` route
+    /// exists (a config workflow with action endpoints); machine-ONLY
+    /// entities (issue #817) carry [`Self::machine`] instead — their read
+    /// model lives on `/machine`.
     pub(super) workflow: bool,
+    /// Machine-only entity (issue #817): the read model lives on the
+    /// `/machine` route; the load merges it through
+    /// [`Self::machine_query`].
+    pub(super) machine: bool,
+    /// The machine read-model query export (`get{Pascal}Machine`) this
+    /// load awaits for machine-only entities. `Some` only under the
+    /// remote plane with a by-id claimant.
+    pub(super) machine_query: Option<String>,
     pub(super) paginate: bool,
     pub(super) fetch_list: bool,
     pub(super) fetch_item: bool,
@@ -1427,6 +1471,15 @@ pub(super) async fn build_page_context(
         // needs_browser gates the `browser` instance guard the live
         // workflow stream requires (issue #574 S4c parity).
         needs_browser,
+        has_machine: groups
+            .iter()
+            .flat_map(|group| group.components.iter())
+            .any(|comp| {
+                comp.workflow
+                    .as_ref()
+                    .map(|wf| wf.machine.is_some())
+                    .unwrap_or(false)
+            }),
         needs_redirect: has_awaits && project.codegen.ifml_e2e_auth,
         denial_helper_src: if needs_denial_helper {
             remote_denial_helper(denial_target)
@@ -1855,6 +1908,25 @@ fn wire_fetch_and_command_plane(
                     for t in &mut workflow.transitions {
                         t.html = t.html.replace("data.item?", &workflow_ref);
                     }
+                    // The machine read model's edges (issue #817): the
+                    // button set derives from the merged read model — the
+                    // same needle substitution the badge went through,
+                    // with the LIVE stream preferred (browser) and the
+                    // load payload as the SSR fallback.
+                    if let Some(machine) = &mut workflow.machine {
+                        let base = if is_form {
+                            format!(
+                                "{}_form_state.workflow_state?.machine?.available_transitions",
+                                comp.js_name
+                            )
+                        } else {
+                            format!(
+                                "{}?.workflow_state?.machine?.available_transitions",
+                                comp.data_var
+                            )
+                        };
+                        machine.transitions_expr = format!("{base} ?? []");
+                    }
                     // The live workflow stream (issue #574 S4c parity): a
                     // workflow-bound by-id claimant under `ui_live_queries`
                     // reads the derived live state; everything else keeps
@@ -1876,15 +1948,36 @@ fn wire_fetch_and_command_plane(
                         let fallback_expr =
                             format!("{}?.workflow_state?.current_state", comp.data_var);
                         let state_var = format!("{}_workflow_state", comp.js_name);
+                        let live_var = format!("{}_wf_live", comp.js_name);
                         workflow.badge_html =
                             workflow.badge_html.replace(&badge_needle, &state_var);
                         for t in &mut workflow.transitions {
                             t.html = t.html.replace(&badge_needle, &state_var);
                         }
+                        // The machine edges prefer the live stream's current
+                        // read model (the poll yields the whole payload, so
+                        // `machine` rides it — one stream, never duplicated).
+                        if let Some(machine) = &mut workflow.machine {
+                            machine.transitions_expr = format!(
+                                "{live_var}?.current?.machine?.available_transitions ?? {}",
+                                machine.transitions_expr
+                            );
+                        }
+                        // The machine-only route streams the read-model
+                        // route; dual entities stream the merged /workflow.
+                        let machine_route = workflow
+                            .machine
+                            .as_ref()
+                            .map(|m| m.route.as_str() == "machine")
+                            .unwrap_or(false);
                         comp.workflow_live = Some(RenderWorkflowLive {
-                            export: format!("get{}WorkflowLive", remote_pascal(&comp.name)),
+                            export: if machine_route {
+                                format!("get{}MachineLive", remote_pascal(&comp.name))
+                            } else {
+                                format!("get{}WorkflowLive", remote_pascal(&comp.name))
+                            },
                             id_param: id_param.clone().unwrap_or_default(),
-                            live_var: format!("{}_wf_live", comp.js_name),
+                            live_var,
                             state_var,
                             fallback_expr,
                         });
@@ -1911,9 +2004,14 @@ fn wire_fetch_and_command_plane(
                     "details" => fetch_item,
                     _ => fetch_list,
                 };
+                // Machine-bearing components carry NO static buttons (the
+                // runtime loop renders from the read model), so the gate
+                // admits them by their machine surface, not the static
+                // transition list (issue #817).
+                let has_buttons = !workflow.transitions.is_empty() || workflow.machine.is_some();
                 if fetch_backed
                     && workflow.generate_action_endpoints
-                    && !workflow.transitions.is_empty()
+                    && has_buttons
                     && let Some(api) = &comp.api
                     && let Some(param) = &id_param
                 {
@@ -2439,7 +2537,11 @@ pub(super) async fn page_component_context(
             .collect::<Vec<_>>()
             .join(", ")
     );
-    let workflow = component_workflow(config, c);
+    let machine = match c.entity.as_deref() {
+        Some(entity) => machine_surface_for(db, config, entity).await,
+        None => None,
+    };
+    let workflow = component_workflow(config, c, machine.as_ref());
     let form_state = is_form_component(c) && mapping.is_none();
     // TanStack form context (issue #580): typed, unmapped forms only —
     // mapped components replace the fallback wholesale and spec-less

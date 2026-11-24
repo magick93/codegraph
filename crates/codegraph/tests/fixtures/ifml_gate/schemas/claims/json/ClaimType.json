@@ -1,0 +1,19 @@
+{
+  "$id": "ClaimType.json",
+  "title": "ClaimType",
+  "description": "A warranty claim tracked through a submission workflow (issue #817 machine read-model fixture)",
+  "type": "object",
+  "properties": {
+    "label": {
+      "type": "string",
+      "description": "Short summary of the claim"
+    },
+    "status": {
+      "$ref": "../../common/json/codelist/ClaimStatus.json",
+      "description": "Workflow status driven by the authored machine"
+    }
+  },
+  "required": [
+    "label"
+  ]
+}

@@ -502,6 +502,20 @@ pub(super) fn render_workflow_section(
         s.push_str("    await this.page.getByTestId(testid).click();\n");
         s.push_str("  }\n\n");
     }
+    if workflow.machine {
+        // The machine read-model surface (issue #817): the spec family
+        // asserts the RENDERED set against the kernel-derived payload —
+        // the edge attributes are the projection the page rendered.
+        s.push_str(&format!(
+            "  /** The machine read model's current state (issue #817) — the\n   * badge text the page rendered from `current_state`. */\n  async machine{pascal}State(): Promise<string> {{\n    return (await this.{component}StateBadge().textContent()) ?? '';\n  }}\n\n"
+        ));
+        s.push_str(&format!(
+            "  /** The RENDERED transition set (issue #817): the page class owns\n   * every selector — the spec compares this to the read model's\n   * `available_transitions`. */\n  async machine{pascal}Transitions(): Promise<Array<{{ event: string; to: string }}>> {{\n    const buttons = this.page.locator(\"[data-testid^='{component}-transition-'][data-transition-event]\");\n    const count = await buttons.count();\n    const out: Array<{{ event: string; to: string }}> = [];\n    for (let i = 0; i < count; i++) {{\n      const b = buttons.nth(i);\n      out.push({{\n        event: (await b.getAttribute('data-transition-event')) ?? '',\n        to: (await b.getAttribute('data-transition-to')) ?? '',\n      }});\n    }}\n    return out;\n  }}\n\n",
+        ));
+        s.push_str(&format!(
+            "  /** Click the rendered transition whose read-model edge fires\n   * `event` (issue #817). */\n  async machine{pascal}Transition(event: string): Promise<void> {{\n    const button = this.page.locator(`[data-testid^='{component}-transition-'][data-transition-event='${{event}}']`).first();\n    await button.click();\n  }}\n\n",
+        ));
+    }
     s
 }
 

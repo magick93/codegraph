@@ -18,3 +18,15 @@ class RefundRequest {
     RefundStatus status
     RefundEscalation escalation
 }
+
+package claims
+
+enum ClaimStatus {
+    draft = 0
+    submitted = 1
+}
+
+class Claim {
+    String label
+    ClaimStatus status
+}

@@ -2584,6 +2584,7 @@ fn navigate_event_resolves_handler_and_url() {
 
 fn svelte_context(components: Vec<PageComponentContext>) -> PageSvelteContext {
     PageSvelteContext {
+        has_machine: false,
         file_scripts: String::new(),
         file_imports: Vec::new(),
         file_media: Vec::new(),
@@ -4336,6 +4337,8 @@ fn integrated_unguarded_auth_surface_does_not_import_browser() {
 
 fn fetch_component(name: &str) -> super::context::PageLoadComponentContext {
     super::context::PageLoadComponentContext {
+        machine: false,
+        machine_query: None,
         name: name.to_string(),
         component_type: "list".to_string(),
         entity: "Customer".to_string(),

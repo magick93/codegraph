@@ -40,4 +40,20 @@ application Refunds {
             approve => RefundRequestRepository.save transition Escalate when (escalation == none);
         }
     }
+    // Issue #817: the machine read-model module — the entity's lifecycle
+    // authored as a TypeScript/XState machine (the Lane-1 spelling). The
+    // states are ClaimStatus literals and must agree with the claims
+    // workflow config (the two-representation cross-check refuses
+    // disagreement). This module is SEPARATE from `refunds` because the
+    // pinned parser cannot yet follow a referenced machine with an inline
+    // machine in one module (upstream pherolang; a module holding only a
+    // referenced machine parses clean, and so does the refunds module).
+    module claims {
+        entity Claim scaffold repository ClaimRepository {
+            findById;
+            findAll;
+            save;
+        }
+        machine status: ClaimStatus from "machines/claim-status.machine.ts";
+    }
 }

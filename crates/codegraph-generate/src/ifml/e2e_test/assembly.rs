@@ -451,6 +451,136 @@ impl IfmlE2eTestGenerator {
         })
     }
 
+    /// The machine read-model spec family (issue #817): one
+    /// `{view}.machine.spec.ts` per view carrying a machine-bearing
+    /// details/form component. The same shape the workflow tests walk —
+    /// schema-backed, seedable, unguarded (the spec navigates without
+    /// persona seeding; access is the actor-persona tests' job) — but the
+    /// assertions derive from the READ MODEL, not fixture knowledge.
+    pub(super) async fn build_view_machine_tests(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        api_version: &str,
+        vc: &IfmlViewContainer,
+    ) -> Vec<super::spec_payload::MachineTest> {
+        if !vc.roles.is_empty() || !vc.requires.is_empty() {
+            return Vec::new();
+        }
+        let id_param = id_param_from(&vc.params);
+        let mut has_item = false;
+        let mut has_form = false;
+        let mut tests = Vec::new();
+        for c in &vc.components {
+            let is_details = is_details(c);
+            let is_form = is_form(c);
+            let fetch_item = is_details && !has_item && id_param.is_some();
+            let fetch_form = is_form && !has_form && id_param.is_some();
+            has_item |= fetch_item;
+            has_form |= fetch_form;
+            if !fetch_item && !fetch_form {
+                continue;
+            }
+            if let Some(test) = self
+                .build_machine_test(db, config, api_version, c, id_param.as_deref())
+                .await
+            {
+                tests.push(test);
+            }
+        }
+        tests
+    }
+
+    async fn build_machine_test(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        api_version: &str,
+        c: &IfmlComponent,
+        id_param: Option<&str>,
+    ) -> Option<super::spec_payload::MachineTest> {
+        use super::spec_payload::{MachineTest, MachineTransitionLeg};
+        use crate::machines::machine_surface_for_entity;
+
+        let entity = c.entity.as_deref()?;
+        // The surface chain mirrors the route generator (plain, then
+        // `{entity}Type`) — the UI and the specs cannot disagree about
+        // which entities are machine-bearing.
+        let surface = match machine_surface_for_entity(db, entity).await {
+            Some(s) => s,
+            None => {
+                machine_surface_for_entity(db, &format!("{entity}{}", config.defaults.type_suffix))
+                    .await?
+            }
+        };
+        let api = schema_backed_api(db, config, entity, api_version).await?;
+        if !api.has_create || !api.has_read {
+            return None;
+        }
+        let ir: serde_json::Value = serde_json::from_str(&surface.ir_json).ok()?;
+        let initial = surface.initial_state.clone();
+        let offered = machine_edges_from(&ir, &initial);
+        // The conflict target: provably NOT offered on the seeded row
+        // (FreshFixtureGuard — never a guessed 409).
+        let conflict_target = machine_conflict_target(&ir, &initial, &offered);
+        // The transition leg needs a POST endpoint: dual entities only
+        // (machine-only entities carry no transition surface).
+        let dual = workflow_for_entity(config, entity).is_some();
+        let transition = dual
+            .then(|| offered.first())
+            .flatten()
+            .map(|edge| MachineTransitionLeg {
+                to: edge.to.clone(),
+            });
+
+        let workflow = workflow_for_entity(config, entity);
+        let status_field = workflow
+            .as_ref()
+            .map(|wf| wf.status_field.clone())
+            .unwrap_or_else(|| surface.status_field.clone());
+        let entries = fixture_entries(c);
+        let entries = super::fixtures::strip_workflow_status(entries, Some(&status_field));
+        let mut entries = entries;
+        for (field, value) in entries.iter_mut() {
+            if let Some(code) = codelist_fixture_value(db, c.entity.as_deref(), field).await {
+                *value = format!("'{}'", js_string(&code));
+            }
+        }
+        let entries = super::fixtures::with_required_entries(
+            db,
+            config,
+            Some(entity),
+            entries,
+            self.dto_casing,
+        )
+        .await;
+
+        Some(MachineTest {
+            component_name: c.name.clone(),
+            id_param: id_param.map(str::to_string),
+            read_model_route: if dual { "workflow" } else { "machine" }.to_string(),
+            initial_state: initial,
+            transition,
+            conflict_target,
+            // The required-FK closure rides the SAME seeder the workflow
+            // specs use — the specs must drive the entity through the API.
+            fixture: self
+                .attach_required_refs(
+                    db,
+                    config,
+                    api_version,
+                    Some(entity),
+                    Fixture {
+                        casing: self.dto_casing,
+                        base_path: api.base_path,
+                        entries,
+                        deps: Vec::new(),
+                    },
+                )
+                .await,
+        })
+    }
+
     /// Fixture payload for a workflow spec: `fixture_entries` plus valid
     /// values for constrained columns — other codelist-backed fields use
     /// their first enum value (the create would otherwise violate the
@@ -1094,6 +1224,84 @@ pub(super) fn resolve_journey_arrivals(
             }
         }
     }
+}
+
+/// One offered edge of the machine's initial state (issue #817): the
+/// generation-time projection the machine spec clicks.
+#[derive(Debug)]
+pub(crate) struct MachineEdge {
+    pub event: String,
+    pub to: String,
+}
+
+/// Projects the machine IR's edges FROM `state` (the kernel's own
+/// derivation shape — target-resolved, declaration order, deduped).
+pub(crate) fn machine_edges_from(ir: &serde_json::Value, state: &str) -> Vec<MachineEdge> {
+    let mut out: Vec<MachineEdge> = Vec::new();
+    let Some(states) = ir.get("states").and_then(serde_json::Value::as_array) else {
+        return out;
+    };
+    for s in states {
+        if s.get("name").and_then(serde_json::Value::as_str) != Some(state) {
+            continue;
+        }
+        for t in s
+            .get("transitions")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let event = t
+                .get("event")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let to = t
+                .get("target")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| {
+                    t.get("targets")
+                        .and_then(serde_json::Value::as_array)
+                        .and_then(|targets| targets.first())
+                        .and_then(|first| first.as_str())
+                        .map(|first| first.split('.').next().unwrap_or(first))
+                })
+                .unwrap_or_default()
+                .to_string();
+            if !out.iter().any(|e| e.event == event && e.to == to) {
+                out.push(MachineEdge { event, to });
+            }
+        }
+    }
+    out
+}
+
+/// The not-offered state the 409 leg drives: a state the machine declares
+/// but the current state's offered set does not target. Falls back to the
+/// CURRENT state itself when no self-edge offers it (posting the current
+/// state is then provably refused). `None` when every declared state is
+/// offered — the leg omits (never a guessed conflict).
+pub(crate) fn machine_conflict_target(
+    ir: &serde_json::Value,
+    current: &str,
+    offered: &[MachineEdge],
+) -> Option<String> {
+    let states: Vec<String> = ir
+        .get("states")
+        .and_then(serde_json::Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.get("name").and_then(serde_json::Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let unoffered = |s: &str| !offered.iter().any(|e| e.to == s);
+    states
+        .iter()
+        .find(|s| *s != current && unoffered(s))
+        .cloned()
+        .or_else(|| unoffered(current).then(|| current.to_string()))
 }
 
 /// The view container named `name`, if it is a top-level view.

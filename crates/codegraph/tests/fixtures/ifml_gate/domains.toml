@@ -32,6 +32,31 @@ generate_action_endpoints = true
 draft = ["submitted"]
 submitted = ["approved", "rejected"]
 
+# Issue #817: the machine read-model domain — Claim's lifecycle is an
+# authored TypeScript/XState machine (machines/claim-status.machine.ts)
+# whose states MUST agree with this config (the two-representation
+# cross-check). The workflow config provides the transition POST endpoint
+# the IFML buttons target, and the merged /workflow payload + the
+# /machine route both carry the kernel-derived read model.
+[domains.claims]
+label = "Claims"
+schema_dir = "claims"
+postgres_schema = "claims"
+entities = ["ClaimType"]
+
+[domains.claims.entity_config.ClaimType]
+role = "root"
+
+[domains.claims.entity_config.ClaimType.workflow]
+status_field = "status"
+states = ["draft", "submitted"]
+initial_state = "draft"
+terminal_states = ["submitted"]
+generate_action_endpoints = true
+
+[domains.claims.entity_config.ClaimType.workflow.transitions]
+draft = ["submitted"]
+
 # Media plane (issue #633): the receipt upload route + its control. The
 # gate asserts the WIRED SHAPE (the route 503s without a configured
 # provider — no storage stack in this lane).

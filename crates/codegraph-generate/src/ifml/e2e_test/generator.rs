@@ -24,8 +24,8 @@ use super::super::selectors::ComponentSelectors;
 use super::auth::{AuthTestSpec, PersonaSpec, ShellNavJourney, WorkflowJourney};
 use super::pom::{ViewPom, pom_file_set};
 use super::render::{
-    package_json, playwright_config, render_action_spec, render_spec, render_ux_spec,
-    render_workflow_spec,
+    package_json, playwright_config, render_action_spec, render_machine_spec, render_spec,
+    render_ux_spec, render_workflow_spec,
 };
 use super::spec_payload::{UxViewTest, ViewJourney, ViewTestSpec, WorkflowTest};
 use super::ux_plans::build_ux_plans;
@@ -285,6 +285,11 @@ struct SpecFamilies<'a> {
     actions_by_view: HashMap<String, Vec<super::pom::PomAction>>,
     /// WS6: the manifest-proven action spec payloads.
     action_specs: Vec<super::spec_payload::ActionSpec>,
+    /// Machine-bearing entity titles (issue #817) — the graph-resolved
+    /// set the POM plans check.
+    machine_entities: HashSet<String>,
+    /// Per-view machine read-model spec payloads (issue #817).
+    machine_specs: Vec<(String, Vec<super::spec_payload::MachineTest>)>,
 }
 
 /// The journey payload set (issue #751 split): the three journey
@@ -330,6 +335,7 @@ impl IfmlE2eTestGenerator {
 
         let mut specs = Vec::new();
         let mut workflow_specs: Vec<(String, Vec<WorkflowTest>)> = Vec::new();
+        let mut machine_specs: Vec<(String, Vec<super::spec_payload::MachineTest>)> = Vec::new();
         // WS6: the folded IFML manifest (pherolang #118) — the action-op
         // plane's input. `None` degrades every consumer (pre-WS6 graphs,
         // no `--ifml-files`): no action POM surface, no action specs,
@@ -351,6 +357,9 @@ impl IfmlE2eTestGenerator {
             None => HashMap::new(),
         };
         let mut ux_specs: Vec<(String, UxViewTest)> = Vec::new();
+        // The machine-bearing entity set (issue #817): one graph walk, the
+        // SAME resolution the api plane uses (`machine_surface_for_entity`).
+        let machine_entities = crate::machines::machine_bearing_titles(db).await;
         let human_actors: Vec<String> = if auth_enabled || model.policy.is_some() {
             let mut names: Vec<String> = db
                 .get_actors()
@@ -421,6 +430,13 @@ impl IfmlE2eTestGenerator {
             if !workflow_tests.is_empty() {
                 workflow_specs.push((vc.name.clone(), workflow_tests));
             }
+            // Issue #817: the machine read-model spec family.
+            let machine_tests = self
+                .build_view_machine_tests(db, config, &project.identity.api_version, vc)
+                .await;
+            if !machine_tests.is_empty() {
+                machine_specs.push((vc.name.clone(), machine_tests));
+            }
             // WS6: the manifest-proven action specs + POM surface per view.
             if let Some((pom_actions, mut action_spec)) = self
                 .build_action_spec(
@@ -445,9 +461,11 @@ impl IfmlE2eTestGenerator {
             personas,
             specs,
             workflow_specs,
+            machine_specs,
             ux_specs,
             actions_by_view,
             action_specs,
+            machine_entities,
         })
     }
 
@@ -471,6 +489,7 @@ impl IfmlE2eTestGenerator {
                 .any(|vc| !vc.roles.is_empty() || !vc.requires.is_empty());
         if !families.specs.iter().any(base_spec_content)
             && families.workflow_specs.is_empty()
+            && families.machine_specs.is_empty()
             && families.ux_specs.is_empty()
             && families.action_specs.is_empty()
             && !has_auth_surface
@@ -523,6 +542,11 @@ impl IfmlE2eTestGenerator {
             .iter()
             .map(|(view_name, _)| format!("{}.workflow.spec.ts", to_kebab_case(view_name)))
             .collect();
+        let active_machine_specs: HashSet<String> = families
+            .machine_specs
+            .iter()
+            .map(|(view_name, _)| format!("{}.machine.spec.ts", to_kebab_case(view_name)))
+            .collect();
         let active_ux_specs: HashSet<String> = families
             .ux_specs
             .iter()
@@ -562,6 +586,12 @@ impl IfmlE2eTestGenerator {
                 }
                 if name.strip_suffix(".workflow.spec.ts").is_some() {
                     if !active_workflow_specs.contains(name) {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                    continue;
+                }
+                if name.strip_suffix(".machine.spec.ts").is_some() {
+                    if !active_machine_specs.contains(name) {
                         let _ = std::fs::remove_file(&path);
                     }
                     continue;
@@ -719,6 +749,7 @@ impl IfmlE2eTestGenerator {
                     families.auth_enabled,
                     journey_steps,
                     actions,
+                    &families.machine_entities,
                 );
                 (kebab, pom)
             })
@@ -825,6 +856,26 @@ impl IfmlE2eTestGenerator {
                         .join("ifml")
                         .join(format!("{}.workflow.spec.ts", to_kebab_case(view_name))),
                     content: render_workflow_spec(vc, workflow_tests),
+                });
+            }
+        }
+
+        // Issue #817: the machine read-model specs — one
+        // `{view}.machine.spec.ts` per view with a machine-bearing
+        // details/form component.
+        for (view_name, machine_tests) in &families.machine_specs {
+            if let Some(vc) = model
+                .view_containers
+                .iter()
+                .find(|vc| &vc.name == view_name)
+            {
+                files.push(GeneratedFile {
+                    path: self
+                        .output_dir
+                        .join("tests")
+                        .join("ifml")
+                        .join(format!("{}.machine.spec.ts", to_kebab_case(view_name))),
+                    content: render_machine_spec(vc, machine_tests),
                 });
             }
         }

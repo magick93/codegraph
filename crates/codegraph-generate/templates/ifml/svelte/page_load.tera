@@ -21,6 +21,9 @@ import { can } from '$lib/roles';
 {%- if comp.remote_query %}
 import { {{ comp.remote_query }} } from './data.remote';
 {%- endif %}
+{%- if comp.machine_query %}
+import { {{ comp.machine_query }} } from './data.remote';
+{%- endif %}
 {%- endfor %}
 {%- else %}
 import { error } from '@sveltejs/kit';
@@ -144,11 +147,27 @@ export const load: PageLoad = async ({ params, url{% if not remote_api and not g
 	const {{ comp.id_param }} = viewParams['{{ comp.id_param }}'];
 	if ({{ comp.id_param }}) {
 		result.{{ comp.item_key }} = await {{ comp.remote_query }}({{ comp.id_param }});
+{%- if comp.machine_query %}
+		// The machine read model (issue #817): machine-only entities
+		// carry the read model on `/machine` — merged into the SAME
+		// `workflow_state` field the badge and the transition buttons
+		// read, so the page contract is identical on both planes.
+		const {{ comp.name }}_machine = await {{ comp.machine_query }}({{ comp.id_param }});
+		if ({{ comp.name }}_machine && result.{{ comp.item_key }}) {
+			result.{{ comp.item_key }}.workflow_state = {{ comp.name }}_machine;
+		}
+{%- endif %}
 	}
 {%- elif comp.remote_query and comp.fetch_form %}
 	const {{ comp.id_param }} = viewParams['{{ comp.id_param }}'];
 	if ({{ comp.id_param }}) {
 		result.{{ comp.form_data_key }} = await {{ comp.remote_query }}({{ comp.id_param }});
+{%- if comp.machine_query %}
+		const {{ comp.name }}_machine = await {{ comp.machine_query }}({{ comp.id_param }});
+		if ({{ comp.name }}_machine && result.{{ comp.form_data_key }}) {
+			result.{{ comp.form_data_key }}.workflow_state = {{ comp.name }}_machine;
+		}
+{%- endif %}
 	}
 {%- endif %}
 {%- else %}

@@ -1,0 +1,7 @@
+{
+  "$id": "codelist/ClaimStatus.json",
+  "title": "ClaimStatus",
+  "description": "Workflow states for claims (the machine's bound enum)",
+  "type": "string",
+  "enum": ["draft", "submitted"]
+}

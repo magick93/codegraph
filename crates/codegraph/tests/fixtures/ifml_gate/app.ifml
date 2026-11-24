@@ -1,6 +1,20 @@
 domain "refunds" { schema "refunds"; }
+domain "claims" { schema "claims"; }
 
 import "policy.actor";
+
+// Issue #817: the machine read-model view — ClaimDetail drives the
+// machine category (render → transition → 409) through the POM.
+view "ClaimDetail" {
+    params { id: Uuid };
+    label "Claim";
+
+    component "claim_info" {
+        type: details;
+        data: Claim;
+        fields: [label, status];
+    }
+}
 
 view "Home" {
     label "Refund Portal";
