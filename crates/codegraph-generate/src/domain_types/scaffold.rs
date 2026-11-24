@@ -327,6 +327,43 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
             ""
         };
 
+        // Machine kernel (issue #815) lives in `src/machines/`; the kernel
+        // generator writes the module + data files, this declares the
+        // module and gates the xstate-core dep in Cargo.toml. Effective
+        // presence (issue #818): the artifact IR of a referenced machine
+        // or the mirror of an inline one — the lowering is total.
+        let has_machines = db
+            .get_ddd_models()
+            .await
+            .map(|models| {
+                models
+                    .iter()
+                    .any(|m| m.designs.iter().any(crate::machines::design_has_machine))
+            })
+            .unwrap_or(false);
+        let machines_mod = if has_machines {
+            "pub mod machines;\n"
+        } else {
+            ""
+        };
+
+        // The guard seam (issue #816): any machine IR naming a guard needs
+        // the workflow crate in the domain-types Cargo.toml (the generated
+        // dispatch implements its `MachineGuards` trait).
+        let has_machine_guards = db
+            .get_ddd_models()
+            .await
+            .map(|models| {
+                models.iter().any(|m| {
+                    m.designs.iter().any(|d| {
+                        d.machine_ir_json
+                            .as_ref()
+                            .is_some_and(|ir| !crate::machines::machine_guard_names(ir).is_empty())
+                    })
+                })
+            })
+            .unwrap_or(false);
+
         let mut structured_re_exports = String::new();
         let mut sorted_types: Vec<&String> = structured_types.iter().collect();
         sorted_types.sort();
@@ -349,6 +386,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
              pub mod context;\n\
              pub mod query;\n\
              {dto_mod}\
+             {machines_mod}\
              \n\
              pub use context::{{SourceContext, SourceOrigin}};\n\
              pub use query::{{ListParams, PagedResult, QueryError, SortOrder}};\n\
@@ -367,7 +405,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
         let cargo_toml = render_template_with_project(
             tera,
             "domain_types/cargo_toml.tera",
-            &serde_json::json!({}),
+            &serde_json::json!({ "has_machines": has_machines, "has_machine_guards": has_machine_guards }),
             project,
         )?;
         files.push(GeneratedFile {

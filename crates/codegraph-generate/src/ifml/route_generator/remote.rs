@@ -24,17 +24,23 @@ pub(crate) const SERVER_API_IMPORT: &str = crate::server_api::SERVER_API_IMPORT;
 
 /// One query export: the load's single fetch (list / item / form) lowered
 /// to a `query('unchecked', ...)`.
-pub(super) struct RemoteQuery {
+pub struct RemoteQuery {
     /// Export name (`getGrid`).
-    export: String,
+    pub export: String,
     /// Collection path (`/api/v1/sales/customer`).
-    base_path: String,
+    pub base_path: String,
     /// Entity label for the failure message.
-    entity: String,
-    paginate: bool,
-    workflow: bool,
+    pub entity: String,
+    pub paginate: bool,
+    pub workflow: bool,
+    /// Machine read-model query (issue #817): a machine-ONLY entity's
+    /// read-model route is `/machine` (no `/workflow` exists) — this
+    /// query fetches it and normalizes the payload into the same
+    /// `workflow_state` shape the dual plane's merge produces. The live
+    /// stream polls the SAME route (extended, never duplicated).
+    pub machine: bool,
     /// Item/form query: fetches by id instead of the collection.
-    by_id: bool,
+    pub by_id: bool,
 }
 
 /// One command export: submit / transition / action op lowered to a
@@ -45,15 +51,15 @@ pub(super) struct RemoteCommandSpec {
 
 /// The exports one view's `data.remote.ts` carries, collected from the
 /// page + load contexts.
-pub(super) struct RemoteModuleContext {
-    pub(super) queries: Vec<RemoteQuery>,
-    pub(super) commands: Vec<RemoteCommandSpec>,
+pub struct RemoteModuleContext {
+    pub queries: Vec<RemoteQuery>,
+    pub commands: Vec<RemoteCommandSpec>,
     /// The live-query plane (issue #574 S4c parity): workflow-bound by-id
     /// queries gain a `query.live` workflow stream (the 5s poll, the
     /// entity plane's `getWorkflowLive` pattern).
-    pub(super) live: bool,
+    pub live: bool,
     /// Media upload commands (issue #633) — one per wired file field.
-    pub(super) media: Vec<RemoteMediaCommand>,
+    pub media: Vec<RemoteMediaCommand>,
 }
 
 /// One media upload command export (issue #633): the DSL `input file`
@@ -73,13 +79,23 @@ pub(super) struct RemoteMediaCommand {
 }
 
 impl RemoteModuleContext {
+    /// An empty module (the pin-support constructor).
+    pub fn empty() -> Self {
+        Self {
+            queries: Vec::new(),
+            commands: Vec::new(),
+            live: false,
+            media: Vec::new(),
+        }
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.queries.is_empty() && self.commands.is_empty() && self.media.is_empty()
     }
 
     /// Collect from a view's load context (the query leg).
     pub(super) fn from_load(load: &PageLoadContext) -> Self {
-        let queries = load
+        let mut queries: Vec<RemoteQuery> = load
             .components
             .iter()
             .filter_map(|comp: &PageLoadComponentContext| {
@@ -93,10 +109,28 @@ impl RemoteModuleContext {
                     entity: comp.entity.to_lowercase(),
                     paginate: comp.paginate,
                     workflow: comp.workflow,
+                    machine: false,
                     by_id: comp.fetch_item || comp.fetch_form,
                 })
             })
             .collect();
+        // The machine read-model query (issue #817): machine-ONLY entities
+        // (an authored machine, no workflow config) carry the read model
+        // on `/machine` — one query per by-id claimant, feeding the load's
+        // `workflow_state` merge and the live poll.
+        for comp in &load.components {
+            if let (Some(export), Some(api)) = (&comp.machine_query, &comp.api) {
+                queries.push(RemoteQuery {
+                    export: export.clone(),
+                    base_path: api.base_path.clone(),
+                    entity: comp.entity.to_lowercase(),
+                    paginate: false,
+                    workflow: false,
+                    machine: true,
+                    by_id: true,
+                });
+            }
+        }
         Self {
             queries,
             commands: Vec::new(),
@@ -141,29 +175,52 @@ impl RemoteModuleContext {
             s.push('\n');
             s.push_str(&render_query(q));
         }
-        // The live workflow stream (issue #574 S4c parity): a 5s poll of
-        // the by-id /workflow read, mirroring the entity plane's
-        // `getWorkflowLive`. The page guards the instance with `browser` —
+        // The live read-model stream (issue #574 S4c parity, extended by
+        // issue #817): a by-id claimant gains ONE `query.live` stream per
+        // read-model route — dual entities stream the merged `/workflow`
+        // (which now carries the machine object), machine-only entities
+        // stream `/machine`. The page guards the instance with `browser` —
         // kit does not start streams during SSR.
         if self.live {
             for q in &self.queries {
-                if q.workflow && q.by_id {
-                    let pascal = q.export.strip_prefix("get").unwrap_or(&q.export);
-                    s.push('\n');
-                    s.push_str(&format!(
-                        "export const get{pascal}WorkflowLive = query.live('unchecked', async function* (id: string) {{\n\
-                         \twhile (true) {{\n\
-                         \t\tconst res = await apiFetch(`{base}/${{id}}/workflow`);\n\
-                         \t\tif (res.ok) {{\n\
-                         \t\t\tconst json = await res.json();\n\
-                         \t\t\tyield json.data ?? json;\n\
-                         \t\t}}\n\
-                         \t\tawait new Promise((resolve) => setTimeout(resolve, 5000));\n\
-                         \t}}\n\
-                         }});\n",
-                        base = q.base_path
-                    ));
+                if !(q.workflow || q.machine) || !q.by_id {
+                    continue;
                 }
+                let pascal = if q.machine {
+                    // The machine query's export already carries the
+                    // `Machine` suffix (`getClaimInfoMachine`): the live
+                    // stream is `getClaimInfoMachineLive`.
+                    q.export.strip_suffix("Machine").unwrap_or(&q.export)
+                } else {
+                    q.export.strip_prefix("get").unwrap_or(&q.export)
+                };
+                let suffix = if q.machine {
+                    "MachineLive"
+                } else {
+                    "WorkflowLive"
+                };
+                let route = if q.machine { "machine" } else { "workflow" };
+                s.push('\n');
+                let normalize = if q.machine {
+                    "{ ...data, machine: data }"
+                } else {
+                    "data"
+                };
+                s.push_str(&format!(
+                    "export const get{pascal}{suffix} = query.live('unchecked', async function* (id: string) {{\n\
+                     \twhile (true) {{\n\
+                     \t\tconst res = await apiFetch(`{base}/${{id}}/{route}`);\n\
+                     \t\tif (res.ok) {{\n\
+                     \t\t\tconst json = await res.json();\n\
+                     \t\t\tconst data = json.data ?? json;\n\
+                     \t\t\tyield {normalize};\n\
+                     \t\t}}\n\
+                     \t\tawait new Promise((resolve) => setTimeout(resolve, 5000));\n\
+                     \t}}\n\
+                     }});\n",
+                    base = q.base_path,
+                    normalize = normalize,
+                ));
             }
         }
         // The single-flight pairing (issue #574 S4a): a command's server
@@ -205,6 +262,28 @@ impl RemoteModuleContext {
 
 fn render_query(q: &RemoteQuery) -> String {
     let mut s = String::new();
+    if q.machine {
+        // The machine read model (issue #817): normalized into the same
+        // shape the merged /workflow payload nests — `{ ...machine,
+        // machine }` — so the page's badge and button derivations read
+        // ONE path (`workflow_state.machine.…`) on both planes. A failed
+        // fetch yields null: the load merges nothing (badge-less) instead
+        // of failing the page.
+        s.push_str(&format!(
+            "export const {export_} = query('unchecked', async (id: string) => {{\n",
+            export_ = q.export
+        ));
+        s.push_str(&format!(
+            "\tconst response = await apiFetch(`{base}/${{id}}/machine`);\n",
+            base = q.base_path
+        ));
+        s.push_str("\tif (!response.ok) {\n\t\treturn null;\n\t}\n");
+        s.push_str("\tconst json = await response.json();\n");
+        s.push_str("\tconst machine = json.data ?? json;\n");
+        s.push_str("\treturn { ...machine, machine };\n");
+        s.push_str("});\n");
+        return s;
+    }
     if q.by_id {
         s.push_str(&format!(
             "export const {export_} = query('unchecked', async (id: string) => {{\n",

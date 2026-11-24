@@ -1564,6 +1564,8 @@ fn fixture_ddd_graph() -> codegraph_core::types::DddModelGraph {
                 is_abstract: false,
                 flags: codegraph_core::types::DddDesignFlags::default(),
                 machine_json: None,
+                machine_ir_json: None,
+                machine_provenance_json: None,
                 // Issue #661: the aggregate's `children PayRun` block — the
                 // child action handlers (create/update/delete through the
                 // child's plane) must compile natively AND on wasm32.
@@ -1583,6 +1585,8 @@ fn fixture_ddd_graph() -> codegraph_core::types::DddModelGraph {
                 is_abstract: false,
                 flags: codegraph_core::types::DddDesignFlags::default(),
                 machine_json: None,
+                machine_ir_json: None,
+                machine_provenance_json: None,
                 child_operations: Vec::new(),
                 aggregate_boundary: None,
                 invariants: Vec::new(),

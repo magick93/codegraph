@@ -325,6 +325,12 @@ pub async fn routes_for_entity(
     let machine = design_surface
         .as_ref()
         .and_then(|s| s.machine_for(entity_title));
+    // The machine's kernel registry id (issue #818) — the same derivation
+    // the kernel emitter uses, so the emitted embed and the rendered probe
+    // share one key.
+    let machine_id = design_surface
+        .as_ref()
+        .and_then(|s| s.machine_kernel_id_for(entity_title));
     // Issue #306/#768: the collection projection read calls the entity's
     // `list_filtered`, whose arity grows a `sort: Option<(String, bool)>`
     // argument exactly when the QUERY plane took it — `list` plus a non-empty
@@ -508,6 +514,7 @@ pub async fn routes_for_entity(
                     surface_ops: &surface_ops,
                     record_load,
                     machine: machine.as_ref(),
+                    machine_id: machine_id.as_deref(),
                     raises: &raises,
                     params: &params,
                     throws: &throws,

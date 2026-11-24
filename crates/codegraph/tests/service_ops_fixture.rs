@@ -442,6 +442,8 @@ pub fn authored_boundary_graph() -> codegraph_core::types::DddModelGraph {
                 ..Default::default()
             },
             machine_json: None,
+            machine_ir_json: None,
+            machine_provenance_json: None,
             child_operations: Vec::new(),
             aggregate_boundary: boundary,
             invariants: Vec::new(),

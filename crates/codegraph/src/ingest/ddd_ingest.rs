@@ -293,7 +293,20 @@ pub fn read_and_compile_ddd(path: &Path) -> Result<DddCompiled> {
         schemas: schema_imports,
         sigil,
     };
-    let inputs = CompileInputs::from_domains(&domain_pairs).with_imports(imports);
+    // Machine references (pherolang#388, issue #815): every
+    // `machine <field>: <Enum> from "<path>";` declaration's TypeScript
+    // source, resolved relative to the declaring file (the CLI's own
+    // gather; the driver is filesystem-free and refuses a declared
+    // reference whose content was not provided). Without this gather the
+    // compile hard-errors `referenced machine file '<path>' was not
+    // provided`.
+    let machine_sources =
+        phero_driver::project::gather_ddd_machines(&ddd_path, &source, &mut |resolved| {
+            std::fs::read_to_string(resolved).ok()
+        });
+    let inputs = CompileInputs::from_domains(&domain_pairs)
+        .with_imports(imports)
+        .with_machines(machine_sources);
     let compilation = compile_ddd_str(&ddd_path, &source, &inputs);
     Ok(DddCompiled {
         path: ddd_path,
@@ -478,6 +491,15 @@ pub fn ddd_model_graph_from_phero(
                         expression: inv.expression.clone(),
                     })
                     .collect(),
+                // Issue #815 (pherolang#388): a REFERENCED machine rides
+                // its compiled xstate-ir IR + provenance verbatim — the IR
+                // is opaque pass-through (already canonical upstream, keys
+                // sorted recursively) and the provenance serializes
+                // camelCase. Absent on inline machines and machine-less
+                // designs, so a machine-less artifact maps to a
+                // machine-less node (byte-identical discipline).
+                machine_ir_json: design.machine_ir.clone(),
+                machine_provenance_json: opt_json(design.machine_provenance.as_ref()),
                 ordinal,
             });
             if let Some(repo) = &design.repository {

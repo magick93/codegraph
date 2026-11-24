@@ -186,10 +186,24 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
         handler.contains(r#""data": updated"#),
         "the update leg must return the reloaded record:\n{handler}"
     );
-    // `submit` binds the machine transition and patches the state field.
+    // `submit` binds the machine transition — through the KERNEL now
+    // (issue #818): the runtime probes the op's declared target, the
+    // match arms are retired.
     assert!(
-        handler.contains(r#""Draft" => Some("Calculating")"#),
-        "the machine transition must resolve from the current state:\n{handler}"
+        !handler.contains(r#""Draft" => Some("Calculating")"#),
+        "the retired match-arm spelling must not render:\n{handler}"
+    );
+    assert!(
+        handler.contains(r#"let legal: Vec<&str> = ["Calculating"]"#),
+        "the kernel probe must bake the op's declared target:\n{handler}"
+    );
+    assert!(
+        handler.contains("codegraph_workflow::MachineRuntime::from_json(&machine_ir)"),
+        "the machine-bound op must route through the MachineRuntime:\n{handler}"
+    );
+    assert!(
+        handler.contains("domain_types::machines::machine_json"),
+        "the machine-bound op must load the registry machine:\n{handler}"
     );
     assert!(
         handler.contains(r#"value["pay_run_status"] = serde_json::Value::String"#),
@@ -1364,33 +1378,39 @@ async fn authored_transition_binding_selects_the_declared_transition() {
         );
     }
 
-    // ── handler: the DECLARED transition pair, nothing inferred ──
+    // ── handler: the DECLARED transition target, nothing inferred (the
+    // kernel decides — issue #818: the probe bakes the op's own declared
+    // target; the match arms are retired) ──
     let handler = read(&out.path().join("src/api/release/release_handler.rs"));
     assert!(
-        handler.contains(r#""Held" => Some("SignedOff")"#),
-        "`prepareRelease` must apply its authored Held -> SignedOff:\n{handler}"
+        !handler.contains("match current_state"),
+        "the retired match arms must not render:\n{handler}"
     );
     assert!(
-        handler.contains(r#""SignedOff" => Some("Released")"#),
-        "`finalize` must apply its authored SignedOff -> Released:\n{handler}"
+        handler.contains(r#"let legal: Vec<&str> = ["SignedOff"]"#),
+        "`prepareRelease` must probe its authored Held -> SignedOff:\n{handler}"
+    );
+    assert!(
+        handler.contains(r#"let legal: Vec<&str> = ["Released"]"#),
+        "`finalize` must probe its authored SignedOff -> Released:\n{handler}"
     );
     // The op names resemble no trigger; a heuristic would have selected
-    // NOTHING here, so any other arm is a wrong inference.
+    // NOTHING here, so any other candidate is a wrong inference.
     for inferred in [
-        r#""Held" => Some("Released")"#,
-        r#""SignedOff" => Some("SignedOff")"#,
+        r#"["Released", "SignedOff"]"#,
+        r#"["SignedOff", "Released"]"#,
     ] {
         assert!(
             !handler.contains(inferred),
-            "an inferred arm leaked into the authored binding ({inferred}):\n{handler}"
+            "an inferred candidate leaked into the authored binding ({inferred}):\n{handler}"
         );
     }
 
     // ── the SECOND machine resolves through the enum-type qualifier ──
     let review = read(&out.path().join("src/api/release/review_handler.rs"));
     assert!(
-        review.contains(r#""Pending" => Some("Cleared")"#),
-        "`prepareReview` must apply its authored Pending -> Cleared:\n{review}"
+        review.contains(r#"let legal: Vec<&str> = ["Cleared"]"#),
+        "`prepareReview` must probe its authored Pending -> Cleared:\n{review}"
     );
 
     // ── hurl: declaration order, exact legs ──
@@ -2620,4 +2640,106 @@ async fn domain_error_override_walk_seeds_the_shared_node() {
         .expect("the override node");
     assert_eq!(node.http_status, 409);
     assert_eq!(node.description, "declined by the processor");
+}
+
+// ── issue #818 (Lane 4): the match arms are RETIRED ───────────────────
+
+/// END-STATE grep pin (issue #818, Option A): over a FULL machine-bearing
+/// generation, no emitted handler carries the retired match-arm
+/// vocabulary — `match current_state`, the `from => Some(to)` arm
+/// spelling, or the `let allowed = target == current_state` whitelist
+/// chain — and every machine-bound op routes through the kernel
+/// (the registry machine + the fail-closed `MachineRuntime` probes).
+/// ONE execution path for machine transitions remains.
+#[tokio::test]
+async fn machine_transitions_route_through_the_kernel_and_the_match_arms_are_gone() {
+    let fixture = write_fixture_in("service_ops_kernel_end_state", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    // The kernel artifacts exist for the inline machine: the lowered IR
+    // embed + the registry module inside the domain-types crate.
+    let registry =
+        fs::read_to_string(domain_types.path().join("src/machines/mod.rs")).expect("registry");
+    assert!(
+        registry.contains(r#""payroll_pay_run_status""#),
+        "the inline machine registers under its derived id: {registry}"
+    );
+    assert!(
+        domain_types
+            .path()
+            .join("src/machines/payroll/payroll_pay_run_status.ir.json")
+            .exists(),
+        "the lowered IR lands at machines/{{domain}}/{{id}}.ir.json"
+    );
+
+    // The retired vocabulary is gone from EVERY emitted handler.
+    let handler_dir = out.path().join("src/api/payroll");
+    let mut handlers = Vec::new();
+    for entry in fs::read_dir(&handler_dir).expect("handler dir") {
+        let path = entry.expect("entry").path();
+        if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            handlers.push((path.clone(), fs::read_to_string(&path).unwrap()));
+        }
+    }
+    assert!(
+        !handlers.is_empty(),
+        "the fixture emits handlers under {handler_dir:?}"
+    );
+    for (path, body) in &handlers {
+        assert!(
+            !body.contains("match current_state"),
+            "the retired match arm must not render in {}: {}",
+            path.display(),
+            body
+        );
+        assert!(
+            !body.contains("=> Some(\n") && !body.contains(r#" => Some(""#),
+            "the retired arm spelling must not render in {}:\n{body}",
+            path.display()
+        );
+        assert!(
+            !body.contains("let allowed = target == current_state"),
+            "the retired whitelist chain must not render in {}:\n{body}",
+            path.display()
+        );
+    }
+
+    // The machine-bound ops route through the kernel, positively: the
+    // runtime construction + the per-pair probes.
+    let handler = read(&handler_dir.join("pay_run_handler.rs"));
+    assert!(
+        handler.contains("codegraph_workflow::MachineRuntime::from_json(&machine_ir)"),
+        "the machine-bound op builds the runtime:\n{handler}"
+    );
+    assert!(
+        handler.contains("domain_types::machines::machine_json(\"payroll_pay_run_status\")"),
+        "the machine-bound op loads its registry machine:\n{handler}"
+    );
+    assert!(
+        handler.contains("runtime.transition_for(&current_state"),
+        "the machine-bound op probes through the kernel:\n{handler}"
+    );
+
+    // The hurl actions contract is UNCHANGED in shape: the state-aware
+    // legs still simulate from `initial` — wired transitions 200, the
+    // guaranteed wrong-state replay 409, the seam 501.
+    let actions = read(&actions_file(out.path(), "_pay_run_actions.hurl"));
+    assert_eq!(status_after(&actions, "/actions/submit"), Some(200));
+    assert_eq!(status_after(&actions, "/actions/approve"), Some(200));
+    // `reverse` is out of order from the simulated state → 409; the
+    // final replay proves the wrong-state edge again.
+    assert_eq!(status_after(&actions, "/actions/reverse"), Some(409));
+    assert_eq!(status_after(&actions, "/actions/notify"), Some(501));
 }

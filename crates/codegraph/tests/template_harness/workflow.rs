@@ -181,7 +181,11 @@ async fn workflow_seed_global() {
         .await
         .unwrap();
 
-    assert_eq!(files.len(), 1, "Should generate one workflow seed file");
+    assert_eq!(
+        files.len(),
+        2,
+        "Should generate the legacy seed (0006) plus the machine-envelope upgrade (0007, issue #816)"
+    );
     let content = &files[0].content;
     assert!(
         content.contains("INSERT INTO platform.workflow_definition"),
@@ -204,6 +208,13 @@ async fn workflow_seed_global() {
         content.contains("transitions"),
         "Should contain transitions in state_machine JSON. Got:\n{}",
         content
+    );
+    // The machine-envelope upgrade (0007) follows (issue #816): the
+    // canonical kernel envelope + the write-both reconciliation step.
+    let machine_seed = &files[1].content;
+    assert!(
+        machine_seed.contains("state_machine"),
+        "0007 must carry the machine kernel envelope. Got:\n{machine_seed}"
     );
 }
 

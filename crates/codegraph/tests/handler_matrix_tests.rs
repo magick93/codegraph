@@ -415,6 +415,7 @@ fn root_service_ops() -> Value {
         "current_expr": "response.status.clone().unwrap_or_default()",
         "wire_key": "status",
         "initial": "Draft",
+        "machine_id": "common_status",
         "all": [
             { "from": "Draft", "to": "Submitted" },
             { "from": "Submitted", "to": "Approved" },
@@ -448,6 +449,7 @@ fn root_service_ops() -> Value {
                 "current_expr": "response.status.clone().unwrap_or_default()",
                 "wire_key": "status",
                 "initial": "Draft",
+        "machine_id": "common_status",
                 "all": [
                     { "from": "Draft", "to": "Submitted" },
                     { "from": "Submitted", "to": "Approved" },
@@ -735,6 +737,7 @@ fn child_service_ops() -> Value {
                 "current_expr": "response.status.clone().unwrap_or_default()",
                 "wire_key": "status",
                 "initial": "Draft",
+        "machine_id": "common_status",
                 "all": [
                     { "from": "Draft", "to": "Approved" },
                 ],

@@ -88,6 +88,8 @@ impl GrafeoEngine {
              d.resolved_title AS resolved_title, d.stereotype AS stereotype, \
              d.is_abstract AS is_abstract, d.flags_json AS flags_json, \
              d.machine_json AS machine_json, \
+             d.machine_ir_json AS machine_ir_json, \
+             d.machine_provenance_json AS machine_provenance_json, \
              d.child_operations_json AS child_operations_json, \
              d.aggregate_json AS aggregate_json, \
              d.invariants_json AS invariants_json, d.ordinal AS ordinal",
@@ -105,6 +107,13 @@ impl GrafeoEngine {
                 is_abstract: reader.get_bool(row, "is_abstract")?,
                 flags: parse_json(reader.get_opt_string(row, "flags_json")?),
                 machine_json: parse_opt_json(reader.get_opt_string(row, "machine_json")?),
+                // Issue #815 (pherolang#388): absent on a pre-#815 node
+                // (the format bump cold-re-ingests those) — serde defaults
+                // restore no IR and no provenance.
+                machine_ir_json: parse_opt_json(reader.get_opt_string(row, "machine_ir_json")?),
+                machine_provenance_json: parse_opt_json(
+                    reader.get_opt_string(row, "machine_provenance_json")?,
+                ),
                 // Issue #661: absent on a pre-child-ops node (the format bump
                 // cold-re-ingests those) — default to no child operations.
                 child_operations: parse_json(reader.get_opt_string(row, "child_operations_json")?),

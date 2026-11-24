@@ -1,0 +1,11 @@
+package nz.example.payroll
+
+enum PayRunStatus {
+    Draft as "Draft" = 0
+    Calculated as "Calculated" = 1
+}
+
+class PayRunType {
+    String label
+    PayRunStatus status
+}

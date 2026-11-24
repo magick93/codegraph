@@ -23,7 +23,7 @@ use super::spec_payload::{
     UxColumnCheck, UxMenuCheck, UxTimelineCheck, UxViewTest, ViewTestSpec,
 };
 use crate::ux::plan::{UxPlanInput, build_ux_plan};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[test]
 fn url_pattern_sorts_bindings_and_substitutes_expressions() {
@@ -669,6 +669,7 @@ fn ux_chip_checks_pin_the_workflow_status_to_the_initial_state() {
     // set the status field, and the DDL default materializes it, so the
     // created row's chip shows the initial state and its tone variant.
     let workflow = RenderWorkflow {
+        machine: None,
         status_field: "status".to_string(),
         states: vec!["draft".to_string(), "approved".to_string()],
         terminal_states: vec!["approved".to_string()],
@@ -905,6 +906,7 @@ entities = []
             false,
             &[],
             Vec::new(),
+            &HashSet::new(),
         );
         let files = pom_file_set(&[("customer-list", &pom)]);
         let paths: Vec<String> = files
@@ -1137,6 +1139,7 @@ entities = ["CustomerType"]
         true,
         &[],
         Vec::new(),
+        &std::collections::HashSet::new(),
     );
     // The plan carries no components — inject the primary root the way the
     // assembler does for mapped details views.

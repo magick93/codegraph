@@ -188,6 +188,44 @@ pub struct TransitionStep {
     pub to_testid: String,
 }
 
+// ── Machine read-model specs (issue #817) ────────────────────────────────────
+
+/// One view's `{view}.machine.spec.ts` (issue #817): the machine-bearing
+/// entity's read model asserted THROUGH the POM — the rendered badge and
+/// button set must equal the kernel-derived payload (render), a click
+/// advances the state and the button set (transition), and a transition
+/// the read model does not offer pins the 409 (the UI never rendered it —
+/// the read model and the kernel agree). Empty per component when the
+/// entity is machine-less (no file at all — payload gating).
+#[derive(Debug)]
+pub struct MachineTest {
+    /// Human-readable component name used in the test title.
+    pub component_name: String,
+    pub id_param: Option<String>,
+    /// The read-model route segment: `machine` (machine-only entity) or
+    /// `workflow` (dual entity — the merged payload's `machine` object).
+    pub read_model_route: String,
+    /// The seeded row's state (the machine's initial — the create DTO
+    /// excludes workflow-managed fields and the DDL default materializes
+    /// the initial state).
+    pub initial_state: String,
+    /// The transition leg (dual entities only — machine-only entities
+    /// have no transition POST endpoint): the initial state's first
+    /// offered edge.
+    pub transition: Option<MachineTransitionLeg>,
+    /// A target the read model does NOT offer (the 409 leg) — `None`
+    /// omits the leg (the FreshFixtureGuard posture: never guess).
+    pub conflict_target: Option<String>,
+    pub fixture: Fixture,
+}
+
+/// The offered edge a machine spec clicks (the spec reads the event off
+/// the read model at runtime; the plan pins the offered target).
+#[derive(Debug)]
+pub struct MachineTransitionLeg {
+    pub to: String,
+}
+
 // ── Action specs (WS6) ───────────────────────────────────────────────────────
 
 /// One view's `{view}.action.spec.ts` (WS6): the manifest-proven,

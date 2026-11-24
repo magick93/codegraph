@@ -1,0 +1,12 @@
+import "model.mox";
+
+application MachineKernel {
+    base nz.example.payroll
+    module payroll {
+        entity PayRunType repository PayRunRepository {
+            findById;
+            save;
+        }
+        machine status: PayRunStatus from "machines/payrun.machine.ts";
+    }
+}

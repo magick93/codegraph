@@ -1,0 +1,36 @@
+import "../model/recruiting.mox";
+
+// Issue #807 repro: the machine is declared at module level and binds to
+// the NON-ROOT entity Application via its enum-typed `disposition` field.
+// Its machine NAME (`disposition`) matches no class title — that mismatch
+// is what the mint-site fix must keep off the schema plane.
+application Recruiting {
+    base nz.example.recruiting
+    module recruiting {
+        entity CandidateType scaffold repository CandidateRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        /// A non-root entity inside the candidate aggregate.
+        entity Application
+        /// The disposition machine on Application.disposition.
+        machine disposition: ApplicationDisposition {
+            initial New;
+            New -> Screening via Advance;
+            Screening -> Interviewing via Advance;
+            Interviewing -> Offer via ExtendOffer;
+            Offer -> Hired via Advance;
+            New -> Rejected via Reject;
+            Screening -> Rejected via Reject;
+            Interviewing -> Rejected via Reject;
+            Offer -> Rejected via Reject;
+            terminal Hired;
+            terminal Rejected;
+        }
+        /// A sibling value with scalar members (the wrong-sibling columns
+        /// the phantom query file used to select).
+        value ApplicationHistoryStep
+    }
+}

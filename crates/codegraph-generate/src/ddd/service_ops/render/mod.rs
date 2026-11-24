@@ -126,6 +126,7 @@ mod tests {
             current_expr: "response.status.clone().unwrap_or_default()".to_string(),
             wire_key: WireKey::new("status"),
             initial: StateName::new("Draft"),
+            machine_id: "common_status".to_string(),
             all: Vec::new(),
             op: Vec::new(),
         };

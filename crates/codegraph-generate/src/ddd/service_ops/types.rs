@@ -93,6 +93,14 @@ pub struct ServiceOpTransition {
 /// The machine-field binding an executable save/update delegation carries
 /// (P0.5/P0): the state field on the response, its DTO wire key, the
 /// machine's initial state, and the transitions this operation may apply.
+///
+/// Since issue #818 the RENDERED handler no longer enumerates `(from, to)`
+/// pairs: the machine decides, through
+/// `codegraph_workflow::MachineRuntime::transition_for` probes over the
+/// registry machine this id names. The pair lists remain PLANNER-side
+/// facts — the hurl contract's state simulation, the IFML action planner
+/// and the e2e plans walk them — and the renderer bakes the probe
+/// CANDIDATES (the target sets) from them.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ServiceOpState {
     /// Rust expression producing the record's current state as a `String`
@@ -103,11 +111,18 @@ pub struct ServiceOpState {
     /// The machine's declared initial state — the hurl contract's starting
     /// point when simulating the action sequence.
     pub initial: StateName,
+    /// The machine's registry id — the domain-types `machines` key the
+    /// rendered kernel probe loads (`machines::machine_json(id)`).
+    #[serde(default)]
+    pub machine_id: String,
     /// Every machine transition — the body-driven target whitelist when the
-    /// op has no name/guard/capability binding.
+    /// op has no name/guard/capability binding. Planner-side: the renderer
+    /// bakes the probe candidate set from the targets.
     pub all: Vec<ServiceOpTransition>,
     /// The transitions this op applies, selected at runtime by the current
     /// state. Empty = the op performs no state transition of its own.
+    /// Planner-side: the renderer bakes the probe candidate set from the
+    /// targets.
     pub op: Vec<ServiceOpTransition>,
 }
 

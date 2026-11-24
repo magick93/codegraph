@@ -703,7 +703,7 @@ fn a_newer_format_version_names_the_upgrade() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
         errors[0].contains(
-            "unsupported DDD design artifact formatVersion 99: this tool reads formatVersion 2 \
+            "unsupported DDD design artifact formatVersion 99: this tool reads formatVersion 3 \
              — regenerate the artifact with a matching pherolang version"
         ),
         "the version gate is upstream's wording (naming the fix): {errors:?}"

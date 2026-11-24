@@ -35,7 +35,7 @@
 //! Method naming: `open(params)` navigates (NOT `goto` — that would clash
 //! with `BasePage`'s raw-path goto under the TS type checker).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use codegraph_config::ux::UxRules;
@@ -172,6 +172,11 @@ pub(crate) struct PomWorkflowMethods {
     /// `(state, button testid)` — the same edge enumeration the route
     /// generator's transition buttons render.
     pub transitions: Vec<(String, String)>,
+    /// Machine-bearing entity (issue #817): the page class gains the
+    /// machine read-model methods (`machineState` / `machineTransitions`
+    /// / `machineTransition(event)`), and the spec family asserts the
+    /// rendered set against the kernel-derived payload.
+    pub machine: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -272,6 +277,7 @@ pub(crate) fn build_view_pom(
     auth_enabled: bool,
     journey_steps: &[PomJourneyStep],
     actions: Vec<super::pom::PomAction>,
+    machine_entities: &HashSet<String>,
 ) -> ViewPom {
     let mut pom = ViewPom {
         view_name: vc.name.clone(),
@@ -343,7 +349,14 @@ pub(crate) fn build_view_pom(
             .entity
             .as_deref()
             .and_then(|entity| workflow_for_entity(config, entity))
-            .map(|wf| pom_workflow_methods(&wf, &c.name, is_collection(c)));
+            .map(|wf| {
+                pom_workflow_methods(
+                    &wf,
+                    &c.name,
+                    is_collection(c),
+                    machine_entity(config, machine_entities, c.entity.as_deref()),
+                )
+            });
         let ux_table = match rules {
             Some(r) if !is_component_mapped(mappings, vc, c) => c
                 .entity
@@ -390,7 +403,14 @@ pub(crate) fn build_view_pom(
             .entity
             .as_deref()
             .and_then(|entity| workflow_for_entity(config, entity))
-            .map(|wf| pom_workflow_methods(&wf, &c.name, is_collection(c)));
+            .map(|wf| {
+                pom_workflow_methods(
+                    &wf,
+                    &c.name,
+                    is_collection(c),
+                    machine_entity(config, machine_entities, c.entity.as_deref()),
+                )
+            });
         pom.forms.push(PomForm {
             name: c.name.clone(),
             pascal: to_pascal_case(&c.name),
@@ -415,7 +435,14 @@ pub(crate) fn build_view_pom(
             .entity
             .as_deref()
             .and_then(|entity| workflow_for_entity(config, entity))
-            .map(|wf| pom_workflow_methods(&wf, &c.name, is_collection(c)));
+            .map(|wf| {
+                pom_workflow_methods(
+                    &wf,
+                    &c.name,
+                    is_collection(c),
+                    machine_entity(config, machine_entities, c.entity.as_deref()),
+                )
+            });
         pom.details.push(PomDetails {
             name: c.name.clone(),
             root_testid,
@@ -509,6 +536,7 @@ fn pom_workflow_methods(
     workflow: &super::super::route_generator::RenderWorkflow,
     component: &str,
     is_collection: bool,
+    machine: bool,
 ) -> PomWorkflowMethods {
     let mut transitions: Vec<(String, String)> = if workflow.transition_map.is_empty() {
         workflow
@@ -543,7 +571,23 @@ fn pom_workflow_methods(
     PomWorkflowMethods {
         is_collection,
         transitions,
+        machine,
     }
+}
+
+/// Whether the component's bound entity is machine-bearing: the prebuilt
+/// set of graph-resolved machine titles, checked with the SAME
+/// plain/`{entity}Type` chain `workflow_for_entity` uses.
+fn machine_entity(
+    config: &DomainConfig,
+    machine_entities: &HashSet<String>,
+    entity: Option<&str>,
+) -> bool {
+    let Some(entity) = entity else {
+        return false;
+    };
+    machine_entities.contains(entity)
+        || machine_entities.contains(&format!("{entity}{}", config.defaults.type_suffix))
 }
 
 fn is_component_mapped(
@@ -791,6 +835,7 @@ received = ["review"]
             false,
             &[],
             Vec::new(),
+            &HashSet::new(),
         );
         let rendered = render_pom_page(&bare);
         assert!(
@@ -904,6 +949,7 @@ received = ["review"]
             false,
             &[],
             Vec::new(),
+            &HashSet::new(),
         );
         let rendered = render_pom_page(&full);
         assert!(
@@ -962,6 +1008,7 @@ entities = []
             false,
             &[],
             Vec::new(),
+            &HashSet::new(),
         );
         let rendered = render_pom_page(&pom);
         assert!(rendered.contains("heading(): Locator"), "{rendered}");
@@ -990,6 +1037,7 @@ entities = []
             false,
             &[],
             Vec::new(),
+            &HashSet::new(),
         );
         let rendered = render_pom_page(&pom);
         assert!(
@@ -1120,6 +1168,7 @@ entities = []
             true,
             &journey_steps,
             Vec::new(),
+            &HashSet::new(),
         );
         let rendered = render_pom_page(&on);
         assert!(
@@ -1152,6 +1201,7 @@ entities = []
             true,
             &[],
             Vec::new(),
+            &HashSet::new(),
         );
         let guarded_rendered = render_pom_page(&guarded_on);
         assert!(
@@ -1174,6 +1224,7 @@ entities = []
             false,
             &[],
             Vec::new(),
+            &HashSet::new(),
         );
         let off_rendered = render_pom_page(&off);
         assert!(
@@ -1195,6 +1246,7 @@ entities = []
             false,
             &[],
             Vec::new(),
+            &HashSet::new(),
         );
         let guarded_off_rendered = render_pom_page(&guarded_off);
         assert!(
@@ -1218,6 +1270,7 @@ entities = []
             true,
             &journey_steps,
             Vec::new(),
+            &HashSet::new(),
         );
         let form_rendered = render_pom_page(&form_pom);
         assert!(

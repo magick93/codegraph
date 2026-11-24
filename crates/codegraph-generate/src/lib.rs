@@ -34,6 +34,7 @@ pub mod fern;
 pub mod grpc;
 pub mod hooks;
 pub mod integration;
+pub mod machines;
 pub mod ops;
 pub mod playwright;
 pub mod scaffold;

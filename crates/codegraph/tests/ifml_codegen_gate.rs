@@ -831,6 +831,16 @@ fn assert_categories(titles: &[String]) {
     // route 503s without a configured provider, so the round trip is the
     // entity plane's spec).
     let media = has(&|t| t.starts_with("media file control renders for "));
+    // Machine read model (issue #817): render (badge + buttons equal the
+    // kernel-derived payload), transition (click advances state + offered
+    // set), and the 409 leg (a transition the read model does not offer —
+    // the UI never rendered it; the read model and the kernel agree).
+    let machine_render = has(&|t| {
+        t.starts_with("machine read model for ") && t.contains("matches the rendered buttons")
+    });
+    let machine_transition = has(&|t| t.starts_with("machine transition advances "));
+    let machine_conflict =
+        has(&|t| t.contains("does not offer") && t.ends_with("is a 409 for claim_info"));
 
     let missing: Vec<&str> = [
         ("render", render),
@@ -851,6 +861,9 @@ fn assert_categories(titles: &[String]) {
         ("action forbidden", action_forbidden),
         ("action seam", action_seam),
         ("media", media),
+        ("machine render", machine_render),
+        ("machine transition", machine_transition),
+        ("machine 409", machine_conflict),
     ]
     .iter()
     .filter(|(_, present)| !present)

@@ -472,6 +472,18 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
     // unconditionally and runs on every plan (the functions_sql precedent).
     global_gens
         .push(Box::new(media::MediaStorageGenerator::new(output_dir)) as Box<dyn GlobalGenerator>);
+    // Machine kernel (issue #815): the compiled artifact's `machine_ir`
+    // blobs are the flag, not the generator list — presence-gated inside
+    // (no machine ⇒ zero files), so it registers unconditionally and runs
+    // on every plan (the media_storage precedent). Home: the domain-types
+    // crate (sea_orm-free, wasm32-safe, both topologies reach it).
+    global_gens.push(
+        Box::new(crate::machines::MachineKernelGenerator::new_with_base(
+            ctx.domain_types_base
+                .map(|b| b.to_path_buf())
+                .unwrap_or_else(|| output_dir.to_path_buf()),
+        )) as Box<dyn GlobalGenerator>,
+    );
     // Demo-data seed module + CLI (opt-in via the `seed_provision` capability).
     if ctx.capabilities.has(Capability::Seed) {
         global_gens.push(
@@ -591,6 +603,7 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
                 generator.name() == "evt_events" && evt_events_implied
                     || generator.name() == "functions_sql"
                     || generator.name() == "media_storage"
+                    || generator.name() == "machine_kernel"
                     || generator.name() == "webhook_dispatch" && function_event_bindings
                     || { ctx.plan_has_global(generator.name()) }
             }

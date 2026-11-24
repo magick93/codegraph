@@ -59,6 +59,12 @@ pub struct ScaffoldContext {
     /// `pub mod media;` in lib.rs. Skipped when false (byte-identity).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub has_media: bool,
+    /// Whether any machine IR names a guard (issue #816) — the AppState's
+    /// workflow service registers the generated machines module's
+    /// `DefaultMachineGuards` so implemented guards evaluate. Skipped when
+    /// false (byte-identity).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub has_machine_guards: bool,
     /// Resolved path (relative to the output dir when possible) of the
     /// `hr-seed` crate, discovered by walking up from the output dir and
     /// CWD looking for a sibling `hr-seed` directory.
@@ -411,6 +417,10 @@ impl GlobalGenerator for ScaffoldGenerator {
     ) -> Result<Vec<GeneratedFile>> {
         let domains = build_scaffold_domains(db, config, generation_order).await?;
         let has_media = domains.iter().any(|d| d.media.is_some());
+        // The guard seam (issue #816): any machine IR naming a guard wires
+        // the generated `DefaultMachineGuards` into the AppState's workflow
+        // service (`with_guards`).
+        let has_machine_guards = crate::machines::graph_has_machine_guards(db).await;
 
         // Compute absolute output dir (shared by all path calculations)
         let abs_output = if self.output_dir.is_absolute() {
@@ -478,6 +488,7 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_events,
             has_function_events,
             has_media,
+            has_machine_guards,
             seed_crate_path,
             migration_strategy: self.migration_strategy.clone(),
         };
@@ -811,6 +822,7 @@ mod tests {
             has_events: false,
             has_function_events: false,
             has_media: false,
+            has_machine_guards: false,
             seed_crate_path: String::new(),
             migration_strategy: "sea-orm".to_string(),
         }

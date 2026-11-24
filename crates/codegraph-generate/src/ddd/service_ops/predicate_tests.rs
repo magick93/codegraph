@@ -65,6 +65,8 @@ fn predicate_model() -> codegraph_core::types::DddModelGraph {
             is_abstract: false,
             flags: Default::default(),
             machine_json: None,
+            machine_ir_json: None,
+            machine_provenance_json: None,
             aggregate_boundary: None,
             invariants: Vec::new(),
             child_operations: Vec::new(),

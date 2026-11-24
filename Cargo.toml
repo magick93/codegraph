@@ -58,7 +58,23 @@ tree-sitter-language = "0.1"
 # auto-lsp 0.6.2, and phero-driver brings 0.28.5 (which clears
 # RUSTSEC-2026-0308). A direct upgrade is still gated on the same auto-lsp
 # release as tree-sitter above (issue #423).
-# phero-* @ 4f497e1: epic pherolang#328's SK4–SK6 (PR #337, merged
+# phero-* @ 958acd0b: the machine-reference era (pherolang#387/#388, 28
+# commits past 4f497e1). `.ddd` machine declarations may AUTHOR their
+# lifecycle in TypeScript/XState — `machine <field>: <Enum> from
+# "machines/payrun.machine.ts";` — and the compiled artifact embeds the
+# canonical `xstate_ir::Machine` JSON (`machineIr`, keys sorted
+# recursively) plus provenance (`machineProvenance`: path, machineId,
+# contentSha256 over the canonical IR — recomputable, so the embed is
+# tamper-evident). `DDD_MODEL_FORMAT_VERSION` 2 → 3 rides the same bump,
+# so the committed DDD golden moves by exactly that stamp. The bump also
+# carries: resolved event identities (`Design.emits` against `.evt`
+# contracts), intent traceability (`.intent` nodes + edges), the
+# design-contract hardening (DF1–DF4), and the RETIREMENT of the `extend`
+# child-op alias (DF4 — the grammar now accepts only `children <Class>`;
+# our sources already spell it that way). codegraph consumes the machine
+# mirror in Lane 1 of epic #812 (issue #815); the restingstate pin below
+# is the fail-closed parser that validates the embed.
+# Previous pin: phero-* @ 4f497e1: epic pherolang#328's SK4–SK6 (PR #337, merged
 # 2026-11-17). The public `compile_*_str` entry points now take one inert
 # `phero_driver::CompileInputs` bundle instead of parallel `(path, payload)`
 # slices; the `_with_actors`/`_with_decisions`/`_with_designs` variants are
@@ -100,19 +116,19 @@ tree-sitter-language = "0.1"
 # stays on 69115a7 — upstream's own pin, so lockstep is a no-op.
 # Previous pin (for the history): phero-* @ 1fe0ca9 — the pherolang PR #174
 # dedup sweep; artifacts carried `rexVersion` with formatVersion 1.
-phero-ir = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
-phero-driver = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
+phero-ir = { git = "https://github.com/yestechgroup/pherolang.git", rev = "958acd0b1870b296bd80f5f7c6bf876d9a1187c4" }
+phero-driver = { git = "https://github.com/yestechgroup/pherolang.git", rev = "958acd0b1870b296bd80f5f7c6bf876d9a1187c4" }
 # `phero-syntax` owns the compiler's PUBLIC word tables (`words::KEYWORDS`,
 # `words::MOX_CONTEXTUAL`) — `codegraph migrate` escapes emitted identifiers
 # from them instead of a hand-copied list (issue #668).
-phero-syntax = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
-phero-expr = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
-phero-ifml = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
+phero-syntax = { git = "https://github.com/yestechgroup/pherolang.git", rev = "958acd0b1870b296bd80f5f7c6bf876d9a1187c4" }
+phero-expr = { git = "https://github.com/yestechgroup/pherolang.git", rev = "958acd0b1870b296bd80f5f7c6bf876d9a1187c4" }
+phero-ifml = { git = "https://github.com/yestechgroup/pherolang.git", rev = "958acd0b1870b296bd80f5f7c6bf876d9a1187c4" }
 # `phero-backend-common` owns the ONE structural-key corpus (`STRUCTURAL_KEYS`)
 # and its inverse `camel_case` — the snake_case-shadow detector in
 # `artifact_check_tests` binary-searches exactly that list (issue #674), so
 # the corpus is not hand-copied. Dependency closure is anyhow + serde_json only.
-phero-backend-common = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
+phero-backend-common = { git = "https://github.com/yestechgroup/pherolang.git", rev = "958acd0b1870b296bd80f5f7c6bf876d9a1187c4" }
 # Sigil (Rune DSL / .rosetta) — issue #255. Pinned by rev like the pherolang
 # crates; depended on from `crates/codegraph` ONLY (no sigil deps may leak
 # into codegraph-generate / codegraph-core). Pinned to the SAME rev pherolang
@@ -122,6 +138,17 @@ sigil-model = { git = "https://github.com/yestechgroup/sigil.git", rev = "69115a
 sigil-resolve = { git = "https://github.com/yestechgroup/sigil.git", rev = "69115a79999e6ff2ce04c039a71edac6d8ba2468" }
 sigil-syntax = { git = "https://github.com/yestechgroup/sigil.git", rev = "69115a79999e6ff2ce04c039a71edac6d8ba2468" }
 sigil-diag = { git = "https://github.com/yestechgroup/sigil.git", rev = "69115a79999e6ff2ce04c039a71edac6d8ba2468" }
+# restingstate (XState-compatible statechart compiler/runtime) — issue #815,
+# Lane 1 of epic #812. `xstate-core` re-exports `xstate_ir` (the `Machine`
+# IR the pherolang artifact embeds as `machineIr`), the fail-closed
+# `validate_machine_json` boundary, and the interpreter/snapshot surface
+# Stages 2–3 build on. Pinned by rev like the pherolang crates — pherolang
+# itself pins this same rev for its #387/#388 machine-reference work, so
+# exactly ONE restingstate version exists in the tree; move ONLY in
+# lockstep with a `phero-*` bump. `default-features = false` drops the
+# `async` feature's tokio dep (the machine kernel is static data + pure
+# validation; wasm32-safe by construction).
+xstate-core = { git = "https://github.com/yestechgroup/restingstate.git", rev = "da0c804d3c30a0bcc938562e39a4b7d7505c663b", default-features = false }
 
 # Performance profiling profile (issues #469/#471): release optimizations with
 # symbols intact so samply / hotpath-cpu can attribute samples. Build with

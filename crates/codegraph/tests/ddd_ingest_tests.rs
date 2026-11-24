@@ -32,6 +32,38 @@ fn class_ref(package: &str, name: &str) -> TypeRef {
     }
 }
 
+/// The canonical `xstate_ir::Machine` JSON a referenced machine embeds as
+/// (issue #815) — the exact shape pherolang serializes (snake_case field
+/// names, canonicalized keys). Kept as a helper so the machine-kernel gate
+/// in `machine_kernel_tests.rs` can reuse the literal.
+pub(crate) fn book_machine_ir_json() -> serde_json::Value {
+    serde_json::json!({
+        "context": {"fields": []},
+        "id": "book-lifecycle",
+        "initial": "Draft",
+        "setup": null,
+        "states": [
+            {
+                "children": [], "description": null, "entry": [], "exit": [],
+                "initial": null, "invoke": null, "name": "Draft",
+                "on_done": [], "output": null, "tags": [],
+                "transitions": [{
+                    "actions": [], "description": null, "event": "PUBLISH",
+                    "guard": null, "target": "Published", "targets": []
+                }],
+                "type": "atomic"
+            },
+            {
+                "children": [], "description": null, "entry": [], "exit": [],
+                "initial": null, "invoke": null, "name": "Published",
+                "on_done": [], "output": null, "tags": [],
+                "transitions": [],
+                "type": "final"
+            }
+        ]
+    })
+}
+
 /// A `DddParam` (DD3: the signature slot is a `DddTypeRef`).
 fn param(name: &str, type_: TypeRef, multiplicity: Option<Multiplicity>) -> DddParam {
     DddParam::new(name, DddTypeRef::domain(type_)).with_multiplicity(multiplicity)
@@ -55,6 +87,16 @@ fn sample_model() -> DddModel {
         non_persistent: false,
         cache: true,
     };
+    // Issue #815: a REFERENCED machine — the compiled artifact embeds the
+    // canonical xstate-ir `Machine` JSON plus provenance. No upstream
+    // setter exists, so the fields are assigned directly (the `Design::new`
+    // constructor initializes them to `None`).
+    book.machine_ir = Some(book_machine_ir_json());
+    book.machine_provenance = Some(phero_ir::ddd::MachineProvenance::new(
+        "machines/book.machine.ts",
+        "book-lifecycle",
+        "5aca796db97ff88b925f8bf6cdd2c2c50bc9aa7828ff9dc1422e1108238c2757",
+    ));
     book.repository = Some(Repository {
         name: "BookRepository".to_string(),
         operations: vec![
@@ -413,6 +455,40 @@ fn conversion_maps_module_major_order_and_every_payload() {
     assert_eq!(chapter.class, "nz.example.library.Chapter");
     assert_eq!(chapter.ordinal, 0, "ordinals restart per module");
 
+    // Issue #815: the referenced machine's compiled IR + provenance mirror
+    // verbatim — the IR is opaque `serde_json::Value` pass-through (the
+    // `machine_json` discipline) and the provenance serializes camelCase.
+    let ir = book.machine_ir_json.as_ref().expect("machine IR mirrors");
+    assert_eq!(
+        ir.get("id").and_then(|v| v.as_str()),
+        Some("book-lifecycle")
+    );
+    assert_eq!(
+        ir.get("initial").and_then(|v| v.as_str()),
+        Some("Draft"),
+        "the IR is the xstate-ir Machine shape, not the DSL mirror"
+    );
+    let prov = book
+        .machine_provenance_json
+        .as_ref()
+        .expect("machine provenance mirrors");
+    assert_eq!(
+        prov.get("path").and_then(|v| v.as_str()),
+        Some("machines/book.machine.ts")
+    );
+    assert_eq!(
+        prov.get("machineId").and_then(|v| v.as_str()),
+        Some("book-lifecycle")
+    );
+    assert_eq!(
+        prov.get("contentSha256").and_then(|v| v.as_str()),
+        Some("5aca796db97ff88b925f8bf6cdd2c2c50bc9aa7828ff9dc1422e1108238c2757")
+    );
+    // A machine-less design carries neither key (the byte-identical
+    // discipline).
+    assert_eq!(money.machine_ir_json, None);
+    assert_eq!(money.machine_provenance_json, None);
+
     // DD4/DD5 (issue #666): the authored aggregate boundary rides as ONE
     // typed blob (`aggregate_boundary`) — the root verdict and the member
     // membership keep their authored semantics, the membership's root
@@ -624,6 +700,15 @@ async fn authored_aggregate_boundary_and_invariants_round_trip_through_the_mock(
         is_abstract: false,
         flags: DddDesignFlags::default(),
         machine_json: None,
+        // Issue #815: the machine kernel blobs ride the graph like the
+        // boundary/invariant blobs — one JSON prop per concern.
+        machine_ir_json: Some(book_machine_ir_json()),
+        machine_provenance_json: Some(serde_json::json!({
+            "path": "machines/book.machine.ts",
+            "machineId": "book-lifecycle",
+            "contentSha256":
+                "5aca796db97ff88b925f8bf6cdd2c2c50bc9aa7828ff9dc1422e1108238c2757"
+        })),
         child_operations: Vec::new(),
         aggregate_boundary: Some(DddAggregateBoundary {
             is_root: Some(true),
@@ -648,6 +733,8 @@ async fn authored_aggregate_boundary_and_invariants_round_trip_through_the_mock(
         is_abstract: false,
         flags: DddDesignFlags::default(),
         machine_json: None,
+        machine_ir_json: None,
+        machine_provenance_json: None,
         child_operations: Vec::new(),
         aggregate_boundary: Some(DddAggregateBoundary {
             is_root: Some(false),
@@ -690,7 +777,8 @@ async fn authored_aggregate_boundary_and_invariants_round_trip_through_the_mock(
     assert_eq!(loaded.len(), 1);
     assert_eq!(
         loaded[0], graph,
-        "the boundary blob and the invariants round-trip losslessly"
+        "the boundary blob, the invariants, and the machine kernel blobs \
+         round-trip losslessly"
     );
 }
 

@@ -1,0 +1,10 @@
+# Issue #807 repro fixture: one recruiting domain, mox-first (no entities
+# key — entity vs value object is author-declarative).
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+api_version = "v1"
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting"
+postgres_schema = "recruiting"

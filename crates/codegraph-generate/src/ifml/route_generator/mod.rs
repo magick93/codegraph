@@ -44,6 +44,30 @@ pub(crate) use render::{
 };
 pub(crate) use workflow::workflow_for_entity;
 
+/// Node-free pin support (issue #817): renders a machine-ONLY module's
+/// read-model surface — one machine query + its `query.live` stream, both
+/// on `/machine`, the payload normalized into the `workflow_state` shape
+/// the page's badge and buttons read. This is the surface a machine-only
+/// entity's `data.remote.ts` gains (the fixture's dual entity keeps the
+/// extended workflow poll instead — the cross-crate pin asserts BOTH
+/// contracts through this helper).
+pub fn tests_support_machine_module() -> String {
+    let mut module = super::route_generator::remote::RemoteModuleContext::empty();
+    module
+        .queries
+        .push(super::route_generator::remote::RemoteQuery {
+            export: "getClaimInfoMachine".to_string(),
+            base_path: "/api/v1/claims/claim".to_string(),
+            entity: "claim".to_string(),
+            paginate: false,
+            workflow: false,
+            machine: true,
+            by_id: true,
+        });
+    module.live = true;
+    module.render()
+}
+
 /// The shared control-inference entry over `(rust_type, field_name)` pairs
 /// (`fields_with_types`), re-exported for conformance testing (issue #201).
 pub use super::control_core::control_for_field;

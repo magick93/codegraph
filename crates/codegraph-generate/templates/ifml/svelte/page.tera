@@ -238,6 +238,21 @@
 {%- if file_scripts %}
 {{ file_scripts }}
 {%- endif %}
+{%- if has_machine %}
+
+	// The machine read model (issue #817): transition buttons render from
+	// the DERIVED edge set (`available_transitions`) — the UI never runs a
+	// machine, so it can never offer a transition the backend would 409.
+	// The key/label helpers mirror the generation-time naming contract the
+	// page classes use.
+	function machineTransitionKey(to: string): string {
+		return to.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/[\s_]+/g, '-').toLowerCase();
+	}
+	function machineTransitionLabel(to: string): string {
+		const spaced = to.replace(/[_-]/g, ' ');
+		return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+	}
+{%- endif %}
 {%- for comp in components %}
 {%- if comp.workflow %}
 {%- if comp.remote_transition %}
@@ -445,9 +460,15 @@
 {%- endif %}
 {%- endif %}
 {%- if comp.transition_url_expr %}
+{%- if comp.workflow.machine %}
+{% raw %}	{#each {% endraw %}{{ comp.workflow.machine.transitions_expr }}{% raw %} as t}{% endraw %}
+	<button type="button" data-testid="{{ comp.name }}-transition-{machineTransitionKey(t.to)}" data-transition-event={t.event} data-transition-to={t.to} onclick={() => transition_{{ comp.js_name }}(t.to)}>{machineTransitionLabel(t.to)}</button>
+{% raw %}	{/each}{% endraw %}
+{%- else %}
 {%- for t in comp.workflow.transitions %}
 	{{ t.html }}
 {%- endfor %}
+{%- endif %}
 {%- endif %}
 {%- endif %}
 {%- if comp.action_buttons %}
@@ -565,9 +586,15 @@
 	{{ comp.submit_gate.open }}{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}{{ comp.submit_gate.close }}{% if comp.workflow %}
 	{{ comp.workflow.badge_html }}
 {%- if comp.transition_url_expr %}
+{%- if comp.workflow.machine %}
+{% raw %}	{#each {% endraw %}{{ comp.workflow.machine.transitions_expr }}{% raw %} as t}{% endraw %}
+	<button type="button" data-testid="{{ comp.name }}-transition-{machineTransitionKey(t.to)}" data-transition-event={t.event} data-transition-to={t.to} onclick={() => transition_{{ comp.js_name }}(t.to)}>{machineTransitionLabel(t.to)}</button>
+{% raw %}	{/each}{% endraw %}
+{%- else %}
 {%- for t in comp.workflow.transitions %}
 	{{ t.html }}
 {%- endfor %}
+{%- endif %}
 {%- endif %}
 {% endif %}
 </form>
@@ -636,9 +663,15 @@
 	{{ comp.submit_gate.open }}{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}{{ comp.submit_gate.close }}{% if comp.workflow %}
 	{{ comp.workflow.badge_html }}
 {%- if comp.transition_url_expr %}
+{%- if comp.workflow.machine %}
+{% raw %}	{#each {% endraw %}{{ comp.workflow.machine.transitions_expr }}{% raw %} as t}{% endraw %}
+	<button type="button" data-testid="{{ comp.name }}-transition-{machineTransitionKey(t.to)}" data-transition-event={t.event} data-transition-to={t.to} onclick={() => transition_{{ comp.js_name }}(t.to)}>{machineTransitionLabel(t.to)}</button>
+{% raw %}	{/each}{% endraw %}
+{%- else %}
 {%- for t in comp.workflow.transitions %}
 	{{ t.html }}
 {%- endfor %}
+{%- endif %}
 {%- endif %}
 {% endif %}
 </form>

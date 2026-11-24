@@ -126,6 +126,7 @@ fn empty_scaffold_context(has_admin_cli: bool) -> ScaffoldContext {
         has_events: false,
         has_function_events: false,
         has_media: false,
+        has_machine_guards: false,
         seed_crate_path: String::new(),
         migration_strategy: "sea-orm".into(),
     }

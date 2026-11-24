@@ -58,6 +58,7 @@ impl ValidationPass {
             r18,
             r19,
             r20,
+            r21,
         ) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
@@ -79,6 +80,7 @@ impl ValidationPass {
             Self::check_aggregate_boundaries(db, config),
             Self::check_service_op_throws(db, config),
             Self::check_projection_boundaries(db, config),
+            Self::check_machine_kernel(db, config),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -101,7 +103,34 @@ impl ValidationPass {
         issues.extend(r18);
         issues.extend(r19);
         issues.extend(r20);
+        issues.extend(r21);
         issues
+    }
+
+    /// Machine kernel (issue #815): every referenced machine must be
+    /// structurally valid (the restingstate `validate_machine_json`
+    /// boundary) and every machine state must be a value of its bound
+    /// codelist enum (the enum correspondence is ours — the artifact
+    /// validates machine-internal structure only). A broken machine
+    /// refuses the run BEFORE any tree is written (the DD9
+    /// `query_refusals` posture).
+    async fn check_machine_kernel(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let Ok(refusals) = codegraph_generate::machines::machine_kernel_refusals(db, config).await
+        else {
+            return Vec::new();
+        };
+        refusals
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Error,
+                entity: "(machine kernel)".to_string(),
+                check: "machine_kernel",
+                message,
+            })
+            .collect()
     }
 
     /// Declared `throws` vocabularies (DD7, issue #665): every entry must

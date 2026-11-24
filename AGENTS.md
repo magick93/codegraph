@@ -4626,8 +4626,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
 - **Format bump discipline + doctor signal (P2) — the canonical
   "what is it now" lookup**: `GRAPH_FORMAT_VERSION` (codegraph-grafeo
   `schema_ddl.rs`) versions codegraph's graph artifact schema. **It is
-  `14` today**, and the committed artifact-kit conformance fixture is
-  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v14.md`.
+  `15` today**, and the committed artifact-kit conformance fixture is
+  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v15.md`.
   Bump it whenever the node/edge/property shape changes. The constant and
   the fixture move TOGETHER in ONE change: bump the constant, rename the
   fixture, update its canonical + `accepted` bodies, and move its
@@ -4641,11 +4641,16 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   so the bump checklist must list all five (a missed `include_str!` is a
   compile error; a missed doc comment goes stale silently). The
   `format_version_too_new` value is also a LITERAL in the fixture
-  (`formatVersion 15` while the constant is 14), NOT derived from
-  `GRAPH_FORMAT_VERSION`; so is the IN-CRATE kit KAT literal
-  (`crates/codegraph/src/artifact/kit.rs` `tests::kit_case_rejects_canonical_drift`,
-  a `#cfg(test)` `formatVersion` string the five fixture-name sites do not
-  cover — the #665 bump shipped it stale and CI's `test` job caught it).
+  (`formatVersion 16` while the constant is 15), NOT derived from
+  `GRAPH_FORMAT_VERSION`; so are the IN-CRATE kit KAT literals
+  (`crates/codegraph/src/artifact/kit.rs`
+  `tests::kit_case_rejects_canonical_drift` — a `#cfg(test)`
+  `formatVersion` string that must equal the SUPPORTED constant there —
+  and `crates/codegraph/tests/artifact_kit_tests.rs`
+  `kit_runner_rejects_a_failing_case`, whose literal must stay
+  too-NEW (supported + 1) or the diagnostic-mismatch case stops firing —
+  the five fixture-name sites do not cover either — the #665 bump shipped
+  one stale and CI's `test` job caught it; the #815 bump moved both).
   Only `crates/codegraph/tests/artifact_tests.rs`
   derives its too-new value (`FORMAT_VERSION + 1`), so a constant bump that
   forgets the fixture turns that rejection case into an ACCEPTED document
@@ -4659,7 +4664,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   DD4/DD5 authored aggregate boundaries + design invariants (#666), 12→13
   the DD7 declared error vocabulary (`errors_json` on the application +
   module nodes, #665), 13→14 the modeled DTO boundary family (`DddDtoShape`,
-  #667) —
+  #667), 14→15 the machine kernel mirror (`machine_ir_json` +
+  `machine_provenance_json` on the design, #815) —
   the 2→3
   and 5→6 steps were never written up, so the lineage is only partially
   recorded). `GRAFEO_STORAGE_GENERATION`
@@ -4668,7 +4674,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   format. Both terms ride the inputs hash, so a bump forces a cold
   re-ingest instead of migrating `.graph-cache/` in place. `codegraph
   doctor` prints the cache state explicitly: `PASS graph-cache — warm
-  (inputs hash …, N nodes; graph format v14 / storage gen 2)` when the
+  (inputs hash …, N nodes; graph format v15 / storage gen 2)` when the
   marker matches the current inputs (the numbers are the live constants,
   not prose), or `INFO graph-cache — cold: inputs changed …` / `absent …`
   when the next run will re-ingest.
@@ -6180,7 +6186,8 @@ enumerated, reviewed diff). Template size budget is 500 lines
 - **Deliberate pins** (bump only with their stated gate green):
   - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
   - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up. Currently `=0.6.0` (0.6 replaced the on-disk format; WAL durability moved from the default features into the opt-in `storage` feature, which codegraph-grafeo enables; `GRAFEO_STORAGE_GENERATION` in `schema_ddl.rs` versions the engine's on-disk format inside the persisted-graph cache inputs hash — bump it on every grafeo minor that changes the file format so consumers cold-re-ingest instead of migrating `.graph-cache/graph.grafeo` in place). MSRV moved to 1.99.0 with 0.6.0.
-  - `phero-*` @ 4f497e1 (yestechgroup/pherolang) — v0.4.0 plus the shared surface kernel (epic pherolang#328, SK1–SK6 via PRs #336/#337). `phero-ir|driver|expr|ifml` are the four crates we consume; sigil stays on 69115a7 (upstream's own pin, so lockstep is a no-op). This bump is API-only for us: one `CompileInputs` bundle on the `compile_*_str` entry points and the shared diagnostic record; see **Pherolang 0.4 pin** below. Previous pins: `phero-*` @ 298267e (the 0.3 rebrand + DDD epic DD1–DD9, `docs/pherolang-upgrade.md`) and `rex-*` @ 1fe0ca9 (the 0.2-era PR #174 dedup sweep — artifacts then carried `rexVersion` with `formatVersion` 1).
+  - `phero-*` @ 958acd0b (yestechgroup/pherolang) — the machine-reference era (pherolang#387/#388): `.ddd` machines may be authored in TypeScript/XState (`machine <field>: <Enum> from "path.machine.ts";`) and the compiled artifact embeds the canonical `xstate_ir::Machine` JSON (`machineIr`) + provenance (`machineProvenance`: path/machineId/contentSha256); `DDD_MODEL_FORMAT_VERSION` 2 → 3. Also carried: resolved event identities (`Design.emits` vs `.evt` contracts), intent traceability (`.intent`), DF1–DF4 design-contract hardening, and the `extend` child-op alias RETIRED (the grammar accepts only `children <Class>`). `phero-ir|driver|expr|ifml|syntax|backend-common` are the crates we consume; sigil stays on 69115a7 (upstream's own pin, so lockstep is a no-op). Gate: `pherolang_fixture_sweep` (+ `DDD_GOLDEN_BLESS=1` when the artifact stamps move). Previous pins: `phero-*` @ 4f497e1 (v0.4.0 + the shared surface kernel, epic pherolang#328 SK1–SK6 via PRs #336/#337), `phero-*` @ 298267e (the 0.3 rebrand + DDD epic DD1–DD9, `docs/pherolang-upgrade.md`), and `rex-*` @ 1fe0ca9 (the 0.2-era PR #174 dedup sweep — artifacts then carried `rexVersion` with `formatVersion` 1).
+  - `xstate-core` @ da0c804d (yestechgroup/restingstate) — the machine kernel (issue #815, Lane 1 of epic #812): re-exports `xstate_ir` (the `Machine` IR the pherolang artifact embeds as `machineIr`), the fail-closed `validate_machine_json` boundary, and the interpreter/snapshot surface Stages 2–3 build on. Pinned by rev; pherolang itself pins this same rev for its machine-reference work, so exactly ONE restingstate version exists in the tree — **move only in lockstep with a `phero-*` bump**. `default-features = false` (tokio-free, wasm32-safe). Gate: `machine_kernel_tests`.
   - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
   - Rust toolchain: root `rust-toolchain.toml` pins the channel (currently `1.100.0` — issue #627). `dtolnay/rust-toolchain@stable` reads it, so local and CI compilers cannot drift (the PR #626 clippy-lint-drift class is structurally closed). The pin moves MONTHLY alongside the Tier-0 lockfile refresh, never silently: bump the channel AND the `PINNED_CHANNEL` literal in `crates/codegraph/tests/ci_toolchain_contract.rs` in the same commit (the contract test enforces the pairing and the file's presence/shape — components rustfmt+clippy, target wasm32-unknown-unknown for the #517/#550 gates).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
@@ -6188,11 +6195,32 @@ enumerated, reviewed diff). Template size budget is 500 lines
 - **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list — each tracked by an issue; delete the entry there when cleared): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo, #534), `RUSTSEC-2026-0386` (tokio 1.53.1 unsound `AsyncFd` — rides the monthly lockfile refresh, #533), and `RUSTSEC-2026-0442` (arrow-data 60 unsound — transitive via grafeo; pre-dates the pherolang 194056b bump, rides the monthly lockfile refresh), `RUSTSEC-2026-0486` (rustix 1.1.5 unsound xattr zero-length buffer — transitive via the file-walking stack; a rustix patch bump rides the monthly lockfile refresh, #678). `RUSTSEC-2026-0308` (salsa 0.23) **cleared** with the pherolang 0.3 pin (salsa 0.28.5 in the tree) — #535 closed on that evidence.
 - **dependabot**: scoped to GitHub Actions only (`.github/dependabot.yml`); Cargo automation is consciously declined for the reasons above.
 
-## Pherolang 0.4 pin (shared surface kernel, epic pherolang#328)
+## Pherolang pin (machine-reference era, pherolang#387/#388)
 
-The live pin is `phero-*` @ `4f497e1` (v0.4.0 + SK1–SK6, PRs #336/#337).
-The move is **API-only for our ingest path**:
+The live pin is `phero-*` @ `958acd0b` (v0.4.0 line + the machine-reference
+era, 28 commits past the 4f497e1 shared-surface-kernel pin). For our ingest
+path the move is DATA-shaped, not API-shaped: no `compile_*_str` signature
+moved, but the compiled `.ddd` artifact changed shape —
 
+- `DDD_MODEL_FORMAT_VERSION` 2 → 3 and a new `domainFingerprint` provenance
+  block, so the committed DDD golden re-blessed (`library.ddd.json`: exactly
+  those two deltas — the fixture carries no machine references, so no
+  `machineIr` moved).
+- `Design.machine_ir: Option<serde_json::Value>` — the canonical
+  (keys-sorted-recursive) `xstate_ir::Machine` JSON of a REFERENCED
+  machine (`machine <field>: <Enum> from "…ts";`), absent on inline
+  machines and machine-less designs.
+- `Design.machine_provenance: Option<MachineProvenance>` — `{ path,
+  machineId, contentSha256 }` (camelCase), the hash over the canonical IR,
+  recomputable from the artifact alone.
+
+codegraph mirrors both onto `DddDesignNode` (issue #815, `GRAPH_FORMAT_
+VERSION` 14 → 15) and pins `xstate-core` @ da0c804d (restingstate) for the
+`Machine` type + `validate_machine_json`; see the dependency-policy entries
+above. The `extend` child-op alias was RETIRED upstream in the same window
+(DF4) — our sources already spell `children <Class>`, so no fixture moved.
+
+The historical SK1–SK6 record (the 4f497e1 bump, PRs #336/#337):
 - The public `compile_*_str` entry points take one inert
   `phero_driver::CompileInputs` instead of parallel `(path, payload)` slices.
   Build it with `CompileInputs::from_domains` plus
@@ -6209,7 +6237,8 @@ The move is **API-only for our ingest path**:
 - The one committed-fixture change is the provenance stamp:
   `tests/fixtures/ddd/library.ddd.json` re-blessed `pheroVersion` 0.3.0 →
   0.4.0 — the documented rev-canary re-bless in `ddd_golden_tests.rs`, not a
-  shape change. `formatVersion` stays 2.
+  shape change. `formatVersion` stayed 2 at that bump (the 958acd0b bump
+  later moved it to 3 — see the section header above).
 
 ## Pherolang 0.3 upgrade (rebrand + the DDD/IR epic)
 
@@ -6291,6 +6320,82 @@ tree-sitter `.mox` grammar + LSP for the new syntax (#669), session-kind
 grants in `policy_rls` (#670, decision-gated); plus the `.dmn` plane
 (#671), the `.uc`/`.cmmn` assessment (#672), the upstream semantic-graph
 analytics (#673) and the `artifact check`/`verify` receipts (#674).
+
+## Machine kernel (issue #815, Lane 1 of epic #812)
+
+pherolang#388 lets a `.ddd` machine be authored in TypeScript/XState —
+`machine <field>: <Enum> from "machines/payrun.machine.ts";` — and the
+compiled artifact embeds the canonical `xstate_ir::Machine` JSON
+(`machine_ir`, keys sorted recursively) plus provenance
+(`machine_provenance`: `{path, machineId, contentSha256}`). The machine
+kernel makes that embed a first-class generated artifact. Stages 2
+(MachineRuntime/actor interpretation) and 3 (drift checks) build ON this
+plane; nothing here interprets machines yet.
+
+- **Ingest front door**: `read_and_compile_ddd` gathers every machine
+  reference's TypeScript through
+  `phero_driver::project::gather_ddd_machines` (resolved relative to the
+  declaring file) and feeds `.with_machines(...)` — the driver is
+  filesystem-free and hard-errors `referenced machine file '<path>' was
+  not provided` otherwise. Both mirrors ride `DddDesignNode.machine_ir_
+  json` + `.machine_provenance_json` (`GRAPH_FORMAT_VERSION` 15; see the
+  bump lineage).
+- **Validation (fail-closed, twice)**: `machines::machine_kernel_refusals`
+  is BOTH the pre-generation pass (`ValidationPass::check_machine_kernel`,
+  check `machine_kernel`, Error severity — a refusal never half-writes a
+  tree) AND the emitter's own gate. It refuses, naming the machine +
+  diagnostic: (a) an IR that is not an `xstate_ir::Machine`, or fails
+  `xstate_core::validate_machine_json` (the restingstate fail-closed
+  boundary — unknown initial/child/targets); (b) provenance machineId ≠
+  the IR's own id (stale/tampered embed); (c) a machine id that is not a
+  safe file stem; (d) duplicate application-wide machine ids or registry-
+  const collisions; (e) a machine declared in a module named `machines`
+  (the kernel's own directory); (f) **the enum correspondence — OURS**:
+  every machine state must be a literal of the bound codelist enum (the
+  bound enum comes from the DSL mirror `machine_json`'s `enumType`; the
+  codelist resolves exact → suffix-stripped → suffixed; a design with no
+  mirror skips the arm — never guessed).
+- **Emitter** (`MachineKernelGenerator`, Global, `machine_kernel`; the
+  `media_storage`/`functions_sql` precedent — registers unconditionally,
+  presence-gated inside): one
+  `{domain_types}/src/machines/{domain}/{machine_id}.ir.json` per machine
+  (canonical bytes via `machines::canonical_ir_json`) +
+  `src/machines/mod.rs` — a static registry (`include_str!` embeds, a
+  `LazyLock<BTreeMap<&'static str, &'static str>>`, parse-once accessors
+  `machine_ids`/`machine_json`/`machine`/`machine_provenance`/
+  `validate_machine`) with provenance consts (`{NAME}_SOURCE_PATH`,
+  `{NAME}_CONTENT_SHA256`) as the Stage 2/3 drift-detection seam.
+  Placement is the domain-types crate (the mox_ops precedent:
+  sea_orm-free, wasm32-safe, worker crates depend on it — one home serves
+  both topologies). The scaffold declares `pub mod machines;` only when
+  the graph carries machine IRs, and the domain-types Cargo.toml template
+  gates the `xstate-core` pin (git @ da0c804d, `default-features = false`
+  — tokio-free) the same way, so a machine-less crate is byte-identical.
+  Stale kernel files (mod.rs + `*.ir.json` only) are swept on regen; a
+  real domain directory named `machines` is refused before it could
+  collide.
+- **Determinism**: the emitted JSON is the canonical serialization —
+  `machines::canonical_ir_json` (phero_ir's sorted-keys-recursive form).
+  The artifact IR arrives canonical already, so embeds are byte-stable
+  despite the IR's `HashMap`-borne `SetupConfig` maps. Stage 2 drift
+  checks MUST project through this helper, never raw `serde_json`
+  serialization.
+- **Gates**: `cargo test -p codegraph --test machine_kernel_tests` (15,
+  node-free: the xstate KATs — artifact IR → `xstate_core::xstate_ir::
+  Machine`, `validate_machine_json`, the persisted-snapshot round-trip;
+  the refusal classes; the TS-authored front door over
+  `tests/fixtures/machine_kernel/` (also compiled forever by
+  `pherolang_fixture_sweep`); the emitter contract + canonical-bytes KAT;
+  the scratch-crate `cargo check` compile pin native) + the standing
+  byte-identity canaries (no machine ⇒ zero files) +
+  `worker_wasm_compile_tests -- --ignored` (the domain-types plane stays
+  wasm-clean).
+- **Deferred (Stages 2–4)**: MachineRuntime (an interpreter surface over
+  the registry), content_sha256 recomputation/verification (upstream
+  `artifact check` owns the hash; codegraph only surfaces it), machine →
+  workflow-plane consumption, IFML transition buttons reading the IR,
+  hurl legs, doctor `--ddd-files` machine parity (the run path + the
+  validation pass own the checks).
 
 ## Include Path System (`?include=`)
 

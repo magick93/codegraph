@@ -67,6 +67,9 @@ hotpath = { version = "0.28", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+# The machine read-model contract (issue #817): the kernel the read model
+# derives from, asserted directly in machine_read_model_tests.
+codegraph-workflow = { path = "../codegraph-workflow" }
 # Real-Postgres runtime pins that execute GENERATED SQL against a live database
 # (the #781 P1 include gate) connect with the same driver the cornucopia plane
 # runs on (`uuid` is load-bearing: the generated batch include binds a `uuid[]`
@@ -81,3 +84,7 @@ proc-macro2 = "1"
 # The ONE structural-key corpus for the artifact snake_case-shadow detector
 # (issue #674) — see the workspace pin's comment for the closure.
 phero-backend-common = { workspace = true }
+# The machine kernel KATs (issue #815): the artifact IR parses into the
+# restingstate `Machine`, passes `validate_machine_json`, and round-trips
+# through the persisted-snapshot surface.
+xstate-core = { workspace = true }

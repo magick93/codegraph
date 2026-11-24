@@ -4,7 +4,13 @@
 //! workflow/ux payloads. Resolution lives here; emission (specs + POM +
 //! stale cleanup) stays in [`super::generator`].
 
+mod machine;
+
 use std::collections::HashMap;
+
+use machine::{
+    entity_domain, machine_condition_source_states, machine_for_entity, operation_condition,
+};
 
 use codegraph_config::DomainConfig;
 use codegraph_config::ux::{Display, UxRules};
@@ -1666,119 +1672,6 @@ fn ok_round_trip_check(route: &ServiceOpRoute) -> Option<(String, String)> {
         return None;
     }
     Some((state.wire_key.as_str().to_string(), target))
-}
-
-/// The entity's machine, whole (the same rehydration the #449 surface
-/// uses). `None` when the entity carries no `.ddd` design machine.
-async fn machine_for_entity(
-    db: &dyn GraphQuerier,
-    entity_title: &str,
-) -> Option<phero_ir::ddd::StateMachine> {
-    let surface = crate::ddd::design::DddDesignSurface::from_graph(db)
-        .await
-        .ok()?;
-    surface.machine_for(entity_title)
-}
-
-/// The op-level `when` condition text for one op (the DDD design mirror).
-async fn operation_condition(
-    db: &dyn GraphQuerier,
-    entity_title: &str,
-    op_name: &str,
-) -> Option<String> {
-    let models = db.get_ddd_models().await.ok()?;
-    for model in &models {
-        for service in &model.services {
-            for op in &service.operations {
-                if op.name.eq_ignore_ascii_case(op_name) {
-                    return op.condition.clone();
-                }
-            }
-        }
-    }
-    let _ = entity_title;
-    None
-}
-
-/// The machine states a `when` condition reads, conservatively: only
-/// `field == State` / `State == field` comparisons against declared
-/// machine states, AND/OR-combined. `None` when the shape isn't
-/// recognized (the leg planner then refuses to plan a 403 drive).
-///
-/// This is NOT the transition selector and must not become one (issue
-/// #660): the op's transitions come from the route plane
-/// ([`ExecutionKind::transition_state`]), which since #660 is the authored
-/// `transition <Trigger>` binding or — for unbound models only — the
-/// documented heuristics. This scan answers the narrower guard question
-/// ("does the op-level `when` admit the initial state, so the act can flip
-/// it for the 403 leg?"), which the binding does not answer.
-fn machine_condition_source_states(
-    condition: &str,
-    machine_field: &str,
-    machine: &phero_ir::ddd::StateMachine,
-) -> Vec<String> {
-    let mut sources = Vec::new();
-    for clause in condition.split("&&").chain(condition.split("||")) {
-        let clause = clause.trim();
-        let Some((lhs, rhs)) = clause.split_once("==") else {
-            continue;
-        };
-        let lhs = lhs.trim();
-        let rhs = rhs.trim();
-        let field_matches = |side: &str| {
-            side == machine_field
-                || side.eq_ignore_ascii_case(machine_field)
-                || codegraph_naming::to_snake_case(side)
-                    == codegraph_naming::to_snake_case(machine_field)
-        };
-        let state_names = machine.states();
-        let state_at = |side: &str| state_names.iter().any(|s| s.eq_ignore_ascii_case(side));
-        let state_name = if field_matches(lhs) && state_at(rhs) {
-            machine
-                .states()
-                .into_iter()
-                .find(|s| s.eq_ignore_ascii_case(rhs))
-                .map(str::to_string)
-        } else if field_matches(rhs) && state_at(lhs) {
-            machine
-                .states()
-                .into_iter()
-                .find(|s| s.eq_ignore_ascii_case(lhs))
-                .map(str::to_string)
-        } else {
-            None
-        };
-        if let Some(name) = state_name
-            && !sources.contains(&name)
-        {
-            sources.push(name);
-        }
-    }
-    sources
-}
-
-/// The domain key one entity title belongs to (schema-declared domain
-/// first, then the config scan — the `resolve_schema_with_domain`
-/// convention, mirrored locally to keep the api-paths module untouched).
-async fn entity_domain(
-    db: &dyn GraphQuerier,
-    config: &DomainConfig,
-    entity_title: &str,
-) -> Option<String> {
-    if let Ok(Some(schema)) = db.get_schema(entity_title).await
-        && let Some(domain) = schema.domain
-    {
-        return Some(domain);
-    }
-    config
-        .domains
-        .iter()
-        .find(|(_, entry)| {
-            [entity_title, &format!("{entity_title}Type")]
-                .iter()
-                .any(|candidate| entry.entities.iter().any(|e| e == candidate))
-        })
-        .map(|(name, _)| name.clone())
 }
 
 #[cfg(test)]

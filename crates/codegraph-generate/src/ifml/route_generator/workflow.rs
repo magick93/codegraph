@@ -1,8 +1,11 @@
 use codegraph_config::DomainConfig;
 
 use crate::ifml::context::IfmlComponent;
+use crate::machines::{EntityMachineSurface, machine_surface_for_entity};
 
-use super::context::{RenderTransition, RenderWorkflow};
+use std::collections::HashMap;
+
+use super::context::{RenderMachine, RenderTransition, RenderWorkflow};
 use super::render::sanitize_ident;
 use super::roles::{is_collection, is_form_component};
 
@@ -32,6 +35,7 @@ pub(crate) fn workflow_for_entity(config: &DomainConfig, entity: &str) -> Option
                     initial_state: wf.initial_state.clone(),
                     transition_map: wf.transitions.clone(),
                     generate_action_endpoints: wf.generate_action_endpoints,
+                    machine: None,
                     transitions: Vec::new(),
                     badge_html: String::new(),
                     each: false,
@@ -41,25 +45,124 @@ pub(crate) fn workflow_for_entity(config: &DomainConfig, entity: &str) -> Option
     None
 }
 
+/// The machine read-model surface for a component's bound entity (issue
+/// #817): graph-driven, so machine-ONLY entities (an authored TypeScript
+/// machine, no domains.toml workflow config) resolve too. The db-backed
+/// helper is the SAME one the api plane uses — the UI and the routes
+/// cannot disagree about which entities are machine-bearing. The title
+/// chain mirrors `workflow_for_entity` (plain, then `{entity}Type`). The
+/// workflow scope rides along (issue #818): a dual entity surfaces the
+/// machine bound to the workflow's own status field — a machine on
+/// another field drives a different transition plane and never renders
+/// through the workflow's buttons.
+pub(super) async fn machine_surface_for(
+    db: &dyn codegraph_core::traits::GraphQuerier,
+    config: &DomainConfig,
+    entity: &str,
+) -> Option<EntityMachineSurface> {
+    if entity.is_empty() {
+        return None;
+    }
+    let scope = |title: &str| workflow_for_entity(config, title).map(|wf| wf.status_field.clone());
+    if let Some(surface) = machine_surface_for_entity(db, entity, scope(entity).as_deref()).await {
+        return Some(surface);
+    }
+    let suffixed = format!("{entity}{}", config.defaults.type_suffix);
+    machine_surface_for_entity(db, &suffixed, scope(&suffixed).as_deref()).await
+}
+
 /// Workflow context for a component: resolution plus the badge markup
 /// rendered for the component's markup context. Only collection, details,
-/// and form components carry a badge.
+/// and form components carry a badge. `machine` is the graph-resolved
+/// surface (issue #817): a machine-bearing entity renders its buttons
+/// from the read model's `available_transitions` (a runtime each-loop),
+/// never from the declared-edge list.
 pub(super) fn component_workflow(
     config: &DomainConfig,
     c: &IfmlComponent,
+    machine: Option<&EntityMachineSurface>,
 ) -> Option<RenderWorkflow> {
     if !is_form_component(c) && c.component_type != "details" && !is_collection(c) {
         return None;
     }
     let entity = c.entity.as_deref()?;
-    let mut wf = workflow_for_entity(config, entity)?;
+    // A machine-bearing entity synthesizes the surface from the KERNEL
+    // when no config workflow exists (machine-only entities): badge from
+    // `current_state`, terminal states from the IR's final nodes, and the
+    // read-model route marker.
+    let mut wf = match machine {
+        Some(m) if workflow_for_entity(config, entity).is_none() => {
+            let ir: serde_json::Value = serde_json::from_str(&m.ir_json).ok()?;
+            let states: Vec<String> = ir
+                .get("states")
+                .and_then(serde_json::Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|s| s.get("name").and_then(serde_json::Value::as_str))
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            RenderWorkflow {
+                status_field: m.status_field.clone(),
+                states,
+                terminal_states: m.terminal_states.clone(),
+                initial_state: m.initial_state.clone(),
+                transition_map: HashMap::new(),
+                // Machine-only entities have no transition POST endpoint:
+                // the buttons stay off (fail closed) until the machine
+                // plane grows its own action surface.
+                generate_action_endpoints: false,
+                machine: Some(render_machine(m, "machine", c)),
+                transitions: Vec::new(),
+                badge_html: String::new(),
+                each: false,
+            }
+        }
+        _ => {
+            let mut wf = workflow_for_entity(config, entity)?;
+            if let Some(m) = machine {
+                // Dual entity (config workflow + kernel machine): the
+                // buttons switch to the read model — the UI can never
+                // offer a transition the backend would 409.
+                wf.machine = Some(render_machine(m, "workflow", c));
+            }
+            wf
+        }
+    };
     let value_path = workflow_value_path(c, &wf.status_field);
     wf.badge_html = workflow_badge_html(&c.name, &value_path, &wf.terminal_states);
     wf.each = is_collection(c);
-    if is_form_component(c) || c.component_type == "details" {
+    // Static per-declared-edge buttons render ONLY for the machine-less
+    // workflow twin; machine-bearing components render the runtime loop.
+    if wf.machine.is_none() && (is_form_component(c) || c.component_type == "details") {
         wf.transitions = render_transitions(&wf, &c.name, &value_path);
     }
     Some(wf)
+}
+
+/// The read-model facts the page template renders from (issue #817):
+/// the drift hash the UI can detect a stale render with, and the route
+/// segment the read model lives under (`machine` route vs the merged
+/// `workflow` payload). The transitions expression defaults to the
+/// component's markup-context paths (details read the load's `data.item`,
+/// forms the form-state derived); the remote plane's substitution pass
+/// rewrites it to the data var + live stream.
+fn render_machine(m: &EntityMachineSurface, route: &str, c: &IfmlComponent) -> RenderMachine {
+    let transitions_expr = if is_form_component(c) {
+        format!(
+            "{}_form_state.workflow_state?.machine?.available_transitions ?? []",
+            sanitize_ident(&c.name)
+        )
+    } else {
+        "data.item?.workflow_state?.machine?.available_transitions ?? []".to_string()
+    };
+    RenderMachine {
+        machine_id: m.machine_id.clone(),
+        machine_hash: m.machine_hash.clone(),
+        route: route.to_string(),
+        transitions_expr,
+    }
 }
 
 /// One transition button per valid (from → to) edge. A populated

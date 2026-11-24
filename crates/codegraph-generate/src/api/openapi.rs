@@ -90,6 +90,11 @@ pub struct OpenApiEntity {
     /// app-plane route). (NO skip_serializing_if — the Tera context needs
     /// the empty vec.)
     pub media_fields: Vec<String>,
+    /// The machine read-model route (issue #817): the entity binds an
+    /// artifact machine, so the `get_machine` path + its schemas register
+    /// in this document. Resolved through the router's own helper, so the
+    /// documented paths and the mounted ones cannot drift.
+    pub has_machine: bool,
     /// `upload_mode = "presigned"` ⇒ the media module exposes `presign`;
     /// otherwise (`through-app`) it exposes the multipart `upload`. Both
     /// always expose `display`/`remove`. Resolved through
@@ -341,6 +346,15 @@ impl GlobalGenerator for OpenApiGenerator {
                         parent_entity,
                         parent_domain,
                         media_fields,
+                        has_machine: crate::machines::machine_surface_for_entity(
+                            db,
+                            title,
+                            entity_cfg
+                                .and_then(|ec| ec.workflow.as_ref())
+                                .map(|wf| wf.status_field.as_str()),
+                        )
+                        .await
+                        .is_some(),
                         media_mode_presigned,
                     });
                 }
@@ -381,6 +395,16 @@ impl GlobalGenerator for OpenApiGenerator {
                     parent_entity: None,
                     parent_domain: None,
                     media_fields,
+                    has_machine: crate::machines::machine_surface_for_entity(
+                        db,
+                        title,
+                        domain_entry
+                            .get_entity_config(title)
+                            .and_then(|ec| ec.workflow.as_ref())
+                            .map(|wf| wf.status_field.as_str()),
+                    )
+                    .await
+                    .is_some(),
                     media_mode_presigned,
                 });
             }

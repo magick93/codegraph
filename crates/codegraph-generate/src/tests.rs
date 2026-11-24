@@ -99,7 +99,14 @@ fn clean_generated_output_preserves_dto_included_in_live_dirs() {
         pg_schema: "hr".to_string(),
         is_cyclic: false,
     }];
-    clean_generated_output(dir.path(), &order, "Type", false);
+    clean_generated_output(
+        dir.path(),
+        &order,
+        "Type",
+        false,
+        &crate::output::StaleSurfaceGates::default(),
+        &std::collections::HashSet::new(),
+    );
 
     // In-expected entity directories are preserved whole: dto_included.rs
     // is deliberately NOT deleted (an e2e-only regen after a fullstack run

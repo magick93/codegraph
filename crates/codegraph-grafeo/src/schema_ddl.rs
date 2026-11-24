@@ -89,7 +89,20 @@
 /// deserializes both as EMPTY — every declared variant the generated
 /// `{Domain}Error` plane would carry silently vanishes, and every
 /// `throws` entry silently maps to no variant. Cold re-ingest instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 14;
+///
+/// Bumped to 14 for the modeled DTO boundary family (issue #667): the
+/// `DddDtoShape` node + `DddHasDtoShape` edge are new. A cached graph
+/// persisted by a pre-#667 binary serves NO boundaries — every modeled
+/// DTO plane (and the #768 projection constructors that lower onto it)
+/// silently vanishes. Cold re-ingest instead.
+///
+/// Bumped to 15 for the machine kernel mirror (issue #815,
+/// pherolang#388): `DddDesignNode.machine_ir_json` +
+/// `machine_provenance_json` are new nullable props. A cached graph
+/// persisted by a pre-#815 binary serves no machine IR — the compiled
+/// artifact the machine kernel emitter embeds and validates is exactly
+/// what it silently lacks. Cold re-ingest instead.
+pub const GRAPH_FORMAT_VERSION: u32 = 15;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact
@@ -621,6 +634,8 @@ const DDD_NODE_DDL: &[&str] = &[
             is_abstract BOOLEAN NOT NULL,
             flags_json STRING NOT NULL,
             machine_json STRING,
+            machine_ir_json STRING,
+            machine_provenance_json STRING,
             child_operations_json STRING,
             aggregate_json STRING,
             invariants_json STRING,

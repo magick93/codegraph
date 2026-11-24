@@ -42,7 +42,9 @@ use utoipa::OpenApi;
 {%- endfor %}
 {%- for op in domain.service_ops %}
         crate::api::{{ domain.name }}::{{ op.module }}_handler::{{ op.fn_name }},
-{%- endfor %}
+{%- endfor %}{%- for entity in domain.entities %}{% if entity.has_machine %}
+        crate::api::{{ domain.name }}::{{ entity.module_name }}_machine::get_machine,
+{% endif %}{% endfor %}
 {% endfor %}
     ),
     components(schemas(
@@ -64,7 +66,10 @@ use utoipa::OpenApi;
 {%- for function in domain.functions %}
         crate::api::{{ domain.name }}::functions_api::{{ function.request }},
         crate::api::{{ domain.name }}::functions_api::{{ function.response }},
-{%- endfor %}
+{%- endfor %}{%- for entity in domain.entities %}{% if entity.has_machine %}
+        crate::api::{{ domain.name }}::{{ entity.module_name }}_machine::MachineReadModelResponse,
+        crate::api::{{ domain.name }}::{{ entity.module_name }}_machine::MachineTransitionEdge,
+{% endif %}{% endfor %}
 {% endfor %}
 {%- for boundary in dto_boundaries %}
         {{ project.domain_types_crate }}::dto::{{ boundary.module }}::{{ boundary.name }},

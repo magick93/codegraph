@@ -1,0 +1,48 @@
+# Issue #807 repro fixture profile: MONOLITH + cornucopia persistence.
+#
+# The phantom only breaks a consumer build through `cornucopia-queries`'
+# build.rs (it validates every query against the live migrated DB), so the
+# fixture exercises the queries plane. Monolith keeps the fixture small —
+# the per-entity artifact families the #807 stale sweep covers (queries/,
+# cli/src/commands/, src/generated/) are topology-independent.
+#
+# Note: `ui-shell` is deliberately NOT listed — the plan filter normalizes
+# the dash spelling the capability registry validates (`plan_has_entity`
+# queries `ui_shell` against the verbatim profile entry), so a listed
+# ui-shell validates but silently never runs; sweeping its route tree is a
+# recorded follow-up behind that spelling bug, not part of this lane.
+
+[profiles.default.meta]
+name = "default"
+version = "1.0.0"
+description = "Phantom-machine repro — monolith cornucopia"
+app_name = "phantom-app"
+generator_name = "phantom-graph"
+api_title = "Phantom Machine API"
+domain_types_crate = "phantom_domain_types"
+domain_types_base = "domain-types"
+codegraph_workflow_base = "../../../../../crates/codegraph-workflow"
+type_contracts_base = "../../../../../crates/codegraph-type-contracts"
+
+[profiles.default.features]
+auth = true
+pagination = true
+validation_level = "strict"
+database_target = "postgres"
+persistence_provider = "cornucopia"
+deployment_topology = "monolith"
+dependency_strategy = "path"
+
+[profiles.default.api]
+generators = [
+    "ddl", "sea_orm_entity", "cornucopia_queries", "cornucopia_repo",
+    "dto", "repository", "command", "query", "handler", "workflow_action",
+    "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
+    "errors", "router", "links",
+    "cornucopia_config", "platform_schema", "workflow_seed", "openapi",
+]
+output = "generated/"
+scripts.post_gen = []
+
+[profiles.default.cli]
+generators = ["cli_command"]

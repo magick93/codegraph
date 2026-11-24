@@ -150,11 +150,39 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // are no longer in the generation order (e.g. reclassified as VOs).
     // The filesystem-scanning `generate_mod_files` pass would otherwise pick
     // them up and emit broken `pub mod` declarations.
+    //
+    // Issue #807: the per-entity families outside the backend source tree
+    // (cornucopia queries, CLI commands, hooks lifecycle traits) sweep with
+    // the same expected-set contract, gated on the plan carrying the
+    // family's generator. The expected module keys come from the graph's
+    // `pg_table_name` — the declared-table spelling (#668) IS the file
+    // stem on every plane, so a title re-derivation would mis-key models
+    // that declare explicit table names.
+    let mut expected_modules: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
+    for entry in order {
+        if let Ok(Some(schema)) = ctx
+            .db()
+            .get_schema_in_domain(&entry.schema_title, &entry.domain)
+            .await
+            && !schema.pg_table_name.is_empty()
+        {
+            expected_modules.insert((entry.domain.clone(), schema.pg_table_name));
+        }
+    }
+    let stale_surfaces = crate::output::StaleSurfaceGates {
+        cornucopia_queries: ctx.plan_has_entity("cornucopia_queries"),
+        cli_commands: ctx.plan_has_entity("cli_command"),
+        lifecycle_traits: ctx.plan_has_entity("lifecycle_trait"),
+        hooks_base: ctx.hooks_base,
+    };
     clean_generated_output(
         ctx.output_dir,
         order,
         &ctx.config.defaults.type_suffix,
         ctx.workers_topology,
+        &stale_surfaces,
+        &expected_modules,
     );
 
     // Clean stale IFML route directories from previous runs.  Both the
@@ -230,6 +258,34 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             return Err(Error::Config(format!(
                 "child-table projection divergence (issue #460): repository SQL targets \
                  tables the DDL never creates:\n  - {}",
+                divergences.join("\n  - ")
+            )));
+        }
+    }
+
+    // Issue #807 (Stage 0): the query-target-table consistency gate — every
+    // cornucopia query target table must exist in the DDL universe (the
+    // plane-disagreement class behind the phantom entity), checked BEFORE
+    // any tree is written. Runs only when the plan carries BOTH planes:
+    // without `ddl` there is no universe to check against, and without
+    // `cornucopia_queries` there is no query plane to diverge (a lingering
+    // query file under a dropped queries plane compiles nowhere —
+    // cornucopia-queries' build.rs is not emitted either).
+    if entity_gens.iter().any(|g| g.name() == "ddl")
+        && entity_gens.iter().any(|g| g.name() == "cornucopia_queries")
+    {
+        let divergences = crate::consistency::check_query_target_tables(
+            ctx.db(),
+            ctx.config,
+            order,
+            &parent_candidates,
+            ctx.output_dir,
+        )
+        .await?;
+        if !divergences.is_empty() {
+            return Err(Error::Config(format!(
+                "query-target-table divergence (issue #807): the cornucopia queries plane \
+                 targets tables the DDL never creates:\n  - {}",
                 divergences.join("\n  - ")
             )));
         }

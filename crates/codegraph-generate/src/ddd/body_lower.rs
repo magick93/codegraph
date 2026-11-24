@@ -1323,7 +1323,7 @@ impl<'a> Lowerer<'a> {
     fn transition_arm(&self, state: &ServiceOpState) -> String {
         let mut out = String::new();
         out.push_str(&format!(
-            "    // The inferred machine transition (the body leaves `{}` alone).\n",
+            "    // The inferred machine transition (the body leaves `{}` alone) —\n",
             self.scope.state_field.unwrap_or("the state field")
         ));
         out.push_str(&format!(
@@ -1331,22 +1331,32 @@ impl<'a> Lowerer<'a> {
             state.current_expr
         ));
         if !state.op.is_empty() {
-            out.push_str(
-                "    let target_state: Option<&'static str> = match current_state.as_str() {\n",
-            );
-            for transition in &state.op {
-                out.push_str(&format!(
-                    "        \"{}\" => Some(\"{}\"),\n",
-                    transition.from, transition.to
-                ));
-            }
-            out.push_str("        _ => None,\n    };\n");
-            out.push_str(&format!(
-                "    let Some(target_state) = target_state else {{\n        \
-                 return Err(AppError::conflict(format!(\n            \
-                 \"operation `{}` has no transition from the current state `{{}}`\",\n            \
-                 current_state\n        )).with_correlation_id(correlation_id));\n    }};\n",
-                self.scope.op_name
+            // The kernel decides (issue #818, Option A): the candidate
+            // targets are probed through the runtime; exactly one legal
+            // edge fires, none is the 409, an ambiguous fork names its
+            // targets. The hand-rendered match arms are retired.
+            out.push_str(&crate::ddd::kernel_probe::runtime_construction(
+                self.scope.domain_types_crate,
+                &state.machine_id,
+                "    ",
+            ));
+            let candidates: Vec<String> = {
+                let mut targets: Vec<String> = Vec::new();
+                for transition in &state.op {
+                    let target = transition.to.as_str().to_string();
+                    if !targets.contains(&target) {
+                        targets.push(target);
+                    }
+                }
+                targets
+            };
+            out.push_str(&crate::ddd::kernel_probe::probe_legal_block(
+                &candidates,
+                "    ",
+            ));
+            out.push_str(&crate::ddd::kernel_probe::named_verdict_block(
+                self.scope.op_name,
+                "    ",
             ));
             out.push_str(&format!(
                 "    patch.insert({}.to_string(), serde_json::Value::String(target_state.to_string()));\n",
@@ -1871,6 +1881,7 @@ mod tests {
             current_expr: "response.pay_run_status.to_string()".to_string(),
             wire_key: crate::ddd::service_ops::WireKey::new("pay_run_status"),
             initial: crate::ddd::service_ops::StateName::new("Draft"),
+            machine_id: "payroll_pay_run_status".to_string(),
             all: Vec::new(),
             op: vec![crate::ddd::service_ops::ServiceOpTransition {
                 from: crate::ddd::service_ops::StateName::new("Draft"),
@@ -1886,9 +1897,23 @@ mod tests {
         let plan = lower_body(&scope, &body(&json)).expect("lowering");
         assert!(plan.state.is_some(), "{}", plan.block);
         assert!(plan.body_manages_state.is_none());
+        // The kernel decides (issue #818): the probe + verdict, never a
+        // match arm.
         assert!(
-            plan.block.contains(r#""Draft" => Some("Calculating"),"#),
+            plan.block
+                .contains(r#"let legal: Vec<&str> = ["Calculating"]"#),
             "{}",
+            plan.block
+        );
+        assert!(
+            plan.block
+                .contains("runtime.transition_for(&current_state, candidate).is_some()"),
+            "{}",
+            plan.block
+        );
+        assert!(
+            !plan.block.contains(r#" => Some("#),
+            "the retired match-arm spelling must not render:\n{}",
             plan.block
         );
 
