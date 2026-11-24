@@ -1565,6 +1565,51 @@ fn dto_shape_fixtures() -> Vec<DddDtoShapeNode> {
     ]
 }
 
+/// Issue #815: the machine kernel blobs — the deep round-trip pins them
+/// beside the boundary/invariant blobs. The provenance rides camelCase
+/// (the phero-ir serde spelling the ingest boundary writes). Extracted
+/// from `ddd_fixture` so each stays readable (and the #751 size lint
+/// stays honest about real complexity, not JSON volume).
+fn book_machine_ir_json() -> serde_json::Value {
+    serde_json::json!({
+        "context": {"fields": []},
+        "id": "book-lifecycle",
+        "initial": "Draft",
+        "setup": null,
+        "states": [
+            {
+                "children": [], "description": null, "entry": [],
+                "exit": [], "initial": null, "invoke": null,
+                "name": "Draft", "on_done": [], "output": null,
+                "tags": [],
+                "transitions": [{
+                    "actions": [], "description": null,
+                    "event": "PUBLISH", "guard": null,
+                    "target": "Published", "targets": []
+                }],
+                "type": "atomic"
+            },
+            {
+                "children": [], "description": null, "entry": [],
+                "exit": [], "initial": null, "invoke": null,
+                "name": "Published", "on_done": [],
+                "output": null, "tags": [],
+                "transitions": [],
+                "type": "final"
+            }
+        ]
+    })
+}
+
+fn book_machine_provenance_json() -> serde_json::Value {
+    serde_json::json!({
+        "path": "machines/book.machine.ts",
+        "machineId": "book-lifecycle",
+        "contentSha256":
+            "5aca796db97ff88b925f8bf6cdd2c2c50bc9aa7828ff9dc1422e1108238c2757"
+    })
+}
+
 fn ddd_fixture() -> DddModelGraph {
     let book_ref = serde_json::json!({
         "type": "class",
@@ -1634,44 +1679,8 @@ fn ddd_fixture() -> DddModelGraph {
                     ..Default::default()
                 },
                 machine_json: None,
-                // Issue #815: the machine kernel blobs — the deep
-                // round-trip pins them beside the boundary/invariant
-                // blobs. The provenance rides camelCase (the phero-ir
-                // serde spelling the ingest boundary writes).
-                machine_ir_json: Some(serde_json::json!({
-                    "context": {"fields": []},
-                    "id": "book-lifecycle",
-                    "initial": "Draft",
-                    "setup": null,
-                    "states": [
-                        {
-                            "children": [], "description": null, "entry": [],
-                            "exit": [], "initial": null, "invoke": null,
-                            "name": "Draft", "on_done": [], "output": null,
-                            "tags": [],
-                            "transitions": [{
-                                "actions": [], "description": null,
-                                "event": "PUBLISH", "guard": null,
-                                "target": "Published", "targets": []
-                            }],
-                            "type": "atomic"
-                        },
-                        {
-                            "children": [], "description": null, "entry": [],
-                            "exit": [], "initial": null, "invoke": null,
-                            "name": "Published", "on_done": [],
-                            "output": null, "tags": [],
-                            "transitions": [],
-                            "type": "final"
-                        }
-                    ]
-                })),
-                machine_provenance_json: Some(serde_json::json!({
-                    "path": "machines/book.machine.ts",
-                    "machineId": "book-lifecycle",
-                    "contentSha256":
-                        "5aca796db97ff88b925f8bf6cdd2c2c50bc9aa7828ff9dc1422e1108238c2757"
-                })),
+                machine_ir_json: Some(book_machine_ir_json()),
+                machine_provenance_json: Some(book_machine_provenance_json()),
                 child_operations: Vec::new(),
                 // DD4/DD5 (issue #666): an authored root with two
                 // invariants — the round-trip pin covers both blobs.
