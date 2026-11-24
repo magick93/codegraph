@@ -2,7 +2,9 @@
 //!
 //! Uses an in-memory [`WorkflowTx`]/[`WorkflowClient`] pair (the `Memory` row
 //! backend) to prove the transition state machine behaves identically to the
-//! pre-refactor SeaORM engine without needing a live Postgres.
+//! pre-refactor SeaORM engine without needing a live Postgres. Since #816 the
+//! definition row carries the machine kernel envelope (machine + hash +
+//! status field), and the kernel decides the transition.
 
 use std::sync::{Arc, Mutex};
 
@@ -10,11 +12,12 @@ use codegraph_workflow::{
     GenericWorkflowService, TransitionContext, TriggerSource, WfParam, WfRow, WfValue,
     WorkflowClient, WorkflowService, WorkflowTx,
 };
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 #[derive(Default)]
 struct FakeState {
-    definition: Option<(Uuid, String, Vec<String>, serde_json::Value)>,
+    definition: Option<(Uuid, String, Vec<String>, Value, String)>,
     instance: Option<(Uuid, String, bool)>,
     executed: Vec<String>,
     committed: bool,
@@ -29,6 +32,51 @@ impl FakeTx {
     fn new(state: Arc<Mutex<FakeState>>) -> Self {
         Self { state }
     }
+}
+
+/// A two-edge machine envelope (draft → active → closed) — the seeded shape.
+fn machine_envelope(initial: &str) -> Value {
+    let machine = json!({
+        "context": {"fields": []},
+        "id": "test",
+        "initial": initial,
+        "setup": null,
+        "states": [
+            {
+                "children": [], "description": null, "entry": [], "exit": [],
+                "initial": null, "invoke": null, "name": "draft",
+                "on_done": [], "output": null, "tags": [],
+                "transitions": [{
+                    "actions": [], "description": null, "event": "active",
+                    "guard": null, "target": "active", "targets": []
+                }],
+                "type": "atomic"
+            },
+            {
+                "children": [], "description": null, "entry": [], "exit": [],
+                "initial": null, "invoke": null, "name": "active",
+                "on_done": [], "output": null, "tags": [],
+                "transitions": [{
+                    "actions": [], "description": null, "event": "closed",
+                    "guard": null, "target": "closed", "targets": []
+                }],
+                "type": "atomic"
+            },
+            {
+                "children": [], "description": null, "entry": [], "exit": [],
+                "initial": null, "invoke": null, "name": "closed",
+                "on_done": [], "output": null, "tags": [],
+                "transitions": [],
+                "type": "final"
+            }
+        ]
+    });
+    json!({
+        "machine": machine,
+        "machine_hash": codegraph_workflow::fnv1a_64_hex(
+            codegraph_workflow::canonical_json(&machine).as_bytes()
+        ),
+    })
 }
 
 #[async_trait::async_trait]
@@ -49,7 +97,7 @@ impl WorkflowTx for FakeTx {
     ) -> Result<Option<WfRow>, codegraph_workflow::WorkflowError> {
         let state = self.state.lock().unwrap();
         if sql.contains("FROM platform.workflow_definition") {
-            if let Some((id, initial, terminal, sm)) = &state.definition {
+            if let Some((id, initial, terminal, sm, status_field)) = &state.definition {
                 return Ok(Some(WfRow::Memory(vec![
                     ("id".to_string(), WfValue::Uuid(*id)),
                     (
@@ -61,6 +109,10 @@ impl WorkflowTx for FakeTx {
                         WfValue::StringVec(terminal.clone()),
                     ),
                     ("state_machine".to_string(), WfValue::Json(sm.clone())),
+                    (
+                        "status_field".to_string(),
+                        WfValue::String(status_field.clone()),
+                    ),
                 ])));
             }
             return Ok(None);
@@ -111,12 +163,6 @@ impl WorkflowClient for FakeClient {
     }
 }
 
-fn simple_state_machine() -> serde_json::Value {
-    serde_json::json!({
-        "transitions": {"draft": ["active"], "active": ["closed"]}
-    })
-}
-
 fn ctx(target_state: &str) -> TransitionContext {
     TransitionContext {
         tenant_id: Uuid::new_v4(),
@@ -144,7 +190,8 @@ fn transition_commits_and_advances_state() {
             def_id,
             "draft".to_string(),
             vec!["closed".to_string()],
-            simple_state_machine(),
+            machine_envelope("draft"),
+            "status".to_string(),
         )),
         instance: Some((instance_id, "draft".to_string(), false)),
         ..Default::default()
@@ -193,7 +240,8 @@ fn invalid_transition_rolls_back() {
             def_id,
             "draft".to_string(),
             vec!["closed".to_string()],
-            simple_state_machine(),
+            machine_envelope("draft"),
+            "status".to_string(),
         )),
         instance: Some((instance_id, "draft".to_string(), false)),
         ..Default::default()
@@ -232,7 +280,8 @@ fn already_terminal_is_conflict() {
             def_id,
             "closed".to_string(),
             vec!["closed".to_string()],
-            simple_state_machine(),
+            machine_envelope("closed"),
+            "status".to_string(),
         )),
         instance: Some((instance_id, "closed".to_string(), true)),
         ..Default::default()

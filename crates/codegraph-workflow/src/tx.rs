@@ -18,6 +18,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::error::WorkflowError;
+use crate::machine_runtime::MachineGuards;
 use crate::service::WorkflowService;
 use crate::types::{
     ApprovalContext, DelegationContext, ProcessHistoryEntry, TransitionContext, WorkflowState,
@@ -342,14 +343,30 @@ pub trait WorkflowClient: Send + Sync {
 ///
 /// The engine functions live in [`crate::engine`], [`crate::approval`],
 /// [`crate::delegation`] and [`crate::timer`]; this type just opens a
-/// transaction and dispatches.
+/// transaction and dispatches. An optional [`MachineGuards`] source (the
+/// generated app's machine-guard implementations, issue #816) rides every
+/// kernel decision — absent, foreign guard names fail closed with the
+/// named 501.
 pub struct GenericWorkflowService<C: WorkflowClient> {
     client: C,
+    guards: Option<std::sync::Arc<dyn MachineGuards>>,
 }
 
 impl<C: WorkflowClient> GenericWorkflowService<C> {
     pub fn new(client: C) -> Self {
-        Self { client }
+        Self {
+            client,
+            guards: None,
+        }
+    }
+
+    /// Registers the app's machine-guard implementations (the generated
+    /// machines module's `DefaultMachineGuards`). Machine transitions that
+    /// name a guard consult this source; unregistered names still fail
+    /// closed (the 501).
+    pub fn with_guards(mut self, guards: std::sync::Arc<dyn MachineGuards>) -> Self {
+        self.guards = Some(guards);
+        self
     }
 }
 
@@ -357,7 +374,8 @@ impl<C: WorkflowClient> GenericWorkflowService<C> {
 impl<C: WorkflowClient> WorkflowService for GenericWorkflowService<C> {
     async fn transition(&self, ctx: TransitionContext) -> Result<WorkflowState, WorkflowError> {
         let mut tx = self.client.begin().await?;
-        let result = crate::engine::transition(tx.as_mut(), &ctx).await;
+        let result =
+            crate::engine::transition_with_guards(tx.as_mut(), &ctx, self.guards.as_deref()).await;
         if result.is_err() {
             let _ = tx.rollback().await;
         }
