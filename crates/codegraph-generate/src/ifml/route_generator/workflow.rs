@@ -50,7 +50,11 @@ pub(crate) fn workflow_for_entity(config: &DomainConfig, entity: &str) -> Option
 /// machine, no domains.toml workflow config) resolve too. The db-backed
 /// helper is the SAME one the api plane uses — the UI and the routes
 /// cannot disagree about which entities are machine-bearing. The title
-/// chain mirrors `workflow_for_entity` (plain, then `{entity}Type`).
+/// chain mirrors `workflow_for_entity` (plain, then `{entity}Type`). The
+/// workflow scope rides along (issue #818): a dual entity surfaces the
+/// machine bound to the workflow's own status field — a machine on
+/// another field drives a different transition plane and never renders
+/// through the workflow's buttons.
 pub(super) async fn machine_surface_for(
     db: &dyn codegraph_core::traits::GraphQuerier,
     config: &DomainConfig,
@@ -59,10 +63,12 @@ pub(super) async fn machine_surface_for(
     if entity.is_empty() {
         return None;
     }
-    if let Some(surface) = machine_surface_for_entity(db, entity).await {
+    let scope = |title: &str| workflow_for_entity(config, title).map(|wf| wf.status_field.clone());
+    if let Some(surface) = machine_surface_for_entity(db, entity, scope(entity).as_deref()).await {
         return Some(surface);
     }
-    machine_surface_for_entity(db, &format!("{entity}{}", config.defaults.type_suffix)).await
+    let suffixed = format!("{entity}{}", config.defaults.type_suffix);
+    machine_surface_for_entity(db, &suffixed, scope(&suffixed).as_deref()).await
 }
 
 /// Workflow context for a component: resolution plus the badge markup

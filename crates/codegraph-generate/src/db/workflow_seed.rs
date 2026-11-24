@@ -164,9 +164,10 @@ impl GlobalGenerator for WorkflowSeedGenerator {
                         "workflow machine for {domain_name}.{entity_table} does not serialize: {e}"
                     ))
                 })?;
-                let machine_value = match find_artifact_machine(db, entity_name).await {
-                    Some((artifact, artifact_source)) => {
-                        machines::compare_machine_surfaces(
+                let machine_value =
+                    match find_artifact_machine(db, entity_name, &workflow.status_field).await {
+                        Some((artifact, artifact_source)) => {
+                            machines::compare_machine_surfaces(
                             &artifact,
                             &lowered_value,
                             &artifact_source,
@@ -175,10 +176,10 @@ impl GlobalGenerator for WorkflowSeedGenerator {
                             ),
                         )
                         .map_err(crate::error::Error::Config)?;
-                        artifact
-                    }
-                    None => lowered_value,
-                };
+                            artifact
+                        }
+                        None => lowered_value,
+                    };
                 let machine_canonical = machines::canonical_ir_json(&machine_value);
                 let machine_hash = fnv1a_64_hex(machine_canonical.as_bytes());
                 let machine_envelope_json =
@@ -241,11 +242,25 @@ impl GlobalGenerator for WorkflowSeedGenerator {
 async fn find_artifact_machine(
     db: &dyn GraphQuerier,
     entity_name: &str,
+    status_field: &str,
 ) -> Option<(serde_json::Value, String)> {
     let models = db.get_ddd_models().await.ok()?;
     for model in &models {
         for design in &model.designs {
             if design.resolved_title.as_deref() != Some(entity_name) {
+                continue;
+            }
+            // The machine must bind the workflow's own status field: since
+            // issue #818 an entity may carry kernel IR for an inline
+            // machine on a DIFFERENT field (e.g. an `escalation` machine
+            // beside a `status` workflow config), and that machine is not
+            // the one the config lowering must agree with.
+            let field = design
+                .machine_json
+                .as_ref()
+                .and_then(|m| m.get("field"))
+                .and_then(serde_json::Value::as_str);
+            if field != Some(status_field) {
                 continue;
             }
             if let Some(ir) = &design.machine_ir_json {

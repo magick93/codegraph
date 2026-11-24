@@ -309,9 +309,13 @@ impl DomainGenerator for RouterGenerator {
                 // root `src/` tree, so the route would reference a module
                 // no worker crate carries).
                 let has_machine = !project.is_workers_topology()
-                    && crate::machines::machine_surface_for_entity(db, title)
-                        .await
-                        .is_some();
+                    && crate::machines::machine_surface_for_entity(
+                        db,
+                        title,
+                        workflow.as_ref().map(|wf| wf.status_field.as_str()),
+                    )
+                    .await
+                    .is_some();
 
                 let has_embeddings = entity_cfg
                     .map(|ec| !ec.search.embedding_columns.is_empty())
@@ -721,9 +725,13 @@ pub async fn build_router_context(
             // as the sibling build_router_context site so the api contract
             // cannot drift (#590 precedent). Monolith-only (#703 posture).
             let has_machine = !project.is_workers_topology()
-                && crate::machines::machine_surface_for_entity(db, title)
-                    .await
-                    .is_some();
+                && crate::machines::machine_surface_for_entity(
+                    db,
+                    title,
+                    workflow.as_ref().map(|wf| wf.status_field.as_str()),
+                )
+                .await
+                .is_some();
 
             let has_embeddings = entity_cfg
                 .map(|ec| !ec.search.embedding_columns.is_empty())

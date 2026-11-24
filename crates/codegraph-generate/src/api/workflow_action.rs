@@ -155,7 +155,12 @@ impl EntityGenerator for WorkflowActionGenerator {
         // The machine read-model surface (issue #817): graph-driven,
         // independent of the workflow config. Presence gate — a
         // machine-less entity emits nothing here (byte-identical).
-        let machine_surface = crate::machines::machine_surface_for_entity(db, schema_title).await;
+        let machine_surface = crate::machines::machine_surface_for_entity(
+            db,
+            schema_title,
+            workflow.map(|wf| wf.status_field.as_str()),
+        )
+        .await;
 
         if workflow.is_none() && machine_surface.is_none() {
             return Ok(Vec::new());

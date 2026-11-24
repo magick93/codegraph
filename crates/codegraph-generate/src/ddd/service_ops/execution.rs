@@ -43,6 +43,10 @@ pub struct RouteShape<'a> {
     pub record_load: bool,
     /// The entity's designed machine, when any.
     pub machine: Option<&'a phero_ir::ddd::StateMachine>,
+    /// The machine's registry id (the domain-types `machines` key) — the
+    /// rendered kernel probes load the runtime through it (issue #818).
+    /// Present exactly when `machine` is.
+    pub machine_id: Option<&'a str>,
     /// The declared error vocabulary a body may raise (DD7).
     pub raises: &'a crate::ddd::body_lower::RaiseTable,
     /// The declared action-body parameters.
@@ -214,6 +218,7 @@ pub(super) fn execution_for(
                             current_expr: current_state_expr(field),
                             wire_key: wire_key(&field.rust_name, shape.dto_casing),
                             initial: StateName::new(machine.initial.clone()),
+                            machine_id: shape.machine_id.unwrap_or_default().to_string(),
                             all: machine_transition_pairs(machine),
                             op: transitions,
                         })
@@ -432,6 +437,7 @@ fn body_transition_state(
         current_expr: current_state_expr(field),
         wire_key: wire_key(&field.rust_name, shape.dto_casing),
         initial: StateName::new(machine.initial.clone()),
+        machine_id: shape.machine_id.unwrap_or_default().to_string(),
         all: machine_transition_pairs(machine),
         op: transitions,
     }))

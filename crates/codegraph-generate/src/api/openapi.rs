@@ -346,9 +346,15 @@ impl GlobalGenerator for OpenApiGenerator {
                         parent_entity,
                         parent_domain,
                         media_fields,
-                        has_machine: crate::machines::machine_surface_for_entity(db, title)
-                            .await
-                            .is_some(),
+                        has_machine: crate::machines::machine_surface_for_entity(
+                            db,
+                            title,
+                            entity_cfg
+                                .and_then(|ec| ec.workflow.as_ref())
+                                .map(|wf| wf.status_field.as_str()),
+                        )
+                        .await
+                        .is_some(),
                         media_mode_presigned,
                     });
                 }
@@ -389,9 +395,16 @@ impl GlobalGenerator for OpenApiGenerator {
                     parent_entity: None,
                     parent_domain: None,
                     media_fields,
-                    has_machine: crate::machines::machine_surface_for_entity(db, title)
-                        .await
-                        .is_some(),
+                    has_machine: crate::machines::machine_surface_for_entity(
+                        db,
+                        title,
+                        domain_entry
+                            .get_entity_config(title)
+                            .and_then(|ec| ec.workflow.as_ref())
+                            .map(|wf| wf.status_field.as_str()),
+                    )
+                    .await
+                    .is_some(),
                     media_mode_presigned,
                 });
             }

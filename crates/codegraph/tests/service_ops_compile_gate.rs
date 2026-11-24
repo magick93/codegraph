@@ -252,16 +252,20 @@ async fn generated_app_with_authored_transition_bindings_compiles() {
     .await
     .expect("generation over the binding fixture must succeed");
 
-    for (entity, arm) in [
-        ("release", r#""Held" => Some("SignedOff")"#),
-        ("review", r#""Pending" => Some("Cleared")"#),
-    ] {
+    for (entity, target) in [("release", "SignedOff"), ("review", "Cleared")] {
         let handler =
             fs::read_to_string(output.join(format!("src/api/release/{entity}_handler.rs")))
                 .unwrap();
+        // The kernel probes (issue #818): the authored binding bakes the
+        // op's declared target — the match arms are retired.
         assert!(
-            handler.contains(arm),
-            "the authored transition arm must lower into the handler before the build: {arm}\n{handler}"
+            handler.contains(&format!(r#"let legal: Vec<&str> = ["{target}"]"#)),
+            "the authored binding must bake its declared kernel-probe target before the build: \
+             {target}\n{handler}"
+        );
+        assert!(
+            handler.contains("codegraph_workflow::MachineRuntime::from_json(&machine_ir)"),
+            "the authored binding must route through the MachineRuntime: {entity}\n{handler}"
         );
     }
 

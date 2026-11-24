@@ -307,9 +307,13 @@ fn repo_root() -> PathBuf {
 #[tokio::test]
 async fn the_fixture_machine_derives_the_read_model_from_the_kernel() {
     let engine = fixture_engine().await;
-    let surface = codegraph_generate::machines::machine_surface_for_entity(&engine, "ClaimType")
-        .await
-        .expect("Claim must be machine-bearing");
+    let surface = codegraph_generate::machines::machine_surface_for_entity(
+        &engine,
+        "ClaimType",
+        Some("status"),
+    )
+    .await
+    .expect("Claim must be machine-bearing");
     assert_eq!(surface.machine_id, "claimstatus");
     assert_eq!(surface.status_field, "status");
     assert_eq!(surface.initial_state, "draft");
@@ -438,12 +442,20 @@ fn the_machine_bearing_entity_emits_the_machine_read_model_route() {
 /// The machine-less twin: the refunds entity's INLINE DSL machine carries
 /// no kernel IR, so no machine module, no route, no OpenAPI entry.
 #[test]
-fn the_machine_less_entity_emits_no_machine_surface() {
+fn the_inline_machine_stays_off_the_workflow_plane() {
+    // Issue #818: the refunds escalation machine is INLINE (a DSL mirror
+    // with no artifact IR) — but it is NOT the machine the entity's
+    // workflow config binds (the config binds `status`), so the workflow-
+    // plane read-model surface stays ABSENT: a foreign field's machine
+    // would promise transitions the backend 409s. The kernel still covers
+    // it (the registry embed + the kernel-probed action routes); only the
+    // read-model surface is scoped. Presence gating for the truly
+    // machine-less shape is pinned by `machine_kernel_tests` (zero files).
     must_not_have("src/api/refunds/refund_request_machine.rs");
     let router = read("src/api/refunds/router.rs");
     assert!(
         !router.contains("/machine"),
-        "a machine-less entity must not mount a machine route:\n{}",
+        "a foreign-field machine must not mount the read-model route:\n{}",
         router
             .lines()
             .filter(|l| l.contains("machine"))
@@ -453,7 +465,7 @@ fn the_machine_less_entity_emits_no_machine_surface() {
     let openapi = read("src/api/openapi/refunds.rs");
     assert!(
         !openapi.contains("machine"),
-        "a machine-less entity must not register machine surface:\n{}",
+        "a foreign-field machine must not register read-model surface:\n{}",
         openapi
             .lines()
             .filter(|l| l.contains("machine"))
@@ -534,16 +546,18 @@ fn the_ifml_page_renders_transition_buttons_from_the_read_model() {
         "the badge testid contract holds"
     );
 
-    // The machine-less twin: the refund detail page keeps the static
-    // per-declared-edge buttons (its inline machine carries no kernel IR).
+    // The foreign-field twin (issue #818): the refund detail page keeps
+    // the workflow's own static transition buttons — the escalation
+    // machine is NOT the workflow-field machine, so its edges never
+    // render through the workflow's buttons (they would 409).
     let refund_page = read("svelte/src/routes/refundrequestdetail/+page.svelte");
     assert!(
         refund_page.contains("info-transition-submitted"),
-        "the machine-less twin keeps the declared-edge buttons (byte identity)"
+        "the foreign-field twin keeps the declared-edge buttons (byte identity)"
     );
     assert!(
-        !refund_page.contains("machine_transitions"),
-        "the machine-less twin gains no machine surface"
+        !refund_page.contains("machine?.available_transitions"),
+        "the foreign-field twin gains no machine-driven buttons"
     );
 }
 

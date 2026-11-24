@@ -254,6 +254,16 @@ impl DddDesignSurface {
         serde_json::from_value(value.clone()).ok()
     }
 
+    /// The kernel machine id the entity's machine registers under — the
+    /// domain-types `machines` key the rendered kernel probes load (issue
+    /// #818). The artifact's authored id for a referenced machine, the
+    /// derived `{module}_{field}` for an inline DSL machine. One derivation
+    /// shared with the kernel emitter (`machines::machine_kernel_id`), so
+    /// the emitted embed and the rendered probe can never disagree.
+    pub fn machine_kernel_id_for(&self, schema_title: &str) -> Option<String> {
+        crate::machines::machine_kernel_id(self.designs.get(schema_title)?)
+    }
+
     /// Every declared machine state for the entity, in canonical order
     /// (initial, terminals, then transition endpoints). Empty when the
     /// entity carries no machine.

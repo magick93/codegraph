@@ -114,6 +114,28 @@ fn machine_design(
     }
 }
 
+/// A truly machine-less design: no artifact IR AND no DSL mirror (issue
+/// #818 — a mirror alone IS an inline machine, so the machine-less
+/// baseline carries neither).
+fn bare_design(domain: &str) -> DddDesignNode {
+    DddDesignNode {
+        application: "Payroll".to_string(),
+        module: domain.to_string(),
+        class: "nz.example.payroll::PayRun".to_string(),
+        resolved_title: Some("PayRunType".to_string()),
+        stereotype: "entity".to_string(),
+        is_abstract: false,
+        flags: DddDesignFlags::default(),
+        machine_json: None,
+        machine_ir_json: None,
+        machine_provenance_json: None,
+        child_operations: Vec::new(),
+        aggregate_boundary: None,
+        invariants: Vec::new(),
+        ordinal: 0,
+    }
+}
+
 fn model_graph(designs: Vec<DddDesignNode>) -> DddModelGraph {
     DddModelGraph {
         source_path: "model/payroll.ddd".to_string(),
@@ -253,7 +275,7 @@ fn validate_machine_json_refuses_a_broken_machine() {
 #[tokio::test]
 async fn machine_less_graph_is_silent() {
     let mock = MockEngine::builder().build();
-    mock.ingest_ddd_model(&model_graph(vec![machine_design("payroll", None, None)]))
+    mock.ingest_ddd_model(&model_graph(vec![bare_design("payroll")]))
         .await
         .unwrap();
     let config =
@@ -264,7 +286,8 @@ async fn machine_less_graph_is_silent() {
         .unwrap();
     assert!(
         refusals.is_empty(),
-        "a design without a referenced machine validates to nothing: {refusals:?}"
+        "a design with neither a referenced machine nor an inline mirror validates to nothing: \
+         {refusals:?}"
     );
 }
 
@@ -676,11 +699,288 @@ async fn the_emitter_writes_data_files_and_a_registry_module() {
     );
 }
 
+// ── band 5: inline machines — the generation-time lowering (issue #818) ──
+
+/// An INLINE machine (a DSL mirror, no artifact IR) lowers into a valid
+/// kernel IR and passes the same fail-closed doors as a referenced one.
+/// This is the door the route plane's kernel probes load through: inline
+/// machines execute through the MachineRuntime exactly like referenced
+/// machines.
+#[tokio::test]
+async fn an_inline_machine_lowers_into_a_valid_kernel_ir() {
+    let mock = mock_with_payrun_codelist().await;
+    mock.ingest_ddd_model(&model_graph(vec![machine_design("payroll", None, None)]))
+        .await
+        .unwrap();
+    let config =
+        codegraph_config::config::parse_domain_config(Path::new("tests/fixtures/domains.toml"))
+            .unwrap();
+    let refusals = machines::machine_kernel_refusals(&mock, &config)
+        .await
+        .unwrap();
+    assert!(
+        refusals.is_empty(),
+        "an inline machine over a bound codelist is valid: {refusals:?}"
+    );
+
+    // The lowering itself: pure, deterministic, structurally valid.
+    let design = machine_design("payroll", None, None);
+    let ir = machines::machine_ir_for_design(&design)
+        .expect("a mirror lowers")
+        .expect("a mirror is a machine");
+    let machine: xstate_core::xstate_ir::Machine = serde_json::from_value(ir.clone()).unwrap();
+    let canonical = machines::canonical_ir_json(&ir);
+    xstate_core::validate_machine_json(&canonical)
+        .expect("the lowered IR passes the fail-closed boundary");
+    // The derived registry id and the shape: states, terminals, events.
+    assert_eq!(machine.id, "payroll_status");
+    assert_eq!(machine.initial, "Draft");
+    let names: Vec<&str> = machine.states.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, vec!["Draft", "Calculating"]);
+    let calculating = machine
+        .states
+        .iter()
+        .find(|s| s.name == "Calculating")
+        .unwrap();
+    assert_eq!(
+        calculating.node_type,
+        xstate_core::xstate_ir::StateType::Final
+    );
+    let draft = machine.states.iter().find(|s| s.name == "Draft").unwrap();
+    let edge = &draft.transitions[0];
+    assert_eq!(edge.event, "CALCULATE", "the authored `via` rides verbatim");
+    assert_eq!(edge.target.as_deref(), Some("Calculating"));
+    assert!(
+        edge.guard.is_none(),
+        "inline `when` conditions are not lowered (recorded deferral)"
+    );
+}
+
+/// The lowering is DETERMINISTIC: two lowerings of the same mirror
+/// produce byte-identical canonical IR — the embed cannot drift run to
+/// run.
+#[test]
+fn the_inline_machine_lowering_is_deterministic() {
+    let design = machine_design("payroll", None, None);
+    let a = machines::machine_ir_for_design(&design).unwrap().unwrap();
+    let b = machines::machine_ir_for_design(&design).unwrap().unwrap();
+    assert_eq!(
+        machines::canonical_ir_json(&a),
+        machines::canonical_ir_json(&b)
+    );
+}
+
+/// A bare-arrow transition's event is the DERIVED lowerCamel of its
+/// target — the same vocabulary the #660 binding plane resolves against,
+/// so the kernel's events and the binding plane's triggers cannot drift.
+#[test]
+fn inline_bare_arrows_derive_the_binding_plane_vocabulary() {
+    let mirror = serde_json::json!({
+        "field": "status",
+        "enumType": {"type": "enum", "value": {"package": "nz.example.payroll", "name": "PayRunStatus"}},
+        "initial": "Draft",
+        "terminals": ["Approved"],
+        "transitions": [
+            {"from": "Draft", "to": "Calculating"},
+            {"from": "Calculating", "to": "Approved", "trigger": "Approve"}
+        ]
+    });
+    let design = DddDesignNode {
+        machine_json: Some(mirror),
+        ..machine_design("payroll", None, None)
+    };
+    let ir = machines::machine_ir_for_design(&design).unwrap().unwrap();
+    let machine: xstate_core::xstate_ir::Machine = serde_json::from_value(ir).unwrap();
+    let draft = machine.states.iter().find(|s| s.name == "Draft").unwrap();
+    assert_eq!(
+        draft.transitions[0].event, "calculating",
+        "a bare arrow derives the target's lowerCamel — `declared_triggers`' spelling"
+    );
+    let calculating = machine
+        .states
+        .iter()
+        .find(|s| s.name == "Calculating")
+        .unwrap();
+    assert_eq!(calculating.transitions[0].event, "Approve");
+}
+
+/// The emitter covers inline machines: the lowered IR lands as
+/// `machines/{domain}/{id}.ir.json` + a registry entry keyed by the
+/// derived id, with CANONICAL bytes.
+#[tokio::test]
+async fn an_inline_machine_emits_the_registry_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let mock = mock_with_payrun_codelist().await;
+    mock.ingest_ddd_model(&model_graph(vec![machine_design("payroll", None, None)]))
+        .await
+        .unwrap();
+    let config =
+        codegraph_config::config::parse_domain_config(Path::new("tests/fixtures/domains.toml"))
+            .unwrap();
+    let generator = MachineKernelGenerator::new_with_base(dir.path().to_path_buf());
+    let files = generator
+        .generate(
+            &mock,
+            &config,
+            &[],
+            &tera::Tera::default(),
+            &Default::default(),
+        )
+        .await
+        .expect("the machine kernel generator must emit for an inline machine");
+    let rels: Vec<String> = files
+        .iter()
+        .map(|f| {
+            f.path
+                .strip_prefix(dir.path())
+                .unwrap()
+                .display()
+                .to_string()
+        })
+        .collect();
+    assert!(
+        rels.iter()
+            .any(|r| r == "src/machines/payroll/payroll_status.ir.json"),
+        "the lowered IR rides machines/{{domain}}/{{id}}.ir.json: {rels:?}"
+    );
+    let data_path = dir
+        .path()
+        .join("src/machines/payroll/payroll_status.ir.json");
+    let _ = files;
+    // The write step landed the files (the module include_str!s resolve
+    // against them) — the emitter test above asserts the same contract
+    // for referenced machines.
+    let written = std::fs::read_to_string(&data_path).unwrap_or_else(|_| {
+        // `generate` returns the files without writing; write here so
+        // the module's include_str!s resolve, then read the data back.
+        for f in &files {
+            if let Some(parent) = f.path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(&f.path, &f.content).unwrap();
+        }
+        fs::read_to_string(&data_path).unwrap()
+    });
+    let value: serde_json::Value = serde_json::from_str(&written).unwrap();
+    assert_eq!(
+        written.trim(),
+        machines::canonical_ir_json(&value),
+        "the lowered embed is the canonical serialization"
+    );
+    let module = fs::read_to_string(dir.path().join("src/machines/mod.rs")).unwrap();
+    assert!(
+        module.contains(r#"include_str!("payroll/payroll_status.ir.json")"#),
+        "the inline machine embeds through include_str!: {module}"
+    );
+    assert!(
+        module.contains(r#""payroll_status""#),
+        "the registry keys by the derived machine id: {module}"
+    );
+    // An inline machine carries no authored provenance: the consts stay
+    // empty (never a guessed path or hash).
+    assert!(
+        module.contains("PAYROLL_STATUS_SOURCE_PATH: &str = \"\""),
+        "inline provenance stays empty: {module}"
+    );
+}
+
+/// An inline machine whose states miss the bound codelist is refused —
+/// the enum door applies to the LOWERED IR (issue #818).
+#[tokio::test]
+async fn an_inline_machine_state_outside_the_codelist_is_refused() {
+    let mock = mock_with_payrun_codelist().await;
+    let mirror = serde_json::json!({
+        "field": "status",
+        "enumType": {
+            "type": "enum",
+            "value": {"package": "nz.example.payroll", "name": "PayRunStatus"}
+        },
+        "initial": "Draft",
+        "terminals": ["Shipped"],
+        "transitions": [{"from": "Draft", "to": "Shipped", "trigger": "SHIP"}]
+    });
+    let design = DddDesignNode {
+        machine_json: Some(mirror),
+        ..machine_design("payroll", None, None)
+    };
+    mock.ingest_ddd_model(&model_graph(vec![design]))
+        .await
+        .unwrap();
+    let config =
+        codegraph_config::config::parse_domain_config(Path::new("tests/fixtures/domains.toml"))
+            .unwrap();
+    let refusals = machines::machine_kernel_refusals(&mock, &config)
+        .await
+        .unwrap();
+    let refusal = refusals
+        .iter()
+        .find(|r| r.contains("Shipped") && r.contains("PayRunStatus"))
+        .unwrap_or_else(|| panic!("expected the enum-correspondence refusal, got: {refusals:?}"));
+    assert!(refusal.contains("payroll_status"), "{refusal}");
+}
+
+/// A mirror that does not deserialize as a StateMachine refuses the run
+/// by name — fail-closed, never a silent no-machine.
+#[tokio::test]
+async fn a_stale_inline_mirror_is_refused_by_name() {
+    let mock = MockEngine::builder().build();
+    let design = DddDesignNode {
+        machine_json: Some(serde_json::json!({ "field": 42 })),
+        ..machine_design("payroll", None, None)
+    };
+    mock.ingest_ddd_model(&model_graph(vec![design]))
+        .await
+        .unwrap();
+    let config =
+        codegraph_config::config::parse_domain_config(Path::new("tests/fixtures/domains.toml"))
+            .unwrap();
+    let refusals = machines::machine_kernel_refusals(&mock, &config)
+        .await
+        .unwrap();
+    assert!(
+        refusals
+            .iter()
+            .any(|r| r.contains("does not deserialize as a StateMachine")),
+        "a stale mirror refuses by name: {refusals:?}"
+    );
+}
+
+/// The derived inline id is deterministic, snake_cased, and a safe file
+/// stem — the emitter and the route plane share one derivation.
+#[test]
+fn inline_machine_ids_are_deterministic_and_file_safe() {
+    assert_eq!(
+        machines::inline_machine_id("payroll", "payRunStatus"),
+        "payroll_pay_run_status"
+    );
+    assert_eq!(
+        machines::inline_machine_id("payroll", "payRunStatus"),
+        machines::inline_machine_id("payroll", "payRunStatus"),
+        "the derivation is pure"
+    );
+    // The route plane resolves the same id through the kernel-id helper.
+    let design = machine_design("payroll", None, None);
+    assert_eq!(
+        machines::machine_kernel_id(&design).as_deref(),
+        Some("payroll_status")
+    );
+    // A referenced machine keeps its authored id.
+    let referenced = machine_design(
+        "payroll",
+        Some(payrun_ir_json()),
+        Some(provenance_json("payrun")),
+    );
+    assert_eq!(
+        machines::machine_kernel_id(&referenced).as_deref(),
+        Some("payrun")
+    );
+}
+
 #[tokio::test]
 async fn a_machine_less_graph_emits_zero_files() {
     let dir = tempfile::tempdir().unwrap();
     let mock = MockEngine::builder().build();
-    mock.ingest_ddd_model(&model_graph(vec![machine_design("payroll", None, None)]))
+    mock.ingest_ddd_model(&model_graph(vec![bare_design("payroll")]))
         .await
         .unwrap();
     let config =

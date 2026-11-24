@@ -34,8 +34,21 @@
 //!
 //! Provenance (`machine_id`, authored source path, `content_sha256`) is
 //! surfaced on the emitted module as consts — the drift-detection seam
-//! Stages 2/3 consume. No `MachineRuntime` here (Stage 2), no workflow or
-//! IFML wiring (Stages 3–4).
+//! Stages 2/3 consume.
+//!
+//! **Inline machines (issue #818 — Lane 4 of epic #812)**: a DSL machine
+//! (`machine <field>: <Enum> { … }`) carries no artifact IR — only the raw
+//! `machine_json` StateMachine mirror. The kernel covers it too through a
+//! PURE, deterministic generation-time lowering
+//! ([`inline_machine_to_ir`]): the same canonical-IR form a referenced
+//! machine embeds, derived from the mirror. The emitter emits the lowered
+//! IR like any other (`machines/{domain}/{id}.ir.json` + registry entry),
+//! the same fail-closed validation doors apply (`validate_machine_json` +
+//! the enum correspondence), and the route plane renders kernel probes
+//! ([`codegraph_workflow::MachineRuntime::transition_for`]) against the
+//! registry id — so inline machines execute through the MachineRuntime
+//! exactly like referenced machines and the hand-rendered match arms are
+//! gone. The raw mirror stays on the node for provenance/debug.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
@@ -46,6 +59,7 @@ use codegraph_config::DomainConfig;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::DddDesignNode;
+use heck::ToLowerCamelCase;
 use serde_json::Value;
 use xstate_core::xstate_ir::{ContextSchema, Machine, StateNode, StateType, Transition};
 
@@ -369,6 +383,143 @@ pub fn compare_machine_surfaces(
     }
 }
 
+// ── Inline machines: the generation-time lowering (issue #818) ────────
+
+/// The registry id of an INLINE machine (a DSL mirror with no kernel IR):
+/// `{module}_{field}`, both snake_cased — deterministic, a safe file stem,
+/// and unique per (module, field). The kernel emitter and the route plane
+/// derive the SAME id through this one helper, so the emitted embed and
+/// the rendered probe can never disagree.
+#[must_use]
+pub fn inline_machine_id(module: &str, field: &str) -> String {
+    format!(
+        "{}_{}",
+        codegraph_naming::to_snake_case(module),
+        codegraph_naming::to_snake_case(field)
+    )
+}
+
+/// The kernel machine id of a design: the artifact's authored id for a
+/// REFERENCED machine (the provenance `machineId`, else the IR's own
+/// `id`), the derived [`inline_machine_id`] for a DSL mirror. `None` when
+/// the design carries no machine, or a referenced IR whose id is
+/// unresolved (the refusals walker names the defect).
+#[must_use]
+pub fn machine_kernel_id(design: &DddDesignNode) -> Option<String> {
+    if design.machine_ir_json.is_some() {
+        return machine_id_of(design);
+    }
+    let mirror = design.machine_json.as_ref()?;
+    let field = mirror.get("field").and_then(Value::as_str)?;
+    Some(inline_machine_id(&design.module, field))
+}
+
+/// The kernel IR JSON of a design: the artifact embed when present, else
+/// the deterministic lowering of the DSL mirror ([`inline_machine_to_ir`]
+/// through [`canonical_ir_json`]). `Ok(None)` when the design carries no
+/// machine; `Err` carries the named refusal (a mirror that does not
+/// deserialize — the refusals walker and the emitter both surface it).
+///
+/// # Errors
+/// The mirror fails to deserialize as a `phero_ir::ddd::StateMachine`, or
+/// the lowered machine fails to serialize (a defect seam).
+pub fn machine_ir_for_design(design: &DddDesignNode) -> std::result::Result<Option<Value>, String> {
+    if let Some(ir) = &design.machine_ir_json {
+        return Ok(Some(ir.clone()));
+    }
+    let Some(mirror) = &design.machine_json else {
+        return Ok(None);
+    };
+    let machine: phero_ir::ddd::StateMachine =
+        serde_json::from_value(mirror.clone()).map_err(|e| {
+            format!(
+                "the machine mirror of `{}` (module `{}`) does not deserialize as a \
+                 StateMachine ({e}) — the artifact is stale or hand-edited; recompile the model",
+                design.class, design.module
+            )
+        })?;
+    let id = machine_kernel_id(design).ok_or_else(|| {
+        format!(
+            "the machine mirror of `{}` (module `{}`) names no state field — the kernel \
+             id cannot be derived",
+            design.class, design.module
+        )
+    })?;
+    let lowered = inline_machine_to_ir(&machine, &id);
+    serde_json::to_value(&lowered).map(Some).map_err(|e| {
+        format!(
+            "the lowered machine `{id}` (module `{}`) does not serialize: {e}",
+            design.module
+        )
+    })
+}
+
+/// The PURE, deterministic lowering of a DSL machine mirror
+/// (`phero_ir::ddd::StateMachine` — the `machine_json` node blob) into the
+/// canonical xstate-ir [`Machine`], so an INLINE machine executes through
+/// the kernel exactly like a referenced one (issue #818, Option A plane).
+///
+/// Determinism contract: states in the mirror's canonical order
+/// ([`phero_ir::ddd::StateMachine::states`] — initial, terminals,
+/// transition endpoints by first appearance), each state's out-edges in
+/// declaration order, and the event of an edge is the authored `via`
+/// trigger verbatim or the derived lowerCamel of the target state — the
+/// SAME vocabulary `ddd::service_ops::transitions::declared_triggers`
+/// resolves the #660 bindings against, so the kernel's events and the
+/// binding plane's triggers cannot drift. Terminal states lower as final
+/// nodes. Inline `when` conditions on transitions are NOT lowered (no
+/// kernel guard form exists for them) — they stay mirror-provenance,
+/// exactly as the pre-#818 match arms ignored them (recorded deferral).
+#[must_use]
+pub fn inline_machine_to_ir(machine: &phero_ir::ddd::StateMachine, machine_id: &str) -> Machine {
+    let terminals: BTreeSet<&str> = machine.terminals.iter().map(|s| s.as_str()).collect();
+    let mut state_nodes: Vec<StateNode> = Vec::new();
+    for name in machine.states() {
+        let transitions: Vec<Transition> = machine
+            .transitions
+            .iter()
+            .filter(|t| t.from == name)
+            .map(|t| Transition {
+                event: t
+                    .trigger
+                    .clone()
+                    .unwrap_or_else(|| t.to.to_lower_camel_case()),
+                target: Some(t.to.clone()),
+                targets: Vec::new(),
+                guard: None,
+                actions: Vec::new(),
+                description: None,
+                delay_ms: None,
+            })
+            .collect();
+        state_nodes.push(StateNode {
+            name: name.to_string(),
+            description: None,
+            initial: None,
+            entry: Vec::new(),
+            exit: Vec::new(),
+            transitions,
+            children: Vec::new(),
+            node_type: if terminals.contains(name) {
+                StateType::Final
+            } else {
+                StateType::Atomic
+            },
+            tags: Vec::new(),
+            invoke: None,
+            on_done: Vec::new(),
+            output: None,
+        });
+    }
+    Machine {
+        id: machine_id.to_string(),
+        initial: machine.initial.clone(),
+        context: ContextSchema { fields: Vec::new() },
+        states: state_nodes,
+        setup: None,
+    }
+}
+
 /// The machine read-model surface of ONE entity (issue #817): the
 /// entity→machine binding the api and IFML planes consume. Resolved from
 /// the graph with the SAME predicate the workflow seed uses
@@ -401,22 +552,35 @@ pub struct EntityMachineSurface {
 }
 
 /// Resolves the machine surface bound to `title` (the schema title), if
-/// any. Graph-driven: the entity's `.ddd` design must carry a REFERENCED
-/// machine (`machine <field>: <Enum> from "…machine.ts"` — inline DSL
-/// machines have no kernel IR and stay outside the read model, matching
-/// the Lane-1 registry). `None` when the entity is machine-less — the
-/// caller's presence gate (no machine ⇒ no route, byte-identical).
+/// any. Graph-driven: the entity's `.ddd` design must carry a machine —
+/// the artifact IR of a referenced machine OR the lowered IR of an inline
+/// DSL machine (issue #818; the lowering is total, so a mirror is always
+/// enough), PLUS the DSL mirror (the status field the read model reads).
+/// `None` when the entity is machine-less — the caller's presence gate
+/// (no machine ⇒ no route, byte-identical).
+///
+/// `workflow_status_field` scopes the pick (issue #818): an entity whose
+/// workflow config binds `status` must surface THE MACHINE BOUND TO THAT
+/// FIELD — a machine on another field (an `escalation` machine beside a
+/// `status` workflow) drives a different transition plane, and rendering
+/// its edges through the workflow's buttons/payload would promise
+/// transitions the backend 409s. `Some(field)` therefore requires the
+/// match (no fallback to a foreign field's machine); `None` takes the
+/// entity's first machine (no workflow config — every machine is the
+/// transition plane).
 pub async fn machine_surface_for_entity(
     db: &dyn GraphQuerier,
     title: &str,
+    workflow_status_field: Option<&str>,
 ) -> Option<EntityMachineSurface> {
     let models = db.get_ddd_models().await.ok()?;
+    let mut first: Option<EntityMachineSurface> = None;
     for model in &models {
         for design in &model.designs {
             if design.resolved_title.as_deref() != Some(title) {
                 continue;
             }
-            let Some(ir) = &design.machine_ir_json else {
+            let Some(ir) = machine_ir_for_design(design).ok().flatten() else {
                 continue;
             };
             // The status field comes from the DSL mirror; a design with
@@ -428,10 +592,17 @@ pub async fn machine_surface_for_entity(
             let Some(status_field) = mirror.get("field").and_then(Value::as_str) else {
                 continue;
             };
-            let Some(machine_id) = machine_id_of(design) else {
+            // The workflow-field scope: a machine on another field never
+            // qualifies (see the doc comment).
+            if let Some(field) = workflow_status_field
+                && status_field != field
+            {
+                continue;
+            }
+            let Some(machine_id) = machine_kernel_id(design) else {
                 continue;
             };
-            let canonical = canonical_ir_json(ir);
+            let canonical = canonical_ir_json(&ir);
             let terminal_states: Vec<String> = ir
                 .get("states")
                 .and_then(Value::as_array)
@@ -446,7 +617,7 @@ pub async fn machine_surface_for_entity(
                 .unwrap_or_default();
             let mut terminal_states = terminal_states;
             terminal_states.sort();
-            return Some(EntityMachineSurface {
+            let surface = Some(EntityMachineSurface {
                 machine_id,
                 domain: design.module.clone(),
                 status_field: status_field.to_string(),
@@ -460,9 +631,16 @@ pub async fn machine_surface_for_entity(
                     .unwrap_or_default()
                     .to_string(),
             });
+            if workflow_status_field.is_some() {
+                // The scoped pick: the first matching field wins.
+                return surface;
+            }
+            if first.is_none() {
+                first = surface;
+            }
         }
     }
-    None
+    first
 }
 
 /// FNV-1a 64-bit lowercase hex — the inline digest every plane uses (the
@@ -479,20 +657,23 @@ fn fnv1a_64_hex(bytes: &[u8]) -> String {
 
 /// Whether ANY entity in the generation order is machine-bearing — a
 /// bulk fact the e2e generators use to skip whole passes. One graph walk.
+/// Effective presence: the artifact IR of a referenced machine or the
+/// mirror of an inline one (the lowering is total — issue #818).
 pub async fn graph_has_machine_entities(db: &dyn GraphQuerier) -> bool {
     db.get_ddd_models()
         .await
         .map(|models| {
             models
                 .iter()
-                .any(|m| m.designs.iter().any(|d| d.machine_ir_json.is_some()))
+                .any(|m| m.designs.iter().any(design_has_machine))
         })
         .unwrap_or(false)
 }
 
 /// The machine-bearing entity titles (issue #817): the `resolved_title`
-/// of every design carrying a kernel IR — the set the POM plans and the
-/// spec families check. One graph walk (the caller reuses it per view).
+/// of every design carrying a machine — effective presence (artifact IR
+/// or inline mirror, issue #818). One graph walk (the caller reuses it
+/// per view).
 pub async fn machine_bearing_titles(db: &dyn GraphQuerier) -> std::collections::HashSet<String> {
     db.get_ddd_models()
         .await
@@ -501,14 +682,23 @@ pub async fn machine_bearing_titles(db: &dyn GraphQuerier) -> std::collections::
                 .iter()
                 .flat_map(|m| m.designs.iter())
                 .filter_map(|d| {
-                    d.machine_ir_json
-                        .is_some()
+                    design_has_machine(d)
                         .then(|| d.resolved_title.clone())
                         .flatten()
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Whether a design carries a machine under the EFFECTIVE presence rule
+/// (issue #818): the artifact IR of a referenced machine or the DSL
+/// mirror of an inline one (whose lowered IR always exists — the
+/// lowering is total). Every bulk fact keys on this one predicate so the
+/// emitter, the scaffold declaration and the route plane cannot disagree.
+#[must_use]
+pub fn design_has_machine(design: &DddDesignNode) -> bool {
+    design.machine_ir_json.is_some() || design.machine_json.is_some()
 }
 
 /// One machine to emit, collected from the graph.
@@ -577,7 +767,10 @@ fn machine_id_is_file_safe(machine_id: &str) -> bool {
 }
 
 /// Collect the machine entries of the graph, sorted by (domain,
-/// machine_id), refusing duplicates.
+/// machine_id), refusing duplicates. Effective presence: a referenced
+/// machine's artifact IR or an inline machine's lowered IR (issue #818).
+/// Designs whose mirror does not lower are skipped — the refusals walker
+/// names the defect and the run refuses before any tree.
 async fn collect_machine_entries(
     db: &dyn GraphQuerier,
 ) -> std::result::Result<Vec<MachineEntry>, GraphError> {
@@ -585,10 +778,10 @@ async fn collect_machine_entries(
     let mut entries: Vec<MachineEntry> = Vec::new();
     for model in &models {
         for design in &model.designs {
-            let Some(ir) = &design.machine_ir_json else {
+            let Some(ir) = machine_ir_for_design(design).ok().flatten() else {
                 continue;
             };
-            let Some(machine_id) = machine_id_of(design) else {
+            let Some(machine_id) = machine_kernel_id(design) else {
                 // The refusals walker names the defect; collection skips.
                 continue;
             };
@@ -604,7 +797,7 @@ async fn collect_machine_entries(
                     .and_then(|p| p.get("contentSha256"))
                     .and_then(Value::as_str)
                     .map(str::to_string),
-                ir_json: canonical_ir_json(ir),
+                ir_json: canonical_ir_json(&ir),
             });
         }
     }
@@ -631,12 +824,22 @@ pub async fn machine_kernel_refusals(
 
     for model in &models {
         for design in &model.designs {
-            let Some(ir) = &design.machine_ir_json else {
-                continue;
+            // Effective IR: the artifact embed, or the inline lowering
+            // (issue #818). An unlowerable mirror refuses by name.
+            let ir = match machine_ir_for_design(design) {
+                Ok(Some(ir)) => ir,
+                Ok(None) => continue,
+                Err(reason) => {
+                    refusals.push(format!(
+                        "machine of class `{}` (module `{}`): {reason}",
+                        design.class, design.module,
+                    ));
+                    continue;
+                }
             };
             let where_ = format!(
                 "machine `{}` of class `{}` (domain `{}`)",
-                machine_id_of(design).unwrap_or_else(|| "<unresolved id>".to_string()),
+                machine_kernel_id(design).unwrap_or_else(|| "<unresolved id>".to_string()),
                 design.class,
                 design.module,
             );
@@ -656,11 +859,12 @@ pub async fn machine_kernel_refusals(
                     continue;
                 }
             };
-            let canonical = canonical_ir_json(ir);
+            let canonical = canonical_ir_json(&ir);
             if let Err(e) = xstate_core::validate_machine_json(&canonical) {
                 refusals.push(format!(
                     "{where_}: the machine is structurally invalid ({e}) — fix the authored \
-                     TypeScript/XState file and recompile",
+                     machine (the TypeScript/XState file, or the inline DSL block) and \
+                     recompile",
                 ));
                 continue;
             }
@@ -712,7 +916,7 @@ pub async fn machine_kernel_refusals(
             // Guard-method-name collisions: two guard names rendering the
             // same `guard_{snake}` method would make the seam trait
             // unimplementable.
-            for guard in machine_guard_names(ir) {
+            for guard in machine_guard_names(&ir) {
                 let method = guard_method_name(&guard);
                 if let Some(other) = guard_methods.get(&method) {
                     if other != &guard {
@@ -776,8 +980,11 @@ pub async fn machine_kernel_refusals(
 }
 
 /// Resolve the authored enum name to a codelist name: exact, then the
-/// suffix-stripped spelling, then title + suffix (the
-/// `resolve_with_suffix` convention, both directions).
+/// suffix-stripped spelling, then title + suffix, then the JSON-codelist
+/// convention (`{Enum}CodeList` — the classifier's codelist schema
+/// spelling, whose VALUES an enum-typed field reads; issue #818 makes the
+/// door reachable for inline machines whose projects seed enum values
+/// through a codelist schema).
 async fn resolve_codelist(
     db: &dyn GraphQuerier,
     enum_name: &str,
@@ -787,6 +994,7 @@ async fn resolve_codelist(
         enum_name.to_string(),
         codegraph_naming::strip_suffix(enum_name, suffix),
         format!("{enum_name}{suffix}"),
+        format!("{enum_name}CodeList"),
     ];
     for candidate in candidates {
         if db.get_codelist(&candidate).await?.is_some() {

@@ -329,14 +329,16 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
 
         // Machine kernel (issue #815) lives in `src/machines/`; the kernel
         // generator writes the module + data files, this declares the
-        // module and gates the xstate-core dep in Cargo.toml.
+        // module and gates the xstate-core dep in Cargo.toml. Effective
+        // presence (issue #818): the artifact IR of a referenced machine
+        // or the mirror of an inline one — the lowering is total.
         let has_machines = db
             .get_ddd_models()
             .await
             .map(|models| {
                 models
                     .iter()
-                    .any(|m| m.designs.iter().any(|d| d.machine_ir_json.is_some()))
+                    .any(|m| m.designs.iter().any(crate::machines::design_has_machine))
             })
             .unwrap_or(false);
         let machines_mod = if has_machines {
