@@ -35,6 +35,8 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
     use super::{{ entity.module_name }}_handler;
 {% if entity.has_workflow %}
     use super::{{ entity.module_name }}_workflow;
+{% endif %}{% if entity.has_machine %}
+    use super::{{ entity.module_name }}_machine;
 {% endif %}
 {% for mf in entity.media_fields %}
     use super::media_{{ entity.module_name }}_{{ mf }};
@@ -117,6 +119,11 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
         .route("/{ {{- entity.param_name -}} }/actions/delegate", axum::routing::post({{ entity.module_name }}_workflow::delegate).guard("{{ domain }}:{{ entity.path_segment }}", "update"))
         .route("/{ {{- entity.param_name -}} }/workflow", axum::routing::get({{ entity.module_name }}_workflow::get_workflow_state).guard("{{ domain }}:{{ entity.path_segment }}", "read"))
         .route("/{ {{- entity.param_name -}} }/workflow/history", axum::routing::get({{ entity.module_name }}_workflow::get_process_history).guard("{{ domain }}:{{ entity.path_segment }}", "read"))
+{% endif %}{% if entity.has_machine %}
+        // The machine read model (issue #817): the kernel-derived
+        // projection the UI renders — buttons come from
+        // `available_transitions`, never from a declared-edge list.
+        .route("/{ {{- entity.param_name -}} }/machine", axum::routing::get({{ entity.module_name }}_machine::get_machine).guard("{{ domain }}:{{ entity.path_segment }}", "read"))
 {% endif %}
 {%- for op in entity.mox_ops | default(value=[]) %}
         .route("/{ {{- entity.param_name -}} }/op/{{ op.snake }}", axum::routing::post({{ entity.module_name }}_handler::mox_op_{{ op.snake }}).guard("{{ domain }}:{{ entity.path_segment }}", "read"))

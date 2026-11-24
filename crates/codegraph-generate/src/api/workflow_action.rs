@@ -28,6 +28,11 @@ pub struct WorkflowActionContext {
     pub states: Vec<String>,
     /// State transition entries for guard validation.
     pub transitions: Vec<TransitionEntry>,
+    /// The machine read-model context (issue #817): present when the
+    /// entity's design binds an artifact machine. Some on BOTH branches —
+    /// dual entities merge the read model into `/workflow`, machine-only
+    /// entities get the `machine_read.tera` route module.
+    pub machine: Option<MachineReadModelContext>,
     /// Whether transition guards are defined (non-empty transitions map).
     pub has_transition_guards: bool,
     /// Dual-status guard entries (status requires approval state).
@@ -57,14 +62,24 @@ pub struct WorkflowActionContext {
 }
 
 /// A single transition rule for template rendering.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TransitionEntry {
     pub from_state: String,
     pub to_states: Vec<String>,
 }
 
+/// The machine read-model facts the templates need (issue #817): the
+/// registry id, the status column's Rust accessor, and whether the column
+/// is optional (the read arm differs).
+#[derive(Debug, Clone, Serialize)]
+pub struct MachineReadModelContext {
+    pub machine_id: String,
+    pub status_field_rust: String,
+    pub status_field_optional: bool,
+}
+
 /// A dual-status guard entry.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DualStatusGuard {
     pub status_value: String,
     pub required_approval_state: String,
@@ -135,9 +150,24 @@ impl EntityGenerator for WorkflowActionGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(schema_title));
 
-        let workflow = match entity_cfg.and_then(|ec| ec.workflow.as_ref()) {
-            Some(wf) if wf.generate_action_endpoints => wf,
-            _ => return Ok(Vec::new()),
+        let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
+
+        // The machine read-model surface (issue #817): graph-driven,
+        // independent of the workflow config. Presence gate — a
+        // machine-less entity emits nothing here (byte-identical).
+        let machine_surface = crate::machines::machine_surface_for_entity(db, schema_title).await;
+
+        if workflow.is_none() && machine_surface.is_none() {
+            return Ok(Vec::new());
+        }
+        let machine_ctx = match &machine_surface {
+            Some(m) => Some(MachineReadModelContext {
+                machine_id: m.machine_id.clone(),
+                status_field_rust: codegraph_naming::to_snake_case(&m.status_field),
+                status_field_optional: status_field_is_optional(db, schema_title, &m.status_field)
+                    .await,
+            }),
+            None => None,
         };
 
         let tag = entity_cfg
@@ -146,7 +176,8 @@ impl EntityGenerator for WorkflowActionGenerator {
 
         // Build sorted transition entries from the transitions map
         let mut transitions: Vec<TransitionEntry> = workflow
-            .transitions
+            .map(|wf| wf.transitions.clone())
+            .unwrap_or_default()
             .iter()
             .map(|(from, to)| TransitionEntry {
                 from_state: from.clone(),
@@ -159,7 +190,8 @@ impl EntityGenerator for WorkflowActionGenerator {
 
         // Build dual-status guard entries
         let mut dual_status_guards: Vec<DualStatusGuard> = workflow
-            .dual_status_guards
+            .map(|wf| wf.dual_status_guards.clone())
+            .unwrap_or_default()
             .iter()
             .map(|(status, approval)| DualStatusGuard {
                 status_value: status.clone(),
@@ -302,45 +334,136 @@ impl EntityGenerator for WorkflowActionGenerator {
                 .any(|p| matches!(&p.kind, PolicyKind::Audit(a) if a.track_deleted))
         };
 
-        let ctx = WorkflowActionContext {
-            entity_name: entity_name.clone(),
-            module_name: module_name.clone(),
-            domain: domain.clone(),
-            path_segment: resolve_path_segment(entity_cfg, &schema),
-            tag,
-            has_approval_status: workflow.approval_status_field.is_some(),
-            status_field: workflow.status_field.clone(),
-            approval_status_field: workflow.approval_status_field.clone(),
-            initial_state: workflow.initial_state.clone(),
-            terminal_states: workflow.terminal_states.clone(),
-            states: workflow.states.clone(),
-            transitions,
-            has_transition_guards,
-            dual_status_guards,
-            has_dual_status_guards,
-            role: resolved_role,
-            ancestor_path_params,
-            param_name,
-            parent_param_name,
-            parent_path_segment,
-            parent_domain,
-            is_auditable,
-            has_extension_points: self
-                .extension_covered
-                .contains(&format!("{domain}.{module_name}")),
-            entity_ref: format!("{domain}.{module_name}"),
-        };
+        let generate_endpoints = workflow
+            .map(|wf| wf.generate_action_endpoints)
+            .unwrap_or(false);
+        let workflow_ctx = workflow.filter(|_| generate_endpoints);
+        let mut files = Vec::new();
 
-        let content =
-            render_template_with_project(tera, "api/workflow_action.tera", &ctx, project)?;
-        Ok(vec![GeneratedFile {
-            path: self
-                .output_dir
-                .join("src")
-                .join("api")
-                .join(&domain)
-                .join(format!("{}_workflow.rs", module_name)),
-            content,
-        }])
+        // The workflow action plane (Plane B): the transition/approve/
+        // reject/delegate endpoints + the `/workflow` read. When the
+        // entity is machine-bearing, the read merges the machine read
+        // model (`machine` object — issue #817, one shape, two planes).
+        if let Some(wf) = workflow_ctx {
+            let ctx = WorkflowActionContext {
+                entity_name: entity_name.clone(),
+                module_name: module_name.clone(),
+                domain: domain.clone(),
+                path_segment: resolve_path_segment(entity_cfg, &schema),
+                tag: tag.clone(),
+                has_approval_status: wf.approval_status_field.is_some(),
+                status_field: wf.status_field.clone(),
+                approval_status_field: wf.approval_status_field.clone(),
+                initial_state: wf.initial_state.clone(),
+                terminal_states: wf.terminal_states.clone(),
+                states: wf.states.clone(),
+                machine: machine_ctx.clone(),
+                transitions: transitions.clone(),
+                has_transition_guards,
+                dual_status_guards: dual_status_guards.clone(),
+                has_dual_status_guards,
+                role: resolved_role.clone(),
+                ancestor_path_params,
+                param_name: param_name.clone(),
+                parent_param_name: parent_param_name.clone(),
+                parent_path_segment: parent_path_segment.clone(),
+                parent_domain: parent_domain.clone(),
+                is_auditable,
+                has_extension_points: self
+                    .extension_covered
+                    .contains(&format!("{domain}.{module_name}")),
+                entity_ref: format!("{domain}.{module_name}"),
+            };
+            let content =
+                render_template_with_project(tera, "api/workflow_action.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("src")
+                    .join("api")
+                    .join(&domain)
+                    .join(format!("{}_workflow.rs", module_name)),
+                content,
+            });
+        }
+
+        // The machine read-model route (issue #817): ONE `GET …/machine`
+        // handler per machine-bearing entity — the derivation both the
+        // route and the merged `/workflow` payload call (a sibling module
+        // import, so the two planes cannot drift).
+        if let Some(machine) = &machine_ctx {
+            let ctx = MachineReadContext {
+                entity_name: entity_name.clone(),
+                module_name: module_name.clone(),
+                domain: domain.clone(),
+                path_segment: resolve_path_segment(entity_cfg, &schema),
+                tag: tag.clone(),
+                machine_id: machine.machine_id.clone(),
+                status_field_rust: machine.status_field_rust.clone(),
+                status_field_optional: machine.status_field_optional,
+                role: resolved_role.clone(),
+                ancestor_path_params,
+                param_name,
+                parent_param_name,
+                parent_path_segment,
+                parent_domain,
+                is_auditable,
+            };
+            let content =
+                render_template_with_project(tera, "api/machine_read.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("src")
+                    .join("api")
+                    .join(&domain)
+                    .join(format!("{}_machine.rs", module_name)),
+                content,
+            });
+        }
+
+        Ok(files)
     }
+}
+
+/// The machine read-model route module's template context (issue #817):
+/// the shared path/role facts plus the machine facts. Separate from
+/// [`WorkflowActionContext`] so a machine-only entity needs no workflow
+/// config to carry its read model.
+#[derive(Debug, Serialize)]
+pub struct MachineReadContext {
+    pub entity_name: String,
+    pub module_name: String,
+    pub domain: String,
+    pub path_segment: String,
+    pub tag: String,
+    pub machine_id: String,
+    pub status_field_rust: String,
+    pub status_field_optional: bool,
+    pub role: String,
+    pub ancestor_path_params: usize,
+    pub param_name: String,
+    pub parent_param_name: Option<String>,
+    pub parent_path_segment: Option<String>,
+    pub parent_domain: Option<String>,
+    pub is_auditable: bool,
+}
+
+/// Whether the machine's status feature projects as an optional Response
+/// field: a nullable or non-required property wraps in `Option` (the dto
+/// plane's rule). The read arm differs, so the template needs the fact.
+async fn status_field_is_optional(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    status_field: &str,
+) -> bool {
+    db.get_properties(schema_title)
+        .await
+        .map(|props| {
+            props
+                .iter()
+                .filter(|p| p.name == status_field)
+                .any(|p| !p.is_required || p.is_nullable)
+        })
+        .unwrap_or(false)
 }

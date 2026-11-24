@@ -369,6 +369,148 @@ pub fn compare_machine_surfaces(
     }
 }
 
+/// The machine read-model surface of ONE entity (issue #817): the
+/// entity→machine binding the api and IFML planes consume. Resolved from
+/// the graph with the SAME predicate the workflow seed uses
+/// (`find_artifact_machine`: `resolved_title` equality), requiring BOTH
+/// the artifact IR (the kernel registry's embed) and the DSL mirror (the
+/// status field the read model reads). `machine_hash` is the FNV-1a
+/// digest over the canonical IR — the SAME digest the workflow-definition
+/// envelope records, so a UI render can detect drift against either
+/// plane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityMachineSurface {
+    /// The authored `createMachine` id — the registry key.
+    pub machine_id: String,
+    /// The declaring design's module (the kernel's `machines/{domain}/`
+    /// segment).
+    pub domain: String,
+    /// The state feature the machine binds (the DSL mirror's `field`) —
+    /// the entity column the read model's `current_state` reads.
+    pub status_field: String,
+    /// The bound enum type name, when the mirror records one.
+    pub enum_name: Option<String>,
+    /// The canonical IR JSON (the registry's embedded bytes).
+    pub ir_json: String,
+    /// FNV-1a 64 hex over the canonical IR (the drift hash).
+    pub machine_hash: String,
+    /// The machine's final (terminal) states, sorted.
+    pub terminal_states: Vec<String>,
+    /// The machine's initial state.
+    pub initial_state: String,
+}
+
+/// Resolves the machine surface bound to `title` (the schema title), if
+/// any. Graph-driven: the entity's `.ddd` design must carry a REFERENCED
+/// machine (`machine <field>: <Enum> from "…machine.ts"` — inline DSL
+/// machines have no kernel IR and stay outside the read model, matching
+/// the Lane-1 registry). `None` when the entity is machine-less — the
+/// caller's presence gate (no machine ⇒ no route, byte-identical).
+pub async fn machine_surface_for_entity(
+    db: &dyn GraphQuerier,
+    title: &str,
+) -> Option<EntityMachineSurface> {
+    let models = db.get_ddd_models().await.ok()?;
+    for model in &models {
+        for design in &model.designs {
+            if design.resolved_title.as_deref() != Some(title) {
+                continue;
+            }
+            let Some(ir) = &design.machine_ir_json else {
+                continue;
+            };
+            // The status field comes from the DSL mirror; a design with
+            // only the IR (a stale/hand-built artifact) names no column to
+            // read — skipped, never guessed (the Lane-1 posture).
+            let Some(mirror) = &design.machine_json else {
+                continue;
+            };
+            let Some(status_field) = mirror.get("field").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(machine_id) = machine_id_of(design) else {
+                continue;
+            };
+            let canonical = canonical_ir_json(ir);
+            let terminal_states: Vec<String> = ir
+                .get("states")
+                .and_then(Value::as_array)
+                .map(|states| {
+                    states
+                        .iter()
+                        .filter(|s| s.get("type").and_then(Value::as_str) == Some("final"))
+                        .filter_map(|s| s.get("name").and_then(Value::as_str))
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut terminal_states = terminal_states;
+            terminal_states.sort();
+            return Some(EntityMachineSurface {
+                machine_id,
+                domain: design.module.clone(),
+                status_field: status_field.to_string(),
+                enum_name: bound_enum_of(design),
+                machine_hash: fnv1a_64_hex(canonical.as_bytes()),
+                ir_json: canonical,
+                terminal_states,
+                initial_state: ir
+                    .get("initial")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            });
+        }
+    }
+    None
+}
+
+/// FNV-1a 64-bit lowercase hex — the inline digest every plane uses (the
+/// ops harness, the workflow seed's envelope, the kernel). No new
+/// dependency.
+fn fnv1a_64_hex(bytes: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// Whether ANY entity in the generation order is machine-bearing — a
+/// bulk fact the e2e generators use to skip whole passes. One graph walk.
+pub async fn graph_has_machine_entities(db: &dyn GraphQuerier) -> bool {
+    db.get_ddd_models()
+        .await
+        .map(|models| {
+            models
+                .iter()
+                .any(|m| m.designs.iter().any(|d| d.machine_ir_json.is_some()))
+        })
+        .unwrap_or(false)
+}
+
+/// The machine-bearing entity titles (issue #817): the `resolved_title`
+/// of every design carrying a kernel IR — the set the POM plans and the
+/// spec families check. One graph walk (the caller reuses it per view).
+pub async fn machine_bearing_titles(db: &dyn GraphQuerier) -> std::collections::HashSet<String> {
+    db.get_ddd_models()
+        .await
+        .map(|models| {
+            models
+                .iter()
+                .flat_map(|m| m.designs.iter())
+                .filter_map(|d| {
+                    d.machine_ir_json
+                        .is_some()
+                        .then(|| d.resolved_title.clone())
+                        .flatten()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// One machine to emit, collected from the graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MachineEntry {

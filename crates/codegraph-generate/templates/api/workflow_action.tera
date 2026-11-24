@@ -414,6 +414,55 @@ pub async fn get_workflow_state(
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<Uuid>().ok())
         .unwrap_or_else(Uuid::new_v4);
+{%- if machine %}
+    // The machine read model merged into the SAME payload (issue #817) —
+    // one read-model shape, two planes, no parallel fetches. The sibling
+    // module owns the ONE derivation (entity column + kernel). The
+    // machine block is ENTITY-COLUMN-backed (the write-both source of
+    // truth), so a freshly created row with no workflow INSTANCE yet
+    // still serves: the instance-backed fields fall back to the machine's
+    // own kernel projection instead of 404ing the read model.
+    let ws = state.workflow_service
+        .get_state(api_key_info.organization_id, "{{ domain }}", "{{ module_name }}", id)
+        .await
+        .ok();
+    let machine = super::{{ module_name }}_machine::machine_read_model(&state, &api_key_info, id)
+        .await
+        .map_err(|e| e.with_correlation_id(correlation_id))?;
+    let response = match ws {
+        Some(ws) => WorkflowStateResponse {
+            entity_id: ws.entity_id,
+            current_state: ws.current_state,
+{% if has_approval_status %}
+            approval_state: ws.approval_state,
+{% endif %}
+            is_terminal: ws.is_terminal,
+            available_transitions: ws.available_transitions,
+        },
+        None => WorkflowStateResponse {
+            entity_id: id,
+            current_state: machine.current_state.clone(),
+{% if has_approval_status %}
+            approval_state: None,
+{% endif %}
+            is_terminal: machine.is_terminal,
+            available_transitions: machine
+                .available_transitions
+                .iter()
+                .map(|e| e.to.clone())
+                .collect(),
+        },
+    };
+    let mut data = serde_json::to_value(&response)
+        .map_err(|e| AppError::internal(format!("Serialize error: {e}")).with_correlation_id(correlation_id))?;
+    if let Some(obj) = data.as_object_mut() {
+        obj.insert("machine".to_string(), serde_json::to_value(&machine).map_err(|e| AppError::internal(format!("Serialize error: {e}")).with_correlation_id(correlation_id))?);
+    }
+    Ok(Json(serde_json::json!({
+        "data": data,
+        "meta": { "correlation_id": correlation_id.to_string() }
+    })))
+{%- else %}
     let ws = state.workflow_service
         .get_state(api_key_info.organization_id, "{{ domain }}", "{{ module_name }}", id)
         .await
@@ -431,6 +480,7 @@ pub async fn get_workflow_state(
         "data": response,
         "meta": { "correlation_id": correlation_id.to_string() }
     })))
+{%- endif %}
 }
 
 /// Get process history for {{ entity_name }} (HR Open ProcessHistoryType compatible).

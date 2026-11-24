@@ -101,6 +101,11 @@ pub struct RouterEntity {
     /// Whether the list (`GET /`) route has a handler to point at.
     pub has_list: bool,
     pub has_workflow: bool,
+    /// The machine read-model route (issue #817): the entity's design
+    /// binds an artifact machine, so `GET /{id}/machine` mounts with a
+    /// handler to point at. Monolith-only (the media route tree's #703
+    /// posture — workers compile no root `src/` tree); false elsewhere.
+    pub has_machine: bool,
     pub has_approval_status: bool,
     pub has_embeddings: bool,
     /// Whether this entity has full-text search enabled.
@@ -299,6 +304,15 @@ impl DomainGenerator for RouterGenerator {
                     .and_then(|wf| wf.approval_status_field.as_ref())
                     .is_some();
 
+                // The machine read-model route (issue #817): graph-driven,
+                // monolith-only (the #703 posture — workers compile no
+                // root `src/` tree, so the route would reference a module
+                // no worker crate carries).
+                let has_machine = !project.is_workers_topology()
+                    && crate::machines::machine_surface_for_entity(db, title)
+                        .await
+                        .is_some();
+
                 let has_embeddings = entity_cfg
                     .map(|ec| !ec.search.embedding_columns.is_empty())
                     .unwrap_or(false);
@@ -377,6 +391,7 @@ impl DomainGenerator for RouterGenerator {
                     has_read: operations.contains(&"read".to_string()),
                     has_list: operations.contains(&"list".to_string()),
                     has_workflow,
+                    has_machine,
                     has_approval_status,
                     has_embeddings,
                     has_fts,
@@ -702,6 +717,14 @@ pub async fn build_router_context(
                 .and_then(|wf| wf.approval_status_field.as_ref())
                 .is_some();
 
+            // The machine read-model route (issue #817): the SAME helper
+            // as the sibling build_router_context site so the api contract
+            // cannot drift (#590 precedent). Monolith-only (#703 posture).
+            let has_machine = !project.is_workers_topology()
+                && crate::machines::machine_surface_for_entity(db, title)
+                    .await
+                    .is_some();
+
             let has_embeddings = entity_cfg
                 .map(|ec| !ec.search.embedding_columns.is_empty())
                 .unwrap_or(false);
@@ -774,6 +797,7 @@ pub async fn build_router_context(
                 has_read: operations.contains(&"read".to_string()),
                 has_list: operations.contains(&"list".to_string()),
                 has_workflow,
+                has_machine,
                 has_approval_status,
                 has_embeddings,
                 has_fts,
@@ -1217,6 +1241,7 @@ mod tests {
                 has_read: true,
                 has_list: true,
                 has_workflow: false,
+                has_machine: false,
                 has_approval_status: false,
                 has_embeddings: false,
                 has_fts: true,

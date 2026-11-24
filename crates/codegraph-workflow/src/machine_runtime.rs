@@ -139,6 +139,51 @@ pub fn fnv1a_64_hex(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
+/// One edge of the machine read model (`available_transitions[i]`, issue
+/// #817): the event that fires it, the state it leaves, the state it
+/// lands on, and the authored guard name when the edge carries one. This
+/// is what the UI renders — a button per edge — so the UI can never offer
+/// a transition the kernel would refuse (the wire 409).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct MachineTransitionEdge {
+    /// The machine event that fires the edge.
+    pub event: String,
+    /// The state the edge leaves (always the read model's `current_state`).
+    pub from: String,
+    /// The state the edge lands on.
+    pub to: String,
+    /// The authored guard name, when the transition carries one. A guard
+    /// edge rendered by the UI may still be DENIED at decision time
+    /// (`GuardDenied`) — the read model publishes the name so consumers
+    /// can explain a denial, never evaluate it.
+    pub guard: Option<String>,
+}
+
+/// The machine read model (issue #817): ONE shape served by both planes —
+/// the machine-only `GET …/{entity}/{id}/machine` route and the merged
+/// Plane B `/workflow` payload's `machine` object. `current_state` reads
+/// the entity column (which Stage 2's write-both keeps in sync with the
+/// workflow instance); `machine_hash` is the kernel's FNV-1a drift hash
+/// over the canonical machine IR, so a stale render is detectable.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct MachineReadModel {
+    /// The machine's authored id (the registry key).
+    pub machine_id: String,
+    /// The row's current state as read from the entity column.
+    pub current_state: String,
+    /// Whether `current_state` is a final (terminal) state.
+    pub is_terminal: bool,
+    /// Whether `current_state` names a state the machine declares. A
+    /// drifted column value (outside the bound enum) is VISIBLE here and
+    /// the edge set is empty — never a silently-offered transition.
+    pub state_known: bool,
+    /// FNV-1a 64 hex over the CANONICAL machine IR — the drift hash the
+    /// definition rows record; the UI detects a stale render with it.
+    pub machine_hash: String,
+    /// The edges the UI may render, in declaration order.
+    pub available_transitions: Vec<MachineTransitionEdge>,
+}
+
 /// The outcome of one kernel decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransitionOutcome {
@@ -362,6 +407,58 @@ impl MachineRuntime {
         }
     }
 
+    /// The machine read model (issue #817): the DERIVED projection the UI
+    /// renders — never a machine it runs. `available_transitions` is the
+    /// set of edges whose from-state matches `current` (the kernel's own
+    /// `available_transitions`, one edge richer: event + from + to + the
+    /// authored guard name). `current` is validated on the way: a value
+    /// that names no machine state yields `state_known = false` and an
+    /// EMPTY edge set — the UI can never offer a transition the backend
+    /// would 409 — and the `machine_hash` rides every payload so a stale
+    /// render is detectable client-side.
+    pub fn read_model(&self, current: &str) -> MachineReadModel {
+        let state_known = self.top_state(current).is_some();
+        let mut available_transitions: Vec<MachineTransitionEdge> = Vec::new();
+        if let Some(state) = self.top_state(current) {
+            for t in &state.transitions {
+                // The kernel addresses top-level (atomic) states: a
+                // multi-target edge contributes its FIRST top-level segment.
+                let targets: Vec<String> = match (&t.target, t.targets.first()) {
+                    (Some(target), _) => vec![target.clone()],
+                    (None, Some(first)) => first
+                        .split('.')
+                        .next()
+                        .map(|s| s.to_string())
+                        .into_iter()
+                        .collect(),
+                    (None, None) => Vec::new(),
+                };
+                for to in targets {
+                    let edge = MachineTransitionEdge {
+                        event: t.event.clone(),
+                        from: current.to_string(),
+                        to: to.clone(),
+                        guard: t.guard.as_ref().map(|g| g.name.clone()),
+                    };
+                    if !available_transitions
+                        .iter()
+                        .any(|e| e.event == edge.event && e.to == edge.to)
+                    {
+                        available_transitions.push(edge);
+                    }
+                }
+            }
+        }
+        MachineReadModel {
+            machine_id: self.machine.id.clone(),
+            current_state: current.to_string(),
+            is_terminal: state_known && self.is_terminal_state(current),
+            state_known,
+            machine_hash: self.content_hash(),
+            available_transitions,
+        }
+    }
+
     /// The persisted snapshot for a (state, context) pair — the
     /// interpreter's restore/persist surface over flat workflow states.
     pub fn persisted_snapshot_from_state(&self, state: &str, context: &Value) -> Value {
@@ -442,6 +539,36 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The two-state machine the workflow wire speaks: Draft --CALCULATE-->
+    /// Calculating (final). A guard-bearing variant hangs off Calculating.
+    fn machine_json() -> Value {
+        json!({
+            "context": {"fields": []},
+            "id": "payrun",
+            "initial": "Draft",
+            "setup": null,
+            "states": [
+                {
+                    "children": [], "description": null, "entry": [], "exit": [],
+                    "initial": null, "invoke": null, "name": "Draft",
+                    "on_done": [], "output": null, "tags": [],
+                    "transitions": [{
+                        "actions": [], "description": null, "event": "CALCULATE",
+                        "guard": null, "target": "Calculating", "targets": []
+                    }],
+                    "type": "atomic"
+                },
+                {
+                    "children": [], "description": null, "entry": [], "exit": [],
+                    "initial": null, "invoke": null, "name": "Calculating",
+                    "on_done": [], "output": null, "tags": [],
+                    "transitions": [],
+                    "type": "final"
+                }
+            ]
+        })
+    }
+
     #[test]
     fn canonical_json_sorts_keys_recursively() {
         let a = json!({"z": 1, "a": {"y": {"n": true, "m": 1}, "b": 3}});
@@ -458,5 +585,79 @@ mod tests {
         // The #756 known answers — one inline FNV for every plane.
         assert_eq!(fnv1a_64_hex(b""), "cbf29ce484222325");
         assert_eq!(fnv1a_64_hex(b"a"), "af63dc4c8601ec8c");
+    }
+
+    // ── the machine read model (issue #817) ─────────────────────────────
+
+    #[test]
+    fn read_model_state_x_yields_exactly_the_declared_out_edges() {
+        let runtime = MachineRuntime::from_json(&machine_json()).unwrap();
+        let model = runtime.read_model("Draft");
+        // The exact declared out-edge — event, from, to — in declaration
+        // order, nothing more.
+        assert_eq!(model.machine_id, "payrun");
+        assert_eq!(model.current_state, "Draft");
+        assert!(model.state_known);
+        assert!(!model.is_terminal);
+        assert_eq!(
+            model.available_transitions,
+            vec![MachineTransitionEdge {
+                event: "CALCULATE".to_string(),
+                from: "Draft".to_string(),
+                to: "Calculating".to_string(),
+                guard: None,
+            }]
+        );
+        // The drift hash is present and matches the kernel's own.
+        assert_eq!(model.machine_hash, runtime.content_hash());
+        assert_ne!(model.machine_hash, "");
+    }
+
+    #[test]
+    fn read_model_terminal_state_has_no_out_edges_and_is_terminal() {
+        let runtime = MachineRuntime::from_json(&machine_json()).unwrap();
+        let model = runtime.read_model("Calculating");
+        assert!(model.is_terminal);
+        assert!(model.available_transitions.is_empty());
+        assert!(model.state_known);
+    }
+
+    #[test]
+    fn read_model_unknown_state_is_empty_with_the_hash_present() {
+        let runtime = MachineRuntime::from_json(&machine_json()).unwrap();
+        let model = runtime.read_model("Bogus");
+        // The kernel validates the row's value on the way: an unknown
+        // state is VISIBLE (state_known = false), the edge set is EMPTY
+        // (the UI can never offer a transition the backend would 409),
+        // and the drift hash still rides so a stale render is detectable.
+        assert!(!model.state_known);
+        assert!(!model.is_terminal);
+        assert!(model.available_transitions.is_empty());
+        assert_eq!(model.machine_hash, runtime.content_hash());
+    }
+
+    #[test]
+    fn read_model_carries_the_authored_guard_name_but_never_evaluates_it() {
+        let mut machine_json = machine_json();
+        machine_json["states"][0]["transitions"][0]["guard"] =
+            json!({"name": "amount_positive", "params": {"min": 1}});
+        let runtime = MachineRuntime::from_json(&machine_json).unwrap();
+        let model = runtime.read_model("Draft");
+        assert_eq!(
+            model.available_transitions.first().map(|e| e.guard.clone()),
+            Some(Some("amount_positive".to_string()))
+        );
+        // Deriving the read model runs NO guard: the edge is published
+        // with its name, and evaluation stays the decision path's job.
+    }
+
+    #[test]
+    fn read_model_edges_serialize_for_the_wire() {
+        let runtime = MachineRuntime::from_json(&machine_json()).unwrap();
+        let model = runtime.read_model("Draft");
+        let wire = serde_json::to_string(&model).unwrap();
+        assert!(wire.contains(r#""event":"CALCULATE""#), "{wire}");
+        assert!(wire.contains(r#""machine_hash":"#), "{wire}");
+        assert!(wire.contains(r#""state_known":true"#), "{wire}");
     }
 }

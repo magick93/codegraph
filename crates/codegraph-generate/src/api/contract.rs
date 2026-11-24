@@ -325,6 +325,15 @@ fn entity_routes(entity: &RouterEntity, base_path: &str) -> Vec<ApiContractRoute
         ));
     }
 
+    // The machine read model (mirrors the router template's machine block).
+    if entity.has_machine {
+        routes.push(route(
+            "GET",
+            &format!("{}/machine", id_path),
+            "machine_read_model",
+        ));
+    }
+
     // Media fields (the router template hardcodes the literal `{id}` segment).
     // Mode-aware (issue #625 PR-C): presigned mode issues a presign POST;
     // through-app uploads multipart PUT. Both mount signed display (GET)
@@ -373,6 +382,7 @@ mod tests {
             has_read: true,
             has_list: true,
             has_workflow: false,
+            has_machine: false,
             has_approval_status: false,
             has_embeddings: false,
             has_fts: false,
