@@ -198,9 +198,6 @@ async fn database_errors_keep_their_source_detail() {
             "database_target": "postgres",
         }),
     );
-    let errors = tera
-        .render("ddd/errors.tera", &ctx)
-        .expect("errors.tera must render");
     let error_rs = tera
         .render("scaffold/error.tera", &ctx)
         .expect("scaffold/error.tera must render");
