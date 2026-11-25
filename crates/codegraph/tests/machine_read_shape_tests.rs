@@ -88,6 +88,12 @@ fn write_fixture() -> Fixture {
 /// return the output directory.
 async fn generate(fixture: &Fixture, profile: &str) -> PathBuf {
     let output = fixture.root.path().join(format!("out-{profile}"));
+    generate_into(fixture, profile, &output).await;
+    output
+}
+
+/// [`generate`] into a caller-chosen directory (the regeneration shape).
+async fn generate_into(fixture: &Fixture, profile: &str, output: &Path) {
     let mox_files = vec![fixture.mox.clone()];
     let ddd_files = vec![fixture.ddd.clone()];
     codegraph::driver::run(codegraph::driver::RunArgs {
@@ -95,7 +101,7 @@ async fn generate(fixture: &Fixture, profile: &str) -> PathBuf {
         schemas: None,
         classifier: None,
         config_path: &fixture.config,
-        output: &output,
+        output,
         extension_points_path: None,
         profile_name: profile,
         variant: None,
@@ -118,7 +124,6 @@ async fn generate(fixture: &Fixture, profile: &str) -> PathBuf {
     })
     .await
     .unwrap_or_else(|e| panic!("generation under `{profile}` must succeed: {e}"));
-    output
 }
 
 /// `relative path -> content` for every file under `root`.
@@ -426,4 +431,41 @@ async fn validation_names_the_withheld_read_model() {
         "{}",
         named[0].message
     );
+}
+
+// ── 6. Regeneration sweeps a withheld read model ───────────────────────────
+
+/// The stale-artifact half of #824 — the #807 class, again. The
+/// pre-generation sweep keys per ENTITY, so a per-generator artifact that
+/// stops being emitted for a still-expected entity survives it, and the
+/// filesystem-scanning `generate_mod_files` pass re-declares every `.rs`
+/// file it finds: the leftover `application_machine.rs` was compiled again
+/// and the consumer's `E0599` returned on the first regeneration after the
+/// fix. The pipeline now sweeps machine read-model modules the run did not
+/// emit, gated on the plan carrying the emitting generator.
+#[tokio::test]
+async fn stale_read_model_module_is_swept_on_regeneration() {
+    for profile in ["default", "workers"] {
+        let fixture = write_fixture();
+        let output = fixture.root.path().join(format!("out-stale-{profile}"));
+        let api_dir = match profile {
+            "workers" => output.join("workers/recruiting/src/api/recruiting"),
+            _ => output.join("src/api/recruiting"),
+        };
+        let stale = api_dir.join("application_machine.rs");
+        fs::create_dir_all(&api_dir).unwrap();
+        fs::write(&stale, "//! stale read model from a pre-#824 generator\n").unwrap();
+
+        generate_into(&fixture, profile, &output).await;
+
+        assert!(
+            !stale.exists(),
+            "{profile}: the withheld read model must be swept"
+        );
+        let api_mod = fs::read_to_string(api_dir.join("mod.rs")).expect("api mod");
+        assert!(
+            !api_mod.contains("application_machine"),
+            "{profile}: the mod pass must not re-declare the swept module:\n{api_mod}"
+        );
+    }
 }
