@@ -153,20 +153,20 @@ fn storage_unavailable() -> AppError {
 }
 
 /// Classify a database error exactly the way `errors::{{ domain | pascal_case }}Error::from_repo_err`
-/// does (#169): the RESTRICTIVE `scope_enforced_*` policies raise P0403 with
-/// an INSUFFICIENT_SCOPE / ROLE_FORBIDDEN payload, and org-isolation writes
-/// surface Postgres' canonical "violates row-level security policy" text.
-/// Those are authorization denials → 403 (never a 500, and never with the raw
-/// DB text echoed as the outcome); everything else stays internal.
+/// does (#169, #828): classification is by SQLSTATE — the RESTRICTIVE
+/// `scope_enforced_*` policies raise P0403 (42501 if a raise does not carry
+/// the custom code) with an INSUFFICIENT_SCOPE / ROLE_FORBIDDEN payload, and
+/// org-isolation writes surface 42501. Those are authorization denials → 403
+/// (never a 500, and never with the raw DB text echoed as the outcome);
+/// integrity violations are 422; everything else stays internal.
 fn db_err(context: &str, e: sea_orm::DbErr) -> AppError {
-    let msg = e.to_string();
-    if msg.contains("INSUFFICIENT_SCOPE")
-        || msg.contains("ROLE_FORBIDDEN")
-        || msg.contains("violates row-level security policy")
-    {
-        AppError::forbidden(format!("{context}: {msg}"))
-    } else {
-        AppError::internal(format!("{context}: {msg}"))
+    let class = crate::error::classify_db_error(&e);
+    let message = class.message().to_string();
+    match class {
+        crate::error::DbErrorClass::Forbidden(_) => AppError::forbidden(message),
+        crate::error::DbErrorClass::Conflict(_) => AppError::conflict(format!("{context}: {message}")),
+        crate::error::DbErrorClass::Unprocessable(_) => AppError::validation(format!("{context}: {message}"), vec![]),
+        crate::error::DbErrorClass::Internal(_) => AppError::internal(format!("{context}: {message}")),
     }
 }
 

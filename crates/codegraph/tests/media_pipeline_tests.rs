@@ -885,14 +885,20 @@ async fn media_db_denials_map_to_forbidden_not_internal() {
     let module = &modules[0];
 
     assert!(module.contains("fn db_err("), "{module}");
+    assert!(
+        module.contains("classify_db_error(&e)"),
+        "the media classifier must delegate to the ONE SQLSTATE classifier \
+         (issue #828) instead of re-deriving a Display-based decision:\n{module}"
+    );
     for marker in [
-        "INSUFFICIENT_SCOPE",
-        "ROLE_FORBIDDEN",
-        "violates row-level security policy",
+        "DbErrorClass::Forbidden",
+        "DbErrorClass::Conflict",
+        "DbErrorClass::Unprocessable",
+        "DbErrorClass::Internal",
     ] {
         assert!(
             module.contains(marker),
-            "the classifier names `{marker}`:\n{module}"
+            "the media classifier must map `{marker}`:\n{module}"
         );
     }
     assert!(

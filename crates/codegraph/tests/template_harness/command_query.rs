@@ -111,7 +111,6 @@ async fn ddd_session_context_is_one_round_trip() {
 async fn domain_errors_map_rls_denials_to_forbidden() {
     let tera = test_tera();
 
-    // errors.tera: Forbidden variant with 403 + the DB-denial classifier.
     let mut ctx = tera::Context::new();
     ctx.insert("domain", "recruiting");
     ctx.insert("errors", &Vec::<serde_json::Value>::new());
@@ -124,37 +123,65 @@ async fn domain_errors_map_rls_denials_to_forbidden() {
             "database_target": "postgres",
         }),
     );
-    let content = tera
+    let errors = tera
         .render("ddd/errors.tera", &ctx)
         .expect("errors.tera must render");
 
+    // The enum keeps the RLS-forbidden shape and the generic 422 class.
     assert!(
-        content.contains("Forbidden("),
+        errors.contains("Forbidden("),
         "errors.tera should define a Forbidden variant"
     );
     assert!(
-        content.contains("StatusCode::FORBIDDEN"),
+        errors.contains("StatusCode::FORBIDDEN"),
         "Forbidden must map to HTTP 403"
     );
     assert!(
-        content.contains("INSUFFICIENT_SCOPE"),
-        "the classifier must recognise the P0403 INSUFFICIENT_SCOPE payload"
+        errors.contains("Unprocessable("),
+        "integrity violations need a 422 class:\n{errors}"
     );
     assert!(
-        content.contains("violates row-level security policy"),
-        "the classifier must recognise org-isolation write denials"
+        errors.contains("StatusCode::UNPROCESSABLE_ENTITY"),
+        "the Unprocessable variant must map to HTTP 422:\n{errors}"
     );
+    assert!(
+        errors.contains("crate::error::classify_db_error(&e)"),
+        "from_repo_err must delegate to the ONE app-level classifier:\n{errors}"
+    );
+
+    // Issue #828: the classifier is in the app error plane, by SQLSTATE.
+    let error_rs = tera
+        .render("scaffold/error.tera", &ctx)
+        .expect("scaffold/error.tera must render");
+    for needle in [
+        "pub fn classify_db_error(",
+        "Some(\"P0403\") | Some(\"42501\") => DbErrorClass::Forbidden",
+        "Some(\"23505\") => DbErrorClass::Conflict",
+        "Some(\"23503\") =>",
+        "Some(\"23502\") | Some(\"23514\") => DbErrorClass::Unprocessable",
+    ] {
+        assert!(
+            error_rs.contains(needle),
+            "the app error plane must carry `{needle}`:\n{error_rs}"
+        );
+    }
+    for marker in ["INSUFFICIENT_SCOPE", "violates row-level security policy"] {
+        assert!(
+            error_rs.contains(marker),
+            "the no-SQLSTATE fallback must recognise `{marker}`:\n{error_rs}"
+        );
+    }
 }
 
-// === DB error detail survives the mapping (#810) ===
+// === DB error detail survives the mapping (#810) + SQLSTATE classification (#828) ===
 
 /// A database error must keep its SOURCE detail through the generated
 /// mapping: `tokio-postgres` renders a server error as the bare string
 /// `db error` (code/message/detail/hint live in the source), so the
-/// domain classifier logs the Debug form AND the cornucopia repository
-/// preserves the original error instead of stringifying it. Without this
-/// a machine-bearing create answers a 500 whose envelope and log both say
-/// only "db error" (issue #810).
+/// domain classifier logs the typed detail AND classifies by SQLSTATE.
+/// Without this a scope-denied create answers `500 "db error"` instead of
+/// 403 (codegraph#810, diagnosed in codegraph#828), and an FK/unique
+/// refusal is an opaque 500 instead of 422/409.
 #[tokio::test]
 async fn database_errors_keep_their_source_detail() {
     let tera = test_tera();
@@ -171,22 +198,57 @@ async fn database_errors_keep_their_source_detail() {
             "database_target": "postgres",
         }),
     );
-    let errors = tera
-        .render("ddd/errors.tera", &ctx)
-        .expect("errors.tera must render");
+    let error_rs = tera
+        .render("scaffold/error.tera", &ctx)
+        .expect("scaffold/error.tera must render");
 
+    let errors = &error_rs;
     assert!(
-        errors.contains("impl std::fmt::Display + std::fmt::Debug"),
-        "from_repo_err must accept the Debug form to reach the source detail:\n{errors}"
+        errors.contains("pub fn classify_db_error("),
+        "the generated error plane must expose ONE SQLSTATE classifier:\n{errors}"
+    );
+    assert!(
+        errors.contains("downcast_ref::<tokio_postgres::Error>()"),
+        "the workers slice's typed error must be recovered by downcast:\n{errors}"
+    );
+    assert!(
+        errors.contains("as_db_error()"),
+        "the tokio-postgres server detail is only reachable through as_db_error:\n{errors}"
+    );
+    assert!(
+        errors.contains("RuntimeErr::SqlxError"),
+        "the monolith's sea-orm/sqlx error must be recovered by downcast too:\n{errors}"
+    );
+    assert!(
+        errors.contains("as_database_error()"),
+        "sqlx exposes the SQLSTATE through as_database_error:\n{errors}"
+    );
+    assert!(
+        errors.contains("sqlstate = detail.code"),
+        "the log must carry the SQLSTATE (the #810 diagnosis):\n{errors}"
+    );
+    assert!(
+        errors.contains("db_message = detail.message"),
+        "the log must carry the server message:\n{errors}"
     );
     assert!(
         errors.contains("error_debug = ?e"),
-        "from_repo_err must LOG the Debug form (tokio-postgres hides the \
-         server detail behind a bare `db error` Display):\n{errors}"
+        "the log must also carry the Debug form:\n{errors}"
     );
+    // The old Display-based decision must be structurally gone: it may only
+    // survive as the no-SQLSTATE fallback (one `None =>` arm).
     assert!(
-        errors.matches("error_debug = ?e").count() >= 2,
-        "the tokio/deadpool conversions must log the detail too:\n{errors}"
+        !errors.contains("pub fn from_repo_err(e: impl std::fmt::Display + std::fmt::Debug)"),
+        "from_repo_err must take a 'static error so it can downcast:\n{errors}"
+    );
+    // The domain enum delegates to it (the ONE derivation contract) and the
+    // domain-specific log lives there now.
+    let domain_errors = tera
+        .render("ddd/errors.tera", &ctx)
+        .expect("errors.tera must render");
+    assert!(
+        domain_errors.contains("crate::error::classify_db_error(&e)"),
+        "from_repo_err must delegate to the app-level classifier:\n{domain_errors}"
     );
 
     // The cornucopia repository adapter must preserve the typed error
@@ -259,6 +321,12 @@ async fn command_and_query_route_repo_errors_through_the_classifier() {
         assert!(
             content.contains("from_repo_err"),
             "{label}: repo errors must be classified via from_repo_err"
+        );
+        assert!(
+            !content.contains("contains(\"duplicate key\")")
+                && !content.contains("UNIQUE constraint"),
+            "{label}: a unique violation must be classified by SQLSTATE, not by \
+             Display text (tokio-postgres renders it as bare `db error`):\n{content}"
         );
     }
 }

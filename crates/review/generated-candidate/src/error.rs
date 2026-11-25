@@ -135,3 +135,173 @@ pub struct BulkItemError {
     pub index: usize,
     pub error: String,
 }
+
+
+
+/// The HTTP class a database error lowers to (issue #828).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DbErrorClass {
+    /// `P0403` (the generated policies' scope/role denial payload) or
+    /// `42501` (insufficient privilege / row-level security).
+    Forbidden(String),
+    /// `23505` — unique/primary-key violation.
+    Conflict(String),
+    /// `23503` / `23502` / `23514` — FK, not-null and check violations.
+    Unprocessable(String),
+    /// Anything else, or no recoverable SQLSTATE.
+    Internal(String),
+}
+
+impl DbErrorClass {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Forbidden(message)
+            | Self::Conflict(message)
+            | Self::Unprocessable(message)
+            | Self::Internal(message) => message,
+        }
+    }
+}
+
+/// The server-side facts recovered from a database error chain.
+#[derive(Debug, Default, Clone)]
+struct DbDetail {
+    code: Option<String>,
+    message: Option<String>,
+    detail: Option<String>,
+    hint: Option<String>,
+    constraint: Option<String>,
+}
+
+/// Classify a database/repository error by SQLSTATE (issue #828).
+///
+/// Order of precedent: the typed driver error, then its `source()` chain,
+/// then the boxed repository error, then `Display` text ONLY when no
+/// SQLSTATE is recoverable (hand-built repository sentinels, non-Postgres
+/// providers). `Display` is never used to decide a class when a code exists.
+pub fn classify_db_error(e: &(impl std::fmt::Display + std::fmt::Debug + 'static)) -> DbErrorClass {
+    let detail = db_error_detail(e);
+    tracing::error!(
+        sqlstate = detail.code.as_deref().unwrap_or("-"),
+        db_message = detail.message.as_deref().unwrap_or("-"),
+        db_detail = detail.detail.as_deref().unwrap_or("-"),
+        db_hint = detail.hint.as_deref().unwrap_or("-"),
+        db_constraint = detail.constraint.as_deref().unwrap_or("-"),
+        error = %e,
+        error_debug = ?e,
+        "database/repository error classified"
+    );
+    let message = detail
+        .message
+        .clone()
+        .unwrap_or_else(|| e.to_string());
+    match detail.code.as_deref() {
+        Some("P0403") | Some("42501") => DbErrorClass::Forbidden(message),
+        Some("23505") => DbErrorClass::Conflict(message),
+        Some("23503") => {
+            let named = match detail.constraint.as_deref() {
+                Some(constraint) => {
+                    format!("foreign key constraint `{constraint}` violated: {message}")
+                }
+                None => format!("foreign key constraint violated: {message}"),
+            };
+            DbErrorClass::Unprocessable(named)
+        }
+        Some("23502") | Some("23514") => DbErrorClass::Unprocessable(message),
+        Some(_) => DbErrorClass::Internal(message),
+        None => {
+            if message.contains("INSUFFICIENT_SCOPE")
+                || message.contains("ROLE_FORBIDDEN")
+                || message.contains("violates row-level security policy")
+            {
+                DbErrorClass::Forbidden(message)
+            } else {
+                DbErrorClass::Internal(message)
+            }
+        }
+    }
+}
+
+/// Recover the server facts from whatever shape the caller holds — a typed
+/// driver error, a `deadpool` pool error, or the repository plane's
+/// `Box<dyn Error + Send + Sync>`.
+fn db_error_detail(
+    e: &(impl std::fmt::Display + std::fmt::Debug + 'static),
+) -> DbDetail {
+    let any: &dyn std::any::Any = e;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Some(db) = any.downcast_ref::<sea_orm::DbErr>() {
+            return sea_orm_error_detail(db);
+        }
+    }
+    if let Some(boxed) = any.downcast_ref::<Box<dyn std::error::Error + Send + Sync>>() {
+        return dyn_error_detail(boxed.as_ref());
+    }
+    if let Some(boxed) = any.downcast_ref::<Box<dyn std::error::Error>>() {
+        return dyn_error_detail(boxed.as_ref());
+    }
+    DbDetail {
+        message: Some(e.to_string()),
+        ..DbDetail::default()
+    }
+}
+
+/// Walk a `dyn Error` chain looking for a typed driver error. `deadpool`
+/// wraps the `tokio-postgres` error, and `?` conversions may add layers, so
+/// the chain is walked (bounded) rather than assuming the top-level type.
+fn dyn_error_detail(e: &(dyn std::error::Error + 'static)) -> DbDetail {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(e);
+    let mut depth = 0usize;
+    while let Some(err) = current {
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(db) = err.downcast_ref::<sea_orm::DbErr>() {
+                return sea_orm_error_detail(db);
+            }
+        }
+        if depth >= 8 {
+            break;
+        }
+        depth += 1;
+        current = err.source();
+    }
+    DbDetail {
+        message: Some(e.to_string()),
+        ..DbDetail::default()
+    }
+}
+
+
+
+#[cfg(not(target_arch = "wasm32"))]
+fn sea_orm_error_detail(e: &sea_orm::DbErr) -> DbDetail {
+    use sea_orm::RuntimeErr;
+    let sqlx_error = match e {
+        sea_orm::DbErr::Conn(RuntimeErr::SqlxError(inner))
+        | sea_orm::DbErr::Exec(RuntimeErr::SqlxError(inner))
+        | sea_orm::DbErr::Query(RuntimeErr::SqlxError(inner)) => Some(inner.as_ref()),
+        _ => None,
+    };
+    let Some(sqlx_error) = sqlx_error else {
+        return DbDetail {
+            message: Some(e.to_string()),
+            ..DbDetail::default()
+        };
+    };
+    match sqlx_error.as_database_error() {
+        Some(db) => DbDetail {
+            code: db.code().map(|code| code.to_string()),
+            message: Some(db.message().to_string()),
+            constraint: db.constraint().map(str::to_string),
+            ..DbDetail::default()
+        },
+        None => DbDetail {
+            message: Some(sqlx_error.to_string()),
+            ..DbDetail::default()
+        },
+    }
+}
+

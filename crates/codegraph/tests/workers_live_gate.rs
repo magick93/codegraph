@@ -98,12 +98,13 @@ pub const SUPABASE_HEALTH_URL: &str = "http://localhost:54341/auth/v1/health";
 pub const SUPABASE_LOCAL_SMTP_PORT: u16 = 54343;
 
 /// hurl files the fixture manifest may skip — fixture-specific reasons
-/// only. These two generated files reference keys the workers suite does
-/// not provision (it passes exactly `base_url` + `api_key`; no
-/// `api_key_limited` / `api_key_b`). The harness's DEFAULT_HURL_SKIPS
+/// only. Empty: the workers suite now provisions the read-only key
+/// (`api_key_limited`) and the second-org key (`api_key_b`), so the
+/// scope-denial (P0403 → 403) and cross-tenant (404) contracts run through
+/// the gateway (issue #828). The harness's DEFAULT_HURL_SKIPS
 /// (08_rls_isolation, the hr-IRD/compliance set) must NOT be duplicated in
 /// the fixture manifest — and no hr-specs file may leak in.
-pub const FIXTURE_HURL_SKIPS: [&str; 2] = ["03_scope_denial_403.hurl", "04_cross_tenant_404.hurl"];
+pub const FIXTURE_HURL_SKIPS: [&str; 0] = [];
 
 /// The harness's default workers hurl skips (workers.rs
 /// `DEFAULT_HURL_SKIPS`) — none of these may appear in the fixture
@@ -215,6 +216,21 @@ fn workers_gate_fixture_manifest_is_complete() {
     assert_eq!(
         skips, expected_skips,
         "the fixture skip list must be exactly the fixture-specific set"
+    );
+    // Issue #828: the un-skipped scope-denial + cross-tenant contracts only
+    // work when the fixture opts into the read-only key and names the second
+    // org. Pin the opt-in here so a manifest edit cannot silently re-skip
+    // (hurl would then fail at runtime with an undefined variable — loud —
+    // but this fails in seconds).
+    assert!(
+        hurl.limited_key,
+        "the fixture must opt into hurl.limited_key so 03_scope_denial_403.hurl \
+         (the P0403 -> 403 leg) actually runs"
+    );
+    assert!(
+        hurl.org_id_b.is_some(),
+        "the fixture must name hurl.org_id_b so api_key_b is provisioned for \
+         04_cross_tenant_404.hurl"
     );
     for harness_skip in HARNESS_DEFAULT_SKIPS {
         assert!(

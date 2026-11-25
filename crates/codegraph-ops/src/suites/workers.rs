@@ -22,7 +22,8 @@ use crate::output;
 use crate::proc::{ManagedProcess, Supervisor};
 use crate::suites::api::{
     TestCounters, http_get_body, http_post_body, http_status, hurl_error_excerpt, hurl_log_path,
-    hurl_suite_passed, parse_requests, pluralize_entity_route, provision_api_key, write_hurl_log,
+    hurl_suite_passed, parse_requests, pluralize_entity_route, provision_api_key,
+    provision_read_only_api_key, write_hurl_log,
 };
 use crate::wait::wait_for_url;
 
@@ -618,6 +619,47 @@ async fn run_boot_and_tests(
         }
     };
 
+    // Issue #828: the workers slice must exercise the scope-denial and
+    // cross-tenant contracts, not skip them. They need the same two extra
+    // keys the monolith api suite provisions (`api_key_limited` — a
+    // read-only key, the P0403 `INSUFFICIENT_SCOPE` path that codegraph#810
+    // mis-reported as a machine defect — and `api_key_b` under the second
+    // org). Opt-in: `hurl.limited_key = true` + `hurl.org_id_b`.
+    let mut api_key_b: Option<String> = None;
+    let mut api_key_limited: Option<String> = None;
+    if config
+        .manifest
+        .hurl
+        .as_ref()
+        .and_then(|h| h.org_id_b.as_deref())
+        .is_some()
+        && let Ok(key) = provision_api_key(
+            config,
+            &hurl_org_id(config, "org_id_b", DEFAULT_ORG_B),
+            "ops-workers-key-b",
+        )
+        .await
+    {
+        counters.pass("Org B API key provisioned");
+        api_key_b = Some(key);
+    }
+    if config
+        .manifest
+        .hurl
+        .as_ref()
+        .map(|h| h.limited_key)
+        .unwrap_or(false)
+    {
+        if let Ok(key) =
+            provision_read_only_api_key(config, &org_a, "ops-workers-key-limited").await
+        {
+            counters.pass("Read-only (limited) API key provisioned");
+            api_key_limited = Some(key);
+        } else {
+            counters.fail_test("could not provision read-only API key");
+        }
+    }
+
     match http_status(&format!("http://127.0.0.1:{gateway_port}/version"), &[]).await {
         Ok(200) => counters.pass("gateway /version -> 200"),
         Ok(status) => counters.fail_test(format!("gateway /version -> {status} (want 200)")),
@@ -661,6 +703,36 @@ async fn run_boot_and_tests(
             )),
             Err(e) => counters.fail_test(format!("POST /{route}: {e}")),
         }
+
+        // Issue #810: the create path failed INTERMITTENTLY (a scope-less
+        // probe key answered 500 "db error" on some calls, 201 on others —
+        // codegraph#828), so one create proves nothing. Loop and fail on ANY
+        // 5xx or transport error; a duplicate (409) is tolerated because a
+        // consumer's smoke body may carry a unique value.
+        const REPEAT_CREATES: usize = 50;
+        let mut repeat_failure: Option<String> = None;
+        for attempt in 1..=REPEAT_CREATES {
+            match http_post_body(&format!("{base}/{route}"), &smoke.create_body, &headers).await {
+                Ok((status, body)) => {
+                    let code: u16 = status.parse().unwrap_or(0);
+                    if code >= 500 || code == 0 {
+                        repeat_failure = Some(format!(
+                            "repeat create {attempt}/{REPEAT_CREATES} -> {status} (5xx): {}",
+                            body.lines().next().unwrap_or("")
+                        ));
+                        break;
+                    }
+                }
+                Err(e) => {
+                    repeat_failure = Some(format!("repeat create {attempt}/{REPEAT_CREATES}: {e}"));
+                    break;
+                }
+            }
+        }
+        match repeat_failure {
+            Some(failure) => counters.fail_test(failure),
+            None => counters.pass(format!("repeat create x{REPEAT_CREATES} -> no 5xx")),
+        }
     } else {
         output::warn("no smoke entity configured — skipping curl smoke");
     }
@@ -693,8 +765,17 @@ async fn run_boot_and_tests(
                     .arg("--variable")
                     .arg(format!("base_url=http://127.0.0.1:{gateway_port}"))
                     .arg("--variable")
-                    .arg(format!("api_key={api_key}"))
-                    .arg(&f);
+                    .arg(format!("api_key={api_key}"));
+                // Issue #828: the scope-denial (P0403 → 403) and
+                // cross-tenant (404) contracts run here too — they need the
+                // same two extra keys the monolith api suite provisions.
+                if let Some(key) = &api_key_b {
+                    cmd.arg("--variable").arg(format!("api_key_b={key}"));
+                }
+                if let Some(key) = &api_key_limited {
+                    cmd.arg("--variable").arg(format!("api_key_limited={key}"));
+                }
+                cmd.arg(&f);
                 let (ok, requests, output_text) = match cmd.output() {
                     Ok(out) => {
                         let text = format!(

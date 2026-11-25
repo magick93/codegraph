@@ -4420,6 +4420,7 @@ cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture   # n
 cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture  # slow: compiles the emitted testkit crate
 cargo test -p codegraph --test worker_wasm_compile_tests -- --ignored --nocapture  # #550: worker plane wasm32 gate (needs the wasm32-unknown-unknown target; DB-free — stubbed cornucopia-queries)
 cargo test -p codegraph --test hooks_cornucopia_runtime_tests -- --ignored --nocapture  # #518: the generated cornucopia create path fires hooks + Abort rolls back over real Postgres
+cargo test -p codegraph --test error_mapping_runtime_tests -- --ignored --nocapture  # #828: the emitted error plane classifies by SQLSTATE (P0403/42501 → 403, 23505 → 409, 23503/23502/23514 → 422, 42P01 → 500) over real Postgres
 cargo test -p codegraph --test cornucopia_include_runtime_tests -- --ignored --nocapture  # #781 P1: the generated include SQL as app_user under the RLS session bundle (tenancy + soft delete)
 cargo test -p codegraph --test review_api_suite -- --ignored --nocapture     # live acceptance gate: fixture regen + testkit api + pool mode + authz over HTTP
 
@@ -5967,20 +5968,63 @@ which classifies repo errors by marker: `INSUFFICIENT_SCOPE` /
 everything else stays `InternalError`. The tree handler classifies into
 `AppError::forbidden`.
 
-**DB errors keep their source detail (#810)**: `from_repo_err` takes
-`Display + Debug` and logs BOTH before mapping (the HTTP envelope stays
-generic); the `tokio_postgres`/`deadpool`/`sea_orm` `From` conversions log
-the same detail. This exists because `tokio-postgres` renders a server
-error as the bare string `db error` — the SQLSTATE/message/detail/hint
-live on the error's `source()`, so a stringified error loses the only
-diagnostic a 500 had. The cornucopia repository adapter therefore
-preserves the typed error (`db_err` boxes it — in a `Send + Sync` box,
-issue #813: a non-`Send` box makes a repository future `!Send` whenever a
-`?` temporary crosses an `.await`; see "Repository-plane error contract")
-instead of flattening to a
-String. Pin: `template_harness::database_errors_keep_their_source_detail`
-(+ the emitted code compiles through `cornucopia_include_compile_tests`
-and the workers wasm gate).
+**DB errors classify by SQLSTATE and keep their source detail (#810 → #828)**:
+the generated app error plane (`src/error.rs`) carries ONE classifier,
+`classify_db_error(&impl Display + Debug + 'static) -> DbErrorClass`, and
+`from_repo_err` / every `From<…>` conversion delegate to it:
+
+- **Recovery** — downcast to `tokio_postgres::Error` (`as_db_error()`:
+  code/message/detail/hint/constraint), to `sea_orm::DbErr`
+  (`RuntimeErr::SqlxError(Arc<sqlx::Error>)` → `as_database_error()`;
+  `sea_orm::sqlx` is a re-export, no new dependency), and to the
+  repository plane's `Box<dyn Error + Send + Sync>` (issue #813), whose
+  `source()` chain is walked for `deadpool` wrappers. `Display` is
+  consulted only when NO SQLSTATE is recoverable (hand-built sentinels,
+  non-Postgres). The domain `errors.rs`'s `from_repo_err` delegates to it;
+  the gateway crate renders the same template with `is_gateway` and omits
+  the classifier (no tokio-postgres/deadpool/sea-orm deps there).
+- **Mapping** — `P0403 | 42501 → Forbidden` (403), `23505 → Conflict`
+  (409), `23503 | 23502 | 23514 → Unprocessable` (422; the FK arm names
+  the constraint), every other code → `InternalError` (500). The
+  `Unprocessable(String)` variant is generic (`UNPROCESSABLE_ENTITY`) and
+  `AppError::from_domain_error` already maps 422 → validation.
+- **Why** — `tokio-postgres` >= 0.7.15 renders a server error as the bare
+  string `db error`; the typed `DbError` lives in `source()`. Every
+  `Display`-based classifier on the workers slice was therefore dead: a
+  scope-denied INSERT (the `enforce_api_key_scope` policy's P0403
+  `INSUFFICIENT_SCOPE`) answered `500 "Failed to create …: db error"`,
+  and a unique/FK refusal was an opaque 500. codegraph#810 spent a
+  multi-day investigation on a machine/kernel path because of it; the
+  consumer's forensics closed that diagnosis (a `scopes = []` probe key,
+  `P0403` in the Postgres log, the same body with a wildcard key → 201).
+  The create path (`templates/ddd/command.tera`) has no machine seed and
+  no kernel call — the race hypothesis is structurally impossible.
+- **Call sites** — `command.tera`'s inline `contains("duplicate key")`
+  check is retired (only the repository plane's typed not-found sentinel
+  is matched, by EXACT string); `tree.tera` (both provider arms — the
+  cornucopia arm previously downgraded a `Forbidden` to 500) and
+  `media_route.tera`'s `db_err` call the one classifier.
+- **Logging** — `sqlstate` / `db_message` / `db_detail` / `db_hint` /
+  `db_constraint` at ERROR level (visible at the default filter, no
+  `RUST_LOG` needed) plus the Debug form. The HTTP envelope stays generic
+  for 5xx.
+
+Pins: `cargo test -p codegraph --test error_mapping_runtime_tests`
+(node-free emission pin, PR CI) and `-- --ignored` (the runtime lane:
+P0403/42501 → 403, 23505 → 409, 23503/23502/23514 → 422, 42P01 → 500,
+the boxed repository shape, and the SeaORM/sqlx path — the emitted
+`errors.rs` compiled verbatim into a scratch crate) +
+`template_harness::database_errors_keep_their_source_detail` (extended) +
+the emitted code compiles through `cornucopia_include_compile_tests`,
+`command_compile_tests` and the workers wasm gate. **Teeth**: with the
+pre-#828 `Display` classifier patched back into the scratch tree, 8 of 9
+runtime legs fail (`"db error"` → 500). The live half:
+`workers_live_gate` no longer skips `03_scope_denial_403.hurl` /
+`04_cross_tenant_404.hurl` — the workers suite provisions
+`api_key_limited` (opt-in `hurl.limited_key`) and `api_key_b`, the
+fixture's skip list is EMPTY, and the smoke section repeat-creates 50×
+failing on any 5xx (the #810 intermittency class). Full record:
+`docs/tdd/828-sqlstate-error-mapping.tdd.md`.
 
 ### What was removed
 
@@ -6099,7 +6143,16 @@ plain-Postgres portability paths added).
   with the hand-authored `hurl/90_workflow_transition_409.hurl` surviving
   regen. `DEFAULT_HURL_SKIPS` left untouched (hr-specs consumer compat —
   moving its entries needs coordination on that repo's manifests);
-  fixture-specific skips live in the fixture manifest.
+  fixture-specific skips live in the fixture manifest. **The fixture's own
+  skip list is now EMPTY (issue #828)**: the workers suite provisions the
+  same two extra keys the monolith api suite does — `api_key_limited`
+  (opt-in via `hurl.limited_key`, a read-only key) and `api_key_b` — and
+  passes them as hurl variables, so `03_scope_denial_403.hurl` (P0403 →
+  403) and `04_cross_tenant_404.hurl` run through the gateway. Before
+  #828 they were skipped, which is exactly why a scope denial could read as
+  an opaque 500 (codegraph#810) without any gate noticing. The smoke
+  section also repeat-creates the smoke entity 50× and fails on ANY 5xx or
+  transport error.
   **The machine-bearing create leg (#810)**: the leave entity's status is
   domains.toml workflow-managed (DTO-excluded, DDL-defaulted), so its create
   never carries the machine state. The `design/inventory.ddd` + inventory
