@@ -1739,16 +1739,12 @@ async fn child_op_routes(
                 let Some(parent_title) = design.resolved_title.as_deref() else {
                     continue;
                 };
+                // `protected` is a valid, intentional visibility (issue
+                // #619): the op emits no route, and an op nobody bound is by
+                // design — no warning here. A protected child op an `.ifml`
+                // action binds is reported, once, by the pre-generation
+                // dead-trigger scan (`service_ops::ifml_dead_triggers`).
                 if op.is_protected {
-                    crate::ddd::design::warn_once(
-                        &format!("child-op-protected:{}::{}", design.class, op.name),
-                        &format!(
-                            "child operation `{}` of `{}` is `protected` — it emits no API \
-                             surface (Sculptor visibility); IFML actions bound to it are \
-                             dead triggers",
-                            op.name, design.class
-                        ),
-                    );
                     continue;
                 }
                 if !is_entity {

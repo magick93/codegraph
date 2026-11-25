@@ -916,22 +916,18 @@ fn check_ddd_files(
                         .map(|r| r.name.as_str())
                         .collect();
                     // Dead service-op surface (issue #590, Ask 1 — WARN
-                    // minimum): `protected` ops stay off the API plane by
-                    // definition, so every IFML action bound to them is a
-                    // dead trigger. Entity-unbound ops are warned on the
-                    // run path (they need the graph to resolve); doctor
-                    // warns via the graph-free mirror below.
+                    // minimum): an ENTITY-UNBOUND op is a defect the run
+                    // cannot route, warned through the graph-free mirror
+                    // below. `protected` ops are NOT warned here (issue
+                    // #619): Sculptor `protected` is a valid, intentional
+                    // visibility, and a protected op an `.ifml` action
+                    // binds is reported — once, naming the action — by
+                    // `doctor_graph::report_protected_op_dead_triggers`,
+                    // once the flows are compiled (both surfaces).
                     for module in &model.modules {
                         for service in &module.services {
                             for op in &service.operations {
                                 if op.is_protected {
-                                    soft += 1;
-                                    println!(
-                                        "WARN ddd — service op '{}::{}' is `protected` — \
-                                         it emits no API surface; IFML actions bound to \
-                                         it are dead triggers",
-                                        service.name, op.name
-                                    );
                                     continue;
                                 }
                                 if service_op_binds_no_entity(op, &repository_names) {
@@ -980,7 +976,9 @@ fn check_ddd_files(
 /// to a class through the actor graph — doctor trusts the reference), (2)
 /// a delegation to a REPOSITORY of the model (service delegation is not an
 /// entity binding), or (3) a class-typed signature (any param, else the
-/// return). `protected` ops never reach here (they carry their own WARN).
+/// return). `protected` ops never reach here (the caller skips them: their
+/// visibility is by design, and the bound case is
+/// `doctor_graph::report_protected_op_dead_triggers`).
 fn service_op_binds_no_entity(
     op: &phero_ir::ddd::ServiceOperation,
     repository_names: &std::collections::HashSet<&str>,
@@ -1982,6 +1980,12 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
         hard_failures += hard;
         soft_warnings += soft;
     }
+
+    // The Ask 1 protected-op WARN (issue #619): the join of the designs
+    // and flows the gather just compiled — a `protected` op is reported
+    // only when an `.ifml` action binds it, the same line the run path's
+    // validation pass prints. Unbound protected ops are by design.
+    soft_warnings += crate::doctor_graph::report_protected_op_dead_triggers(&cross);
 
     // The graph-analytics plane (issue #673): the upstream semantic graph
     // + the sweep analytics (separation-of-duty across merged policies,

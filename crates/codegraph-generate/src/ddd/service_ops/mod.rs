@@ -23,8 +23,10 @@
 //!    op declares no delegation, so its primary repository binds the entity;
 //! 4. signature — a class-typed parameter or return type.
 //!
-//! Ops that bind no entity (or are `protected`) emit no route; they are
-//! reported by [`dead_surface_warnings`] (the Ask 1 diagnostic).
+//! Ops that bind no entity emit no route and are reported by
+//! [`dead_surface_warnings`] (the Ask 1 diagnostic). `protected` ops emit
+//! no route by design and are reported ONLY when an `.ifml` action binds
+//! them — exactly once, by [`ifml_dead_triggers`] (issue #619).
 //!
 //! Aggregate child operations (issue #661). A module-level
 //! `children <Root> { <op> => <feature>.<action> }` block lowers onto the
@@ -86,6 +88,8 @@ mod validation;
 mod when_lower;
 
 #[cfg(test)]
+mod dead_surface_tests;
+#[cfg(test)]
 mod predicate_tests;
 #[cfg(test)]
 mod tests;
@@ -100,8 +104,10 @@ pub use types::{
     StateName, TriggerName, WireKey,
 };
 pub use validation::{
-    body_refusals, child_parent_load_refusals, dead_surface_warnings, guard_refusals,
-    ifml_dead_triggers, throws_refusals, transition_binding_errors, transition_binding_warnings,
+    OpRef, PROTECTED_CHILD_OP_REASON, PROTECTED_OP_REASON, body_refusals,
+    child_parent_load_refusals, dead_surface_warnings, dead_trigger_message, guard_refusals,
+    ifml_dead_triggers, op_binds_action, protected_binding, throws_refusals,
+    transition_binding_errors, transition_binding_warnings,
 };
 pub use when_lower::InjectedMachine;
 
