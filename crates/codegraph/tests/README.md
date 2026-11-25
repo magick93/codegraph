@@ -70,6 +70,14 @@ AGENTS.md ("Compile-pin policy").
   loudly on drift).
 - `test_framework/` — `NodeProject`, `postgres.rs` GateDb,
   `axum_server.rs`, `playwright.rs` for the live gates.
+- `test_framework/pgmq.rs` — the ONE pgmq stand-in for gates that run
+  generated SQL against plain Postgres (no extension there). It mirrors
+  pgmq's OVERLOAD set, not only its behaviour — both `delete(text, bigint)`
+  and `delete(text, bigint[])` (issue #825) — so a statement that depends on
+  the server inferring a parameter type fails here as it does against the
+  extension. Schema + functions only: a gate that needs harness roles
+  provisions them itself. `webhook_dispatch_pgmq_tests` replays the workers
+  dispatcher's statements under tokio-postgres' untyped binding against it.
 
 Gate Postgres targets (`test_framework/postgres.rs`): `apply_prelude` runs on a
 superuser ADMIN target resolved from the BASE target (that is `DATABASE_URL`'s
