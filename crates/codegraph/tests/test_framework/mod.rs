@@ -5,6 +5,7 @@ pub mod cornucopia_queries_stub;
 pub mod extras;
 pub mod node_project;
 pub mod normalize;
+pub mod pgmq;
 pub mod playwright;
 pub mod postgres;
 pub mod process;

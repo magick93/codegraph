@@ -204,7 +204,7 @@ fn dispatch_drains_final_batch_on_cancellation() {
         "delete-only-when-inserts-succeeded semantics must be preserved"
     );
     assert!(
-        out.contains("SELECT pgmq.delete($1, $2)"),
-        "pgmq delete on processed messages must be preserved"
+        out.contains("SELECT pgmq.delete($1::text, $2::bigint)"),
+        "pgmq delete on processed messages must be preserved, with its parameter casts (issue #825)"
     );
 }

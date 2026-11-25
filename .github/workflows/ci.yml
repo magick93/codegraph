@@ -146,3 +146,5 @@ jobs:
         run: cargo test -p codegraph --test ddd_invariants_live_gate -- --ignored --nocapture
       - name: Boot-migration tracking gate (issue #756)
         run: cargo test -p codegraph --test boot_migration_tests -- --ignored --nocapture
+      - name: Webhook dispatch pgmq statements resolve under the workers binding (issue #825)
+        run: cargo test -p codegraph --test webhook_dispatch_pgmq_tests -- --ignored --nocapture

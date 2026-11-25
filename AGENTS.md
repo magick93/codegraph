@@ -2143,6 +2143,72 @@ capabilities, `evt_events` stays implied into every plan, and flag-off
   template pins cover it); DLQ retention/dead-letter policy
   configuration (fixed convention + default policy in v1).
 
+### pgmq resolves by parameter type — every `pgmq.delete` is typed (issue #825)
+
+The workers drain binds its pgmq statements through `tokio-postgres`'
+`client.execute(sql, &[…])`, which prepares with NO declared parameter
+types: the server infers them, and an untyped parameter arrives as
+`unknown`. pgmq ships TWO `delete` overloads (`delete(text, bigint)` and
+`delete(text, bigint[])`; pgmq 1.5.1), so `SELECT pgmq.delete($1, $2)` is
+ambiguous there (`42725: function pgmq.delete(unknown, unknown) is not
+unique`) and FAILED on every workers consumer: no dead-letter move ever
+completed (each replay of the poison message added another DLQ copy) and
+no processed message was ever removed (each later drain replayed it). The
+monolith drain ran the SAME text healthy — SeaORM/sqlx declares each
+parameter's type from the bound value, so the server never has to guess.
+
+- **Every `pgmq.delete` call site is typed** — `pgmq.delete($1::text,
+  $2::bigint)` — in BOTH dispatch templates (the drain delete and the
+  dead-letter move: `webhook/dispatch_worker.tera`, `webhook/dispatch.tera`)
+  and in the byte-identity golden `evt_golden/dispatch_pre_evt.rs`. One
+  spelling on both legs, so neither can drift back.
+  `pgmq.send` / `pgmq.read` / `pgmq.create` stay untyped: each is
+  unambiguous at its arity against pgmq 1.5.1 (PREPARE-verified), and the
+  runtime pin below holds that true for every statement the dispatcher
+  emits.
+- **The stand-in mirrors the OVERLOAD SET**
+  (`tests/test_framework/pgmq.rs`): the events runtime gate had always run
+  the MONOLITH drain against a stand-in whose `pgmq.delete` had ONE
+  overload — faithful in behaviour, not in function resolution — which is
+  why no gate saw the defect. One shared stand-in for every gate (the
+  `pgmq` schema + its functions only; the harness roles stay with the gate
+  that needs them).
+- **Pins (`webhook_dispatch_pgmq_tests`)**. Node-free (PR CI): every
+  `pgmq.delete` in both templates is the typed spelling; the workers
+  dispatcher's pgmq surface is pinned to the exact statement set; the
+  statement extractor reads Rust string continuations and escapes the way
+  the compiler does (with its own KAT). Runtime (ignored, the
+  test-ops-integration lane): every pgmq statement of the RENDERED
+  workers dispatcher PREPARES under tokio-postgres' untyped binding, and
+  the processed-message delete — the emitted text, bound `&queue, &msg_id`
+  as the dispatcher binds it — removes the row. The pin reports the
+  SQLSTATE and the server message, never tokio-postgres' bare `db error`
+  (the #810 blindness — `Display` renders only the error KIND).
+  `events_runtime_tests` gains the removal contract on the monolith leg
+  (the source queue ends empty; the DLQ holds exactly one copy).
+- **Teeth**: on the pre-fix templates the runtime leg fails with
+  `db error (42725: function pgmq.delete(unknown, unknown) is not unique)`
+  and both node-free legs fail naming `SELECT pgmq.delete($1, $2)`.
+- **Byte identity**: `src/webhook_dispatch.rs` moves by ONE line in the
+  flag-OFF trees (the drain delete — the dead-letter twin renders only
+  with the events plane on). The `forms`/`ux_rules` canaries were
+  re-blessed, the `policy_rls_tests` per-file hash snapshot re-blessed
+  for its one `src/webhook_dispatch.rs` key, and the review fixture
+  regenerated — enumerated per file against the pre-change template
+  through the driver's template-override directory (235 files, 1
+  changed).
+- **Gates**: `cargo test -p codegraph --test
+  webhook_dispatch_pgmq_tests` (3 node-free + the ignored runtime leg),
+  `--test events_runtime_tests -- --ignored`,
+  `cargo test -p codegraph-generate --lib -- evt_events` (the flag-off
+  golden stays byte-identical to `dispatch.tera`),
+  `--test upstream_overrides_tests`, and the standing canaries.
+- **Deferred**: the full cornucopia-leg events runtime test (the whole
+  workers drain end to end, not only its pgmq statements) — the wasm gate,
+  the template pins and this statement-level runtime pin cover it. The ops
+  `dlq` verb's `pgmq.delete('{queue}', r.msg_id)` binds a `text` literal
+  and a typed `bigint` row value, so it resolves without casts.
+
 ## Deployment models as generator input (pherolang #49)
 
 pherolang `.deploy` deployment models compile — against their imported `.ddd`

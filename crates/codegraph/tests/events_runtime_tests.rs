@@ -14,6 +14,16 @@
 //!   `platform.event_archive`; the harness replay verb re-publishes it
 //!   with a fresh msg_id + `replayed_from` marker, and the consumer
 //!   re-runs (fresh identity → no dedupe skip).
+//! - Delete sites (issue #825): the dead-lettered message and the
+//!   processed message are REMOVED — the source queue ends empty and the
+//!   DLQ holds exactly one copy. This leg drives the MONOLITH drain,
+//!   whose SeaORM/sqlx binding declares each parameter's type, so an
+//!   untyped `pgmq.delete($1, $2)` resolves here; the workers statements
+//!   (tokio-postgres, no declared types) are pinned by
+//!   `webhook_dispatch_pgmq_tests` against the same stand-in.
+//!
+//! The pgmq stand-in is shared (`test_framework::pgmq`) and mirrors the
+//! extension's overload set, not only its behaviour.
 //!
 //! Needs Postgres (`DATABASE_URL`, default
 //! `postgres://postgres:postgres@localhost:5432/postgres`) + cargo.
@@ -25,6 +35,10 @@ use std::path::Path;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_ops::db::psql_exec;
 use codegraph_ops::pg::PgTarget;
+
+// The shared pgmq stand-in (issue #825): one overload set for every gate.
+#[path = "test_framework/mod.rs"]
+mod test_framework;
 
 fn config() -> codegraph_config::DomainConfig {
     codegraph_config::config::parse_domain_config_str(
@@ -118,14 +132,12 @@ fn orders_evt_model() -> codegraph_core::types::EvtModelGraph {
     }
 }
 
-/// A FUNCTIONAL pgmq stand-in for plain Postgres (CI's postgres:15 has
-/// no pgmq extension): real queue tables with pgmq's msg_id/read_ct/vt
-/// contract, so the drain's read/delete/dead-letter SQL behaves as it
-/// does against real pgmq.
-const PGMQ_FUNCTIONAL_SHIM: &str = r#"
--- Functional pgmq stand-in (no extension available).
-CREATE SCHEMA IF NOT EXISTS pgmq;
-
+/// The harness roles and the platform trigger the generated migrations
+/// reference, applied around the shared pgmq stand-in
+/// (`test_framework::pgmq::PGMQ_FUNCTIONAL_SHIM`, which carries the
+/// `pgmq` schema and its functions only): the roles the generated grants
+/// name, and the no-op domain event emitter the event triggers call.
+const HARNESS_ROLES: &str = r#"
 DO $roles$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN
     CREATE ROLE app_user NOLOGIN;
@@ -135,39 +147,29 @@ DO $roles$ BEGIN
   END IF;
 END $roles$;
 
-CREATE OR REPLACE FUNCTION pgmq.create(p_name text) RETURNS void
-AS $shim$ BEGIN
-  EXECUTE format('CREATE TABLE IF NOT EXISTS pgmq.q_%I (msg_id BIGSERIAL PRIMARY KEY, read_ct INT DEFAULT 0, enqueued_at TIMESTAMPTZ DEFAULT now(), vt TIMESTAMPTZ NOT NULL DEFAULT now(), message JSONB)', p_name);
-END $shim$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION pgmq.send(p_queue text, p_msg jsonb) RETURNS bigint
-AS $shim$ DECLARE v_id bigint; BEGIN
-  EXECUTE format('INSERT INTO pgmq.q_%I (message) VALUES ($1) RETURNING msg_id', p_queue) INTO v_id USING p_msg;
-  RETURN v_id;
-END $shim$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION pgmq.read(p_queue text, p_vt int, p_qty int)
-RETURNS TABLE (msg_id bigint, read_ct int, message jsonb)
-AS $shim$ BEGIN
-  RETURN QUERY EXECUTE format(
-    'UPDATE pgmq.q_%I SET vt = now() + make_interval(secs => $1), read_ct = read_ct + 1 WHERE msg_id IN (SELECT msg_id FROM pgmq.q_%I WHERE vt <= now() ORDER BY msg_id LIMIT $2) RETURNING msg_id, read_ct, message', p_queue, p_queue)
-    USING p_vt, p_qty;
-END $shim$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION pgmq.delete(p_queue text, p_msg bigint) RETURNS void
-AS $shim$ BEGIN
-  EXECUTE format('DELETE FROM pgmq.q_%I WHERE msg_id = $1', p_queue) USING p_msg;
-END $shim$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION pgmq.list_queues() RETURNS TABLE (queue_name text)
-AS $shim$ SELECT substring(tablename FROM 3) FROM pg_tables WHERE schemaname = 'pgmq' AND tablename LIKE 'q\_%'; $shim$ LANGUAGE sql;
-
 CREATE OR REPLACE FUNCTION emit_domain_event() RETURNS TRIGGER
 AS $shim$ BEGIN RETURN COALESCE(NEW, OLD); END $shim$ LANGUAGE plpgsql;
+"#;
 
+/// The grants that let the drain's `app_user` session reach the stand-in.
+/// Applied AFTER it: `GRANT EXECUTE ON ALL FUNCTIONS` covers what exists
+/// at the time it runs.
+const HARNESS_PGMQ_GRANTS: &str = r#"
 GRANT USAGE ON SCHEMA pgmq TO app_user;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pgmq TO app_user;
 "#;
+
+/// The database bootstrap the generated migrations expect: the harness
+/// roles and the domain-event trigger function, then the shared pgmq
+/// stand-in, then the grants. The stand-in mirrors pgmq's overload set
+/// (issue #825), so the drain's statements resolve here exactly as they
+/// do against the real extension.
+fn harness_pgmq_sql() -> String {
+    format!(
+        "{HARNESS_ROLES}\n{}\n{HARNESS_PGMQ_GRANTS}",
+        test_framework::pgmq::PGMQ_FUNCTIONAL_SHIM
+    )
+}
 
 fn scratch_cargo_toml() -> String {
     r#"
@@ -568,7 +570,7 @@ async fn run_scenarios(target: &PgTarget) -> anyhow::Result<()> {
 
     // ── 2. Migrations: the functional pgmq shim + the generated platform
     //    schema (carries event_consumption + event_archive under the flags) ──
-    psql_exec(target, PGMQ_FUNCTIONAL_SHIM)
+    psql_exec(target, &harness_pgmq_sql())
         .await
         .map_err(|e| anyhow::anyhow!("pgmq shim: {e}"))?;
     // The generated pgmq_setup migration creates the domain + channel
@@ -731,6 +733,27 @@ async fn run_scenarios(target: &PgTarget) -> anyhow::Result<()> {
     .await
     .map_err(|e| anyhow::anyhow!("audit ledger: {e}"))?;
     assert_eq!(audit_ledger, "1", "audit ledger rows: {audit_ledger}");
+    // The delete sites (issue #825): a dead-lettered message and a
+    // processed message are REMOVED from the source queue, and the move
+    // leaves exactly one copy in the DLQ. pgmq resolves `delete` by
+    // parameter type, so an untyped `pgmq.delete($1, $2)` fails to
+    // resolve. The stand-in mirrors the overload pair, which makes this
+    // leg red for an untyped call: nothing is ever removed, and every
+    // replay of the poison message adds another DLQ copy.
+    let src = scalar("SELECT count(*) FROM pgmq.q_events_orders".into())
+        .await
+        .map_err(|e| anyhow::anyhow!("source queue count: {e}"))?;
+    assert_eq!(
+        src, "0",
+        "events_orders still holds {src} message(s): the processed/dead-lettered deletes did not remove them"
+    );
+    let dlq_copies = scalar("SELECT count(*) FROM pgmq.q_events_orders_dlq".into())
+        .await
+        .map_err(|e| anyhow::anyhow!("dlq count: {e}"))?;
+    assert_eq!(
+        dlq_copies, "1",
+        "events_orders_dlq holds {dlq_copies} copies (want exactly the one moved message)"
+    );
     eprintln!(
         "runtime scenarios green: ship={ship} audit={audit} ledger={ledger} archive={archived}"
     );

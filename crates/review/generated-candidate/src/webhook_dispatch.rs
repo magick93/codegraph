@@ -248,7 +248,7 @@ impl WebhookDispatcher {
                         .db
                         .execute_raw(Statement::from_sql_and_values(
                             DatabaseBackend::Postgres,
-                            "SELECT pgmq.delete($1, $2)",
+                            "SELECT pgmq.delete($1::text, $2::bigint)",
                             [queue.as_str().into(), msg_id.into()],
                         ))
                     .await;
