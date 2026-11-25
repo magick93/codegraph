@@ -1533,7 +1533,8 @@ own-record field".
     PLAIN AND from the root AND machine-decidable at collect time — a
     non-machine Eq/Ne conjunct's fresh value is fixture-seeded (required
     ints seed 42, strings seed `contract-{table}`, codelists seed
-    values[0]) — so ordering comparisons, same-scope field-to-field,
+    `values[0]` — EXCEPT a machine-bound field, which seeds the machine's
+    DECLARED initial; issue #752) — so ordering comparisons, same-scope field-to-field,
     exotic literals, non-machine fields, negation (`!(X)` flips
     polarity), and `||` (the guard may pass via the own-record side) all
     mark the condition undecided. MIXED guards never mis-verdict: a
@@ -3450,6 +3451,25 @@ un-seeded auth surface carries neither (byte-identical). Pin:
 (`ifml_auth_setup_tests`). The `ifml_gate` fixture's
 `GuardedRefundDetail` (requires + id param) exercises the same seeding
 path live in the nightly auth category.
+
+**The fresh row starts at `machine.initial` (issue #752)**: the hurl
+contract's CREATE **and** PUT bodies seed a machine-bound codelist field
+with the graph machine's declared initial
+(`machines::machine_surface_for_entity`, the same resolver the action
+planner uses), never the codelist's first declared value. Upstream
+validates only `initial ∈ members`, so `values[0]` mis-seeded both the
+create (a non-initial row) and the PUT (a `.ddd` machine field is not
+DTO-excluded, so the CRUD roundtrip moved the row off the initial before
+the action legs simulated from it — the consumer's 409-pinned/403-answered
+class). Non-machine codelists keep `values[0]`/`values[1]`
+byte-identically; no machine exists in any canaried tree, so nothing
+re-blesses. Pins: the `api::hurl_contract::tests` KAT (an initial that is
+NOT the first enum value seeds create/echo/update/update-echo) +
+`hurl_contract_tests::machine_initial_seeds_the_create_body_not_the_first_enum_value`
+(a real `.mox` + `.ddd` through `driver::run`). Own-record op-level `when`
+guards are the recorded follow-up (the #663 three-verdict contract is the
+pattern; a mis-verdicting planner is worse than an omitted leg). Full
+record: `docs/tdd/752-hurl-fresh-row-machine-initial.tdd.md`.
 
 ### Testing layers
 

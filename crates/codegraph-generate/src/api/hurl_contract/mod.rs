@@ -680,6 +680,29 @@ async fn resolve_fk_parents(
 /// carrying them 422s (the WS2 live-gate finding — the exclusion set
 /// mirrors `ddd::dto`'s workflow_excluded_fields and
 /// `service_ops::state_field_is_dto_updatable`).
+/// The machine seed facts the payload builder needs: the bound status field
+/// (snake_case — the generated DTO's spelling) and the machine's declared
+/// initial state (issue #752). `None` for a machine-less entity.
+async fn machine_seed(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    schema: &SchemaNode,
+) -> Option<(String, String)> {
+    let workflow_field = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(&schema.title))
+        .and_then(|ec| ec.workflow.as_ref())
+        .map(|wf| wf.status_field.as_str());
+    let surface =
+        crate::machines::machine_surface_for_entity(db, &schema.title, workflow_field).await?;
+    Some((
+        codegraph_naming::to_snake_case(&surface.status_field),
+        surface.initial_state,
+    ))
+}
+
 #[allow(clippy::type_complexity)]
 async fn payload_fields(
     db: &dyn GraphQuerier,
@@ -687,6 +710,7 @@ async fn payload_fields(
     domain: &str,
     schema: &SchemaNode,
     fk_captures: &[(String, String)],
+    machine: Option<(&str, &str)>,
 ) -> Result<(Vec<String>, Vec<String>, Vec<String>, Vec<String>)> {
     let props = db.get_properties(&schema.title).await?;
     let entity_cfg = config
@@ -778,11 +802,32 @@ async fn payload_fields(
                 if values.is_empty() {
                     continue;
                 }
-                let first = values[0].value.clone();
-                let second = values
-                    .get(1)
-                    .map(|v| v.value.clone())
-                    .unwrap_or_else(|| first.clone());
+                // Issue #752: a machine-bound field seeds the machine's
+                // DECLARED initial state, not the codelist's first declared
+                // value. Upstream validates only `initial ∈ members`, so a
+                // legal model may declare it anywhere in the enum; seeding
+                // `values[0]` made `state_aware_legs` (which starts from the
+                // graph's real `initial`) mis-verdict both ways.
+                //
+                // The UPDATE body keeps the initial too: the plain CRUD PUT
+                // runs BEFORE the action legs, and a `.ddd` machine field is
+                // not DTO-excluded (only domains.toml workflow fields are),
+                // so moving it here would desync the simulation's starting
+                // state.
+                let machine_initial = machine
+                    .filter(|(field, _)| *field == name.as_str())
+                    .map(|(_, initial)| initial.to_string());
+                let first = machine_initial
+                    .clone()
+                    .unwrap_or_else(|| values[0].value.clone());
+                let second = if machine_initial.is_some() {
+                    first.clone()
+                } else {
+                    values
+                        .get(1)
+                        .map(|v| v.value.clone())
+                        .unwrap_or_else(|| first.clone())
+                };
                 create.push(format!(r#"  "{name}": "{first}""#));
                 echo.push(format!(r#"jsonpath "$.data.{name}" == "{first}""#));
                 update.push(format!(r#"  "{name}": "{second}""#));
@@ -874,8 +919,18 @@ async fn payload_sections(
         .iter()
         .map(|p| (p.json_name.clone(), p.capture.clone()))
         .collect();
-    let (create, echo, update, update_echo) =
-        payload_fields(db, config, domain, schema, &captures).await?;
+    let machine = machine_seed(db, config, domain, schema).await;
+    let (create, echo, update, update_echo) = payload_fields(
+        db,
+        config,
+        domain,
+        schema,
+        &captures,
+        machine
+            .as_ref()
+            .map(|(field, initial)| (field.as_str(), initial.as_str())),
+    )
+    .await?;
 
     let body = |lines: &[String]| -> String {
         if lines.is_empty() {
@@ -1075,8 +1130,18 @@ async fn build_entity_contract(
     for hop in &nesting {
         captures.push((hop.fk_json_name.clone(), hop.capture_name.clone()));
     }
-    let (create, echo, update, update_echo) =
-        payload_fields(db, config, domain, schema, &captures).await?;
+    let machine = machine_seed(db, config, domain, schema).await;
+    let (create, echo, update, update_echo) = payload_fields(
+        db,
+        config,
+        domain,
+        schema,
+        &captures,
+        machine
+            .as_ref()
+            .map(|(field, initial)| (field.as_str(), initial.as_str())),
+    )
+    .await?;
     let body = |lines: &[String]| -> String {
         if lines.is_empty() {
             "{}".to_string()
@@ -1393,7 +1458,7 @@ entities = ["TaskType"]
 
         let captures = vec![("event_id".to_string(), "parent_event_id".to_string())];
         let (create, echo, update, update_echo) =
-            payload_fields(&db, &config, "work", &rsvp, &captures)
+            payload_fields(&db, &config, "work", &rsvp, &captures, None)
                 .await
                 .expect("payload fields");
         assert!(
@@ -1430,7 +1495,7 @@ entities = ["TaskType"]
         let config = workflow_config("status", None);
 
         let (create, _echo, update, _update_echo) =
-            payload_fields(&db, &config, "work", &schema, &[])
+            payload_fields(&db, &config, "work", &schema, &[], None)
                 .await
                 .unwrap();
         let create = create.join("\n");
@@ -1458,7 +1523,7 @@ entities = ["TaskType"]
         let config = workflow_config("status", Some("approval_status"));
 
         let (create, _echo, update, _update_echo) =
-            payload_fields(&db, &config, "work", &schema, &[])
+            payload_fields(&db, &config, "work", &schema, &[], None)
                 .await
                 .unwrap();
         let create = create.join("\n");
@@ -1484,7 +1549,7 @@ entities = ["TaskType"]
         let config = plain_config();
 
         let (create, echo, update, _update_echo) =
-            payload_fields(&db, &config, "work", &schema, &[])
+            payload_fields(&db, &config, "work", &schema, &[], None)
                 .await
                 .unwrap();
         let create = create.join("\n");
@@ -1501,6 +1566,53 @@ entities = ["TaskType"]
             "the PUT roundtrip moves to the second enum code"
         );
     }
+    /// Issue #752: the machine-bound field seeds the machine's DECLARED
+    /// initial state, not the codelist's first value — and the UPDATE body
+    /// keeps it (the CRUD PUT must not desync the action simulation, which
+    /// starts from the same initial).
+    #[tokio::test]
+    async fn machine_bound_field_seeds_the_declared_initial_not_the_first_enum_value() {
+        let db = task_db(false).await;
+        let schema = db.get_schema("TaskType").await.unwrap().unwrap();
+        let config = plain_config();
+
+        // "Posted" is values[1] — the classic mis-seed the issue describes.
+        let (create, echo, update, update_echo) = payload_fields(
+            &db,
+            &config,
+            "work",
+            &schema,
+            &[],
+            Some(("status", "Posted")),
+        )
+        .await
+        .unwrap();
+        let create = create.join("\n");
+        let echo = echo.join("\n");
+        let update = update.join("\n");
+        let update_echo = update_echo.join("\n");
+        assert!(
+            create.contains(r#""status": "Posted""#),
+            "the create body must seed the machine's initial state:\n{create}"
+        );
+        assert!(
+            echo.contains(r#"jsonpath "$.data.status" == "Posted""#),
+            "the echo must assert the seeded initial:\n{echo}"
+        );
+        assert!(
+            update.contains(r#""status": "Posted""#),
+            "the PUT must keep the initial (the action simulation starts there):\n{update}"
+        );
+        assert!(
+            update_echo.contains(r#"jsonpath "$.data.status" == "Posted""#),
+            "the PUT echo must keep the initial:\n{update_echo}"
+        );
+        assert!(
+            !create.contains(r#""status": "Draft""#),
+            "the codelist's first value must not win over the initial:\n{create}"
+        );
+    }
+
     /// Issue #767: a child op that binds a modeled boundary sends THE
     /// BOUNDARY's sample — its own `deny_unknown_fields` would reject the
     /// child's generated request-DTO body whenever the two shapes differ, so
