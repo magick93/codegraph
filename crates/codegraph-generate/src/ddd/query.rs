@@ -56,6 +56,27 @@ pub struct QueryContext {
     pub include_response_imports: String,
 }
 
+/// The op set the query plane serves for one entity — the #449 precedence:
+/// the config/graph operations, replaced by the design's repository
+/// built-ins when a design covers the title. ONE derivation for the query
+/// handler's own emission and for every plane that asks which query
+/// methods exist: the machine read model's loader check reads it here
+/// rather than re-deriving it (issue #824).
+pub(crate) async fn effective_operations(
+    db: &dyn GraphQuerier,
+    design_surface: &crate::ddd::design::DddDesignSurface,
+    config: &DomainConfig,
+    domain: &str,
+    schema_title: &str,
+    entity_name: &str,
+) -> Vec<String> {
+    let mut operations = resolve_entity_operations(db, config, domain, entity_name).await;
+    if let Some(design_ops) = design_surface.operations_for(schema_title) {
+        operations = design_ops;
+    }
+    operations
+}
+
 pub struct QueryGenerator {
     output_dir: PathBuf,
     parent_candidates: Vec<ParentCandidate>,
@@ -113,10 +134,15 @@ impl EntityGenerator for QueryGenerator {
         // drives the FTS surface + filter fields from its search
         // definition.
         let design_surface = crate::ddd::design::DddDesignSurface::from_graph(db).await?;
-        let mut operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
-        if let Some(design_ops) = design_surface.operations_for(schema_title) {
-            operations = design_ops;
-        }
+        let operations = effective_operations(
+            db,
+            &design_surface,
+            config,
+            &domain,
+            schema_title,
+            &entity_name,
+        )
+        .await;
         let design_search = design_surface.search_for(schema_title);
 
         let search = entity_cfg.map(|ec| &ec.search);

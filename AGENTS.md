@@ -6457,6 +6457,64 @@ plane; nothing here interprets machines yet.
   hurl legs, doctor `--ddd-files` machine parity (the run path + the
   validation pass own the checks).
 
+### Machine read models exist only where they have a loader (issues #817 + #824)
+
+The #817 read model (`api/machine_read.tera`, monolith-only) makes the
+entity column + the kernel registry ONE projection both planes serve:
+`GET …/machine` for machine-only entities, and the merged `/workflow`
+payload's `machine` object for dual entities. PR #819 rendered it for
+EVERY machine-bearing design and left two ordinary shapes uncompilable —
+a consumer's workers workspace failed `cargo check` with `E0599` (a
+design without a repository has no `find_by_id`) and `E0609` (a `…Code`
+status field: the DTO strips the suffix, the read model named the model
+spelling).
+
+- **ONE loader rule** (`machines::machine_read_model_has_loader`): the
+  read model reads the row the query handler's UNSCOPED `find_by_id`
+  returns, which `ddd/query.tera` emits exactly for `has_read AND
+  parent_ref is none`. `machine_read_model_surface_for_entity` = the
+  kernel surface ∧ that loader; the op set comes from
+  `ddd::query::effective_operations` (extracted from the query
+  generator), the parent reference from
+  `resolve_parent_fk_column_same_domain` — the facts cannot drift from
+  the emitted handler. (`machine_read_model_surface_for_title` /
+  `machine_read_model_titles` serve callers that know titles, not
+  domains.)
+- **Every consumer asks the one function**: the route module emission AND
+  the `machine` context the `/workflow` merge uses (`workflow_action.rs`);
+  the router (×2 — the API contract follows via
+  `RouterEntity.has_machine`); OpenAPI (×2 — now the router's own
+  expression, topology gate included: under workers the document no longer
+  lists an unmounted `/machine` path); the IFML route generator; the IFML
+  e2e spec/POM set.
+- **Topology is not the loader's business**: `/machine` stays
+  monolith-only (the #703 posture), but the module is emitted on BOTH
+  topologies — `workflow_action/state.tera` merges the sibling derivation
+  into `/workflow`, which workers serve; skipping it there would silently
+  drop a dual entity's `machine` object.
+- **The kernel is untouched** (registry embed, seed, guards). The
+  withholding is VISIBLE: `ValidationPass::check_machine_read_model`
+  (check `machine_read_model`, Warning) names the class and the reason,
+  and decides through the SAME predicate the emitters withhold by.
+- **`…Code` status fields**: the accessor is the graph property's
+  `rust_field_name` — the DTO emitter's own field name — with
+  `strip_code_suffix_safe(to_snake_case(..))` as the fallback for graphs
+  carrying no property.
+- **Gates**: `cargo test -p codegraph --test machine_read_shape_tests` (6
+  node-free pins over the real driver on
+  `tests/fixtures/machine_read_shapes`, monolith + workers, plus the
+  loader truth table and the Warning) + `service_ops_compile_gate::
+  generated_app_with_machine_read_shapes_compiles` (the whole-app
+  `cargo check`; on the pre-fix generator the emitted app fails with
+  exactly `E0599 application_machine.rs:61` +
+  `E0609 position_opening_machine.rs:66`) + `machine_read_model_tests`
+  (10, unchanged) + the standing canaries.
+- **Deferred**: the scoped loader for parent-scoped members (#827 — the
+  nested route already carries the parent id, and `find_by_id_scoped`
+  exists); mounting `/machine` under the workers topology (the UI emits
+  the read-model contract while the route is monolith-only — the #703
+  posture, unchanged here).
+
 ## Include Path System (`?include=`)
 
 Generated list/GET handlers support `?include=` eager loading. Paths are

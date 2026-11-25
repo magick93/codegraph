@@ -59,6 +59,7 @@ impl ValidationPass {
             r19,
             r20,
             r21,
+            r22,
         ) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
@@ -81,6 +82,7 @@ impl ValidationPass {
             Self::check_service_op_throws(db, config),
             Self::check_projection_boundaries(db, config),
             Self::check_machine_kernel(db, config),
+            Self::check_machine_read_model(db, config),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -104,7 +106,31 @@ impl ValidationPass {
         issues.extend(r19);
         issues.extend(r20);
         issues.extend(r21);
+        issues.extend(r22);
         issues
+    }
+
+    /// Machine read models (issue #824): a machine-bearing design whose
+    /// query plane exposes no unscoped `find_by_id` gets NO read model —
+    /// the route module used to be rendered regardless, and a consumer's
+    /// build failed on the method that does not exist (`E0599`). The
+    /// withholding is VISIBLE as a Warning naming the class and the
+    /// reason — never a silent omission. The kernel (registry embed,
+    /// seed, guards) is untouched; only the read model is withheld.
+    async fn check_machine_read_model(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        codegraph_generate::machines::machine_read_model_withheld_warnings(db, config)
+            .await
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Warning,
+                entity: "(machine read model)".to_string(),
+                check: "machine_read_model",
+                message,
+            })
+            .collect()
     }
 
     /// Machine kernel (issue #815): every referenced machine must be

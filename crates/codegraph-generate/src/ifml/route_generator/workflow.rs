@@ -1,7 +1,7 @@
 use codegraph_config::DomainConfig;
 
 use crate::ifml::context::IfmlComponent;
-use crate::machines::{EntityMachineSurface, machine_surface_for_entity};
+use crate::machines::{EntityMachineSurface, machine_read_model_surface_for_title};
 
 use std::collections::HashMap;
 
@@ -48,13 +48,16 @@ pub(crate) fn workflow_for_entity(config: &DomainConfig, entity: &str) -> Option
 /// The machine read-model surface for a component's bound entity (issue
 /// #817): graph-driven, so machine-ONLY entities (an authored TypeScript
 /// machine, no domains.toml workflow config) resolve too. The db-backed
-/// helper is the SAME one the api plane uses — the UI and the routes
-/// cannot disagree about which entities are machine-bearing. The title
-/// chain mirrors `workflow_for_entity` (plain, then `{entity}Type`). The
-/// workflow scope rides along (issue #818): a dual entity surfaces the
-/// machine bound to the workflow's own status field — a machine on
-/// another field drives a different transition plane and never renders
-/// through the workflow's buttons.
+/// helper is the SAME one the api plane uses to EMIT the read model — the
+/// UI and the routes cannot disagree about which entities have one. Issue
+/// #824: a machine-bearing design without a loader (no repository, or a
+/// parent-scoped member) gets no read model on either plane, so the UI
+/// never fetches what the api plane withheld. The title chain mirrors
+/// `workflow_for_entity` (plain, then `{entity}Type`). The workflow scope
+/// rides along (issue #818): a dual entity surfaces the machine bound to
+/// the workflow's own status field — a machine on another field drives a
+/// different transition plane and never renders through the workflow's
+/// buttons.
 pub(super) async fn machine_surface_for(
     db: &dyn codegraph_core::traits::GraphQuerier,
     config: &DomainConfig,
@@ -64,11 +67,13 @@ pub(super) async fn machine_surface_for(
         return None;
     }
     let scope = |title: &str| workflow_for_entity(config, title).map(|wf| wf.status_field.clone());
-    if let Some(surface) = machine_surface_for_entity(db, entity, scope(entity).as_deref()).await {
+    if let Some(surface) =
+        machine_read_model_surface_for_title(db, config, entity, scope(entity).as_deref()).await
+    {
         return Some(surface);
     }
     let suffixed = format!("{entity}{}", config.defaults.type_suffix);
-    machine_surface_for_entity(db, &suffixed, scope(&suffixed).as_deref()).await
+    machine_read_model_surface_for_title(db, config, &suffixed, scope(&suffixed).as_deref()).await
 }
 
 /// Workflow context for a component: resolution plus the badge markup

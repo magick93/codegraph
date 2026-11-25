@@ -1,0 +1,45 @@
+// Issue #824 repro fixture: the two ordinary shapes the #817 machine
+// read-model route did not compile for, in one module.
+//
+// Shape 1 — a machine-bearing design WITHOUT a repository (`Application`):
+// its op set is empty, so its query handler has no `find_by_id` for the
+// read model to load through. The route module used to be rendered anyway
+// (E0599: no method named `find_by_id`).
+//
+// Shape 2 — a machine bound to a `…Code`-typed field on a root WITH a
+// repository (`PositionOpeningType.approvalStatusCode`): ingest strips the
+// suffix from the Rust field (`approval_status`) while the column keeps it
+// (`approval_status_code`), and the route module addressed the model
+// name's snake_case instead (E0609: no field `approval_status_code`).
+//
+// Both are the reporting consumer's recruiting shapes, reduced.
+package nz.example.recruiting
+
+enum ApplicationDisposition {
+    New as "N" = 0
+    Screening as "S" = 1
+    Hired as "H" = 4
+    Rejected as "R" = 5
+}
+
+enum PositionOpeningApprovalStatus {
+    Incomplete as "I" = 0
+    InReview as "R" = 1
+    Approved as "A" = 2
+}
+
+class CandidateType {
+    String candidateId
+    contains Application[] applications opposite candidate
+}
+
+class Application {
+    container CandidateType candidate opposite applications
+    ApplicationDisposition disposition
+    date appliedOn
+}
+
+class PositionOpeningType {
+    String title
+    PositionOpeningApprovalStatus approvalStatusCode
+}

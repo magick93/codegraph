@@ -40,7 +40,7 @@
 mod fixture;
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use fixture::{
     DOMAINS_TOML, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, gate_tempdir, ingest, ingest_guard,
@@ -708,4 +708,96 @@ postgres_schema = "library"
 
     codegraph::driver::check_generated_output(&output)
         .expect("the generated app with projection reads must compile");
+}
+
+/// Copy the committed machine read-model shapes fixture
+/// (`tests/fixtures/machine_read_shapes`: the model keeps its `model/` and
+/// `design/` layout because the design imports `../model/recruiting.mox`).
+/// Returns `(domains.toml, mox, ddd)`.
+fn write_read_shapes_fixture(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/machine_read_shapes");
+    let mox = root.join("model/recruiting.mox");
+    let ddd = root.join("design/recruiting.ddd");
+    let config = root.join("domains.toml");
+    fs::create_dir_all(mox.parent().unwrap()).unwrap();
+    fs::create_dir_all(ddd.parent().unwrap()).unwrap();
+    fs::copy(src.join("model/recruiting.mox"), &mox).unwrap();
+    fs::copy(src.join("design/recruiting.ddd"), &ddd).unwrap();
+    fs::copy(src.join("domains.toml"), &config).unwrap();
+    (config, mox, ddd)
+}
+
+/// Issues #817 + #824: the machine read model compiles for BOTH ordinary
+/// shapes. The fixture carries a machine on a design WITHOUT a repository
+/// and a machine bound to a `…Code`-typed status field on a root with one —
+/// the two shapes whose route module failed a consumer's `cargo check`
+/// (`E0599`: no method named `find_by_id`; `E0609`: no field
+/// `approval_status_code`) while every gate stayed green, because no
+/// compile pin reached them: every fixture put its machines on root
+/// scaffold entities with plain `*_status` fields, and the route is
+/// monolith-only, so on workers it is unrouted code that merely has to
+/// compile.
+///
+/// The node-free pins (`machine_read_shape_tests`) hold the emitted
+/// shape; this leg is the whole-app `cargo check` over the workspace
+/// default profile (path deps) that proves the emitted read model compiles
+/// against the DTO and the query plane it addresses.
+#[tokio::test]
+#[ignore = "slow: cargo check over the generated app; needs the full dep stack"]
+async fn generated_app_with_machine_read_shapes_compiles() {
+    let out_dir = gate_tempdir();
+    let output = out_dir.path().join("app");
+    fs::create_dir_all(&output).unwrap();
+    let fixture_root = out_dir.path().join("fixture");
+    fs::create_dir_all(&fixture_root).unwrap();
+    let (config, mox, ddd) = write_read_shapes_fixture(&fixture_root);
+    let profiles_path = write_profiles(&fixture_root);
+
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles_path),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: std::slice::from_ref(&mox),
+        rosetta_files: &[],
+        ddd_files: std::slice::from_ref(&ddd),
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("generation over the machine read-model shapes fixture must succeed");
+
+    // The emitted shape, pinned before any build spend (a regression here
+    // must not burn a cargo check to be discovered).
+    assert!(
+        !output
+            .join("src/api/recruiting/application_machine.rs")
+            .exists(),
+        "a machine without a loader must emit no read-model module (issue #824)"
+    );
+    let module = fs::read_to_string(output.join("src/api/recruiting/position_opening_machine.rs"))
+        .expect("the `…Code` machine keeps its read-model module (issue #824)");
+    assert!(
+        module.contains("entity.approval_status.to_string()")
+            && !module.contains("entity.approval_status_code"),
+        "the read model must address the DTO's own field name:\n{module}"
+    );
+
+    codegraph::driver::check_generated_output(&output)
+        .expect("the generated app with both machine read-model shapes must compile");
 }

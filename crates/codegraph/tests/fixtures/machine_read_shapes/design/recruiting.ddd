@@ -1,0 +1,43 @@
+import "../model/recruiting.mox";
+
+// Issue #824 repro fixture: both ordinary shapes the #817 machine
+// read-model route failed to compile for, in one module. See the model
+// file's header for what each shape breaks.
+application Recruiting {
+    base nz.example.recruiting
+    module recruiting {
+        entity CandidateType scaffold repository CandidateRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        // Shape 1: machine-bearing, NO repository — an empty op set, so no
+        // unscoped `find_by_id` for a read model to load through.
+        entity Application
+        machine disposition: ApplicationDisposition {
+            initial New;
+            New -> Screening via Advance;
+            Screening -> Hired via Advance;
+            New -> Rejected via Reject;
+            Screening -> Rejected via Reject;
+            terminal Hired;
+            terminal Rejected;
+        }
+        // Shape 2: the machine binds a `…Code`-typed field. The DTO names
+        // the Rust field `approval_status`; the read model must address
+        // that field, never the model name's bare snake_case.
+        entity PositionOpeningType scaffold repository PositionOpeningRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        machine approvalStatusCode: PositionOpeningApprovalStatus {
+            initial Incomplete;
+            Incomplete -> InReview via SubmitForApproval;
+            InReview -> Approved via Approve;
+            terminal Approved;
+        }
+    }
+}

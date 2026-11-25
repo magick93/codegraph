@@ -643,6 +643,213 @@ pub async fn machine_surface_for_entity(
     first
 }
 
+/// Whether the machine read model has a LOADER (issue #824). The read
+/// model reads the status column off the row the query handler's UNSCOPED
+/// `find_by_id` returns — the method `ddd/query.tera` emits exactly for an
+/// entity with a `read` op and no parent reference. A parent-scoped member
+/// gets `find_by_id_scoped` instead (it loads through its aggregate, a
+/// different route shape — the recorded follow-up), and a design without a
+/// repository resolves to an EMPTY op set with no loader at all.
+/// `machine_read.tera` used to render for every machine-bearing design
+/// regardless, and both shapes failed a consumer's build (`E0599`: no
+/// method named `find_by_id`).
+///
+/// A machine-bearing entity outside the shape keeps its kernel — the
+/// registry embed, the workflow seed, the guards. Only the read model is
+/// withheld, and the run says so
+/// ([`machine_read_model_withheld_warnings`]).
+#[must_use]
+pub const fn machine_read_model_has_loader(has_read: bool, has_parent_ref: bool) -> bool {
+    has_read && !has_parent_ref
+}
+
+/// The machine read-model surface of `title` (issues #817 + #824):
+/// [`machine_surface_for_entity`] narrowed to what the read model can
+/// actually read — the entity binds a machine AND its query plane exposes
+/// the loader ([`machine_read_model_has_loader`]). `None` when either is
+/// missing, so the route module, the `/workflow` merge, the router and
+/// OpenAPI registrations, the API contract and the UI's read-model fetches
+/// are withheld TOGETHER: every consumer asks this one function, and no
+/// plane can promise a read model another plane did not emit.
+///
+/// Topology is the caller's fact, not this function's. The api plane
+/// mounts the `/machine` ROUTE on the monolith only (the #703 posture);
+/// the `/workflow` merge and the IFML plane read the model on both
+/// topologies.
+pub async fn machine_read_model_surface_for_entity(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    title: &str,
+    workflow_status_field: Option<&str>,
+) -> Option<EntityMachineSurface> {
+    let surface = machine_surface_for_entity(db, title, workflow_status_field).await?;
+    if machine_read_model_loader_facts(db, config, domain, title)
+        .await
+        .is_some_and(|(has_read, has_parent_ref)| {
+            machine_read_model_has_loader(has_read, has_parent_ref)
+        })
+    {
+        Some(surface)
+    } else {
+        None
+    }
+}
+
+/// [`machine_read_model_surface_for_entity`] for a caller that knows the
+/// title but not its domain (the IFML planes): the schema's own domain
+/// resolves it. A title that resolves to no schemaed domain has no loader.
+pub async fn machine_read_model_surface_for_title(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    title: &str,
+    workflow_status_field: Option<&str>,
+) -> Option<EntityMachineSurface> {
+    let domain = schema_domain(db, title).await?;
+    machine_read_model_surface_for_entity(db, config, &domain, title, workflow_status_field).await
+}
+
+/// The machine-bearing entity titles whose read model has a loader (issue
+/// #824) — [`machine_bearing_titles`] narrowed by
+/// [`machine_read_model_has_loader`]. The set every e2e plane that keys on
+/// "this entity has a read model" walks.
+pub async fn machine_read_model_titles(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+) -> HashSet<String> {
+    let mut titles = HashSet::new();
+    for title in machine_bearing_titles(db).await {
+        if let Some(domain) = schema_domain(db, &title).await
+            && machine_read_model_loader_facts(db, config, &domain, &title)
+                .await
+                .is_some_and(|(has_read, has_parent_ref)| {
+                    machine_read_model_has_loader(has_read, has_parent_ref)
+                })
+        {
+            titles.insert(title);
+        }
+    }
+    titles
+}
+
+/// One Warning per machine-bearing design whose read model is withheld for
+/// want of a loader (issue #824) — never a silent omission. Each names the
+/// class and the reason: no `read` op (a design without a repository
+/// resolves to an empty op set), or a parent-scoped member (the read model
+/// has no scoped loader yet — the recorded follow-up).
+pub async fn machine_read_model_withheld_warnings(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let mut titles: Vec<String> = machine_bearing_titles(db).await.into_iter().collect();
+    titles.sort();
+    for title in titles {
+        let facts = match schema_domain(db, &title).await {
+            Some(domain) => machine_read_model_loader_facts(db, config, &domain, &title).await,
+            None => None,
+        };
+        let (servable, reason) = match facts {
+            None => (false, "resolves to no schema".to_string()),
+            Some((has_read, has_parent_ref)) => {
+                // The SAME predicate the emitters withhold by — the Warning
+                // cannot disagree with the emission.
+                let reason = if !has_read {
+                    [
+                        "its query plane serves no `read` op (a design without a repository",
+                        "resolves to an empty op set), so there is no `find_by_id` for the read",
+                        "model to load through",
+                    ]
+                    .join(" ")
+                } else if has_parent_ref {
+                    [
+                        "it is a parent-scoped member: its query handler loads through",
+                        "`find_by_id_scoped`, and the read model has no scoped loader yet (the",
+                        "scoped loader is the recorded follow-up)",
+                    ]
+                    .join(" ")
+                } else {
+                    String::new()
+                };
+                (
+                    machine_read_model_has_loader(has_read, has_parent_ref),
+                    reason,
+                )
+            }
+        };
+        if servable {
+            continue;
+        }
+        warnings.push(format!(
+            "design `{title}` carries a machine but {reason} — the machine read model (route, \
+             `/workflow` merge, UI) is withheld (#824)"
+        ));
+    }
+    warnings
+}
+
+/// The schema's own domain, when the graph knows the title.
+async fn schema_domain(db: &dyn GraphQuerier, title: &str) -> Option<String> {
+    db.get_schema(title)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|schema| schema.domain)
+}
+
+/// The loader facts resolved from the graph — the same two facts
+/// `ddd/query.tera` reads: the op set the query plane serves (the `read`
+/// op gates `find_by_id`) and the parent reference (which switches the
+/// handler to the scoped loader). `None` when the graph carries no schema
+/// for the title in `domain`.
+async fn machine_read_model_loader_facts(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    machine_title: &str,
+) -> Option<(bool, bool)> {
+    let schema = db
+        .get_schema_in_domain(machine_title, domain)
+        .await
+        .ok()
+        .flatten()?;
+    let entity_name = schema.rust_type_name;
+    let design_surface = crate::ddd::design::DddDesignSurface::from_graph(db)
+        .await
+        .ok()?;
+    let has_read = crate::ddd::query::effective_operations(
+        db,
+        &design_surface,
+        config,
+        domain,
+        machine_title,
+        &entity_name,
+    )
+    .await
+    .iter()
+    .any(|op| op == "read");
+    if !has_read {
+        // No loader either way; the parent-candidate read is not needed.
+        return Some((false, false));
+    }
+    let entity_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(&entity_name));
+    let parent_candidates = db.get_parent_candidates().await.ok()?;
+    let has_parent_ref = crate::resolve_parent_fk_column_same_domain(
+        machine_title,
+        &parent_candidates,
+        entity_cfg,
+        domain,
+        config,
+        db,
+    )
+    .await
+    .is_some();
+    Some((has_read, has_parent_ref))
+}
+
 /// FNV-1a 64-bit lowercase hex — the inline digest every plane uses (the
 /// ops harness, the workflow seed's envelope, the kernel). No new
 /// dependency.

@@ -152,9 +152,9 @@ impl EntityGenerator for WorkflowActionGenerator {
 
         let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
 
-        // The machine read-model surface (issue #817): graph-driven,
-        // independent of the workflow config. Presence gate — a
-        // machine-less entity emits nothing here (byte-identical).
+        // The machine surface (issue #817): graph-driven, independent of
+        // the workflow config. Presence gate — a machine-less entity emits
+        // nothing here (byte-identical).
         let machine_surface = crate::machines::machine_surface_for_entity(
             db,
             schema_title,
@@ -165,10 +165,30 @@ impl EntityGenerator for WorkflowActionGenerator {
         if workflow.is_none() && machine_surface.is_none() {
             return Ok(Vec::new());
         }
-        let machine_ctx = match &machine_surface {
+        // The READ-MODEL surface (issue #824): the machine narrowed to what
+        // the read model can read. The route module loads the row through
+        // the query handler's unscoped `find_by_id`, which a design without
+        // a repository (an empty op set) or a parent-scoped member does not
+        // have — there the module is not emitted, and `/workflow` merges no
+        // read model (no sibling module derives one). The kernel (seed,
+        // guards) is untouched.
+        let read_model = match &machine_surface {
+            Some(_) => {
+                crate::machines::machine_read_model_surface_for_entity(
+                    db,
+                    config,
+                    &domain,
+                    schema_title,
+                    workflow.map(|wf| wf.status_field.as_str()),
+                )
+                .await
+            }
+            None => None,
+        };
+        let machine_ctx = match &read_model {
             Some(m) => Some(MachineReadModelContext {
                 machine_id: m.machine_id.clone(),
-                status_field_rust: codegraph_naming::to_snake_case(&m.status_field),
+                status_field_rust: status_field_rust(db, schema_title, &m.status_field).await,
                 status_field_optional: status_field_is_optional(db, schema_title, &m.status_field)
                     .await,
             }),
@@ -452,6 +472,35 @@ pub struct MachineReadContext {
     pub parent_path_segment: Option<String>,
     pub parent_domain: Option<String>,
     pub is_auditable: bool,
+}
+
+/// The Rust accessor of the machine's status field on the entity's
+/// Response DTO — the name the DTO emitter gives its field
+/// (`PropertyNode.rust_field_name`), never re-derived. Ingest already
+/// applied the `_code`-suffix strip: the COLUMN keeps the suffix, the Rust
+/// field does not (`approvalStatusCode` → `approval_status`, issue #824),
+/// so a bare `to_snake_case` of the model name addresses a field the DTO
+/// does not have (`E0609`). A property the graph does not carry falls back
+/// to the DTO plane's own rule.
+async fn status_field_rust(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    status_field: &str,
+) -> String {
+    db.get_properties(schema_title)
+        .await
+        .ok()
+        .and_then(|props| {
+            props
+                .iter()
+                .find(|p| p.name == status_field)
+                .map(|p| p.rust_field_name.trim())
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| {
+            crate::ddd::dto::strip_code_suffix_safe(&codegraph_naming::to_snake_case(status_field))
+        })
 }
 
 /// Whether the machine's status feature projects as an optional Response
