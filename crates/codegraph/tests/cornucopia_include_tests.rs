@@ -202,8 +202,9 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
     let customer_adapter =
         read(&output.join("src/domain/shop/customer/cornucopia_repository_impl.rs"));
     assert!(
-        customer_adapter
-            .contains(") -> Result<Vec<WorkOrderResponse>, Box<dyn std::error::Error>> {"),
+        customer_adapter.contains(
+            ") -> Result<Vec<WorkOrderResponse>, Box<dyn std::error::Error + Send + Sync>> {"
+        ),
         "array GET adapter must return the collection:\n{customer_adapter}"
     );
     assert!(
@@ -218,7 +219,7 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
     );
     assert!(
         customer_adapter.contains(
-            ") -> Result<std::collections::HashMap<Uuid, Vec<WorkOrderResponse>>, Box<dyn std::error::Error>> {"
+            ") -> Result<std::collections::HashMap<Uuid, Vec<WorkOrderResponse>>, Box<dyn std::error::Error + Send + Sync>> {"
         ),
         "array LIST adapter must group into a Vec map:\n{customer_adapter}"
     );
@@ -355,7 +356,7 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
         read(&output.join("src/domain/shop/invoice/cornucopia_repository_impl.rs"));
     assert!(
         invoice_adapter.contains(
-            ") -> Result<Option<CustomerCombinedResponse>, Box<dyn std::error::Error>> {"
+            ") -> Result<Option<CustomerCombinedResponse>, Box<dyn std::error::Error + Send + Sync>> {"
         ),
         "dot GET adapter returns the combined response:\n{invoice_adapter}"
     );
@@ -374,7 +375,7 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
     );
     assert!(
         invoice_adapter.contains(
-            ") -> Result<std::collections::HashMap<Uuid, CustomerCombinedResponse>, Box<dyn std::error::Error>> {"
+            ") -> Result<std::collections::HashMap<Uuid, CustomerCombinedResponse>, Box<dyn std::error::Error + Send + Sync>> {"
         ),
         "the dot batch returns the combined map (no Option — the SeaORM \
          dot batch contract):\n{invoice_adapter}"

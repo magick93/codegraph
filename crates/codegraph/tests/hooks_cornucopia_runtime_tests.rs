@@ -296,7 +296,7 @@ where
         &self,
         tx: &C,
         cmd: CreateRsvpRequest,
-    ) -> Result<Uuid, Box<dyn std::error::Error>> {
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
         let id = Uuid::new_v4();
         tx.execute(
             "INSERT INTO rsvp.rsvp (id, status, ts) VALUES ($1, $2, $3)",
@@ -311,7 +311,7 @@ where
         _db: &C,
         _id: Uuid,
         _include_deleted: bool,
-    ) -> Result<Option<RsvpResponse>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<RsvpResponse>, Box<dyn std::error::Error + Send + Sync>> {
         Ok(None)
     }
 
@@ -320,7 +320,7 @@ where
         _tx: &C,
         _id: Uuid,
         _cmd: UpdateRsvpRequest,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
 
@@ -328,7 +328,7 @@ where
         &self,
         _tx: &C,
         _id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
 
@@ -339,7 +339,7 @@ where
         _page_size: u64,
         _filters: &HashMap<String, String>,
         _include_deleted: bool,
-    ) -> Result<(Vec<RsvpResponse>, u64), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<RsvpResponse>, u64), Box<dyn std::error::Error + Send + Sync>> {
         Ok((Vec::new(), 0))
     }
 }

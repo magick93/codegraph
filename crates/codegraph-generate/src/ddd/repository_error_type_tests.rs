@@ -31,13 +31,15 @@
 //!   (a `serde_json::Error`) in the as-json `find_tree` arm: a type error no
 //!   in-repo cornucopia fixture reached.
 //! - [`as_json_find_tree_maps_the_serialization_error_through_its_own_closure`]
-//!   — that arm's serialization error gets its own Send + Sync mapping.
+//!   — that arm's serialization error gets its own Send + Sync mapping
+//!   (`SERIALIZATION_ERROR_MAP`, spelled once in the emitter and read back
+//!   by the pin).
 //!
 //! `templates/ddd/errors.tera` deliberately keeps BOTH
 //! `From<Box<dyn std::error::Error>>` impls; it is not part of the sweep.
 
 use crate::code_writer::CodeWriter;
-use crate::ddd::cornucopia_repo::emit_adapter_tree;
+use crate::ddd::cornucopia_repo::{SERIALIZATION_ERROR_MAP, emit_adapter_tree};
 use crate::ddd::repository_emitter::{EntityTree, TreeIncludeResolved};
 
 /// The error trait object every repository-plane signature and ascription
@@ -224,8 +226,13 @@ fn as_json_find_tree_maps_the_serialization_error_through_its_own_closure() {
     );
     assert_eq!(
         serialization.trim(),
-        "let mut val = serde_json::to_value(resp).map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;",
+        format!("let mut val = serde_json::to_value(resp).map_err({SERIALIZATION_ERROR_MAP})?;"),
         "the serialization error maps through its own Send + Sync closure"
+    );
+    assert_eq!(
+        SERIALIZATION_ERROR_MAP,
+        format!("|e| -> Box<{ERROR_TRAIT_OBJECT}{SEND_SYNC_BOUND}> {{ Box::new(e) }}"),
+        "the serialization mapping boxes the TYPED error (#810) in a Send + Sync box (#813)"
     );
     assert!(
         out.contains(&format!(

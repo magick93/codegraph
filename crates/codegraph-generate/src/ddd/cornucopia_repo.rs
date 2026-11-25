@@ -182,6 +182,17 @@ fn query_module(tree: &EntityTree) -> String {
     tree.table_name.clone()
 }
 
+/// The as-json `find_tree` arm's serialization-error mapping (issue #813).
+///
+/// `db_err` takes the DATABASE error type (`tokio_postgres::Error`), so it
+/// cannot map `serde_json::to_value`'s `serde_json::Error` — PR #811's
+/// blanket replacement attached it there anyway, a type error no in-repo
+/// cornucopia fixture reaches. This closure is that arm's own mapping: the
+/// same box as the rest of the plane (`Send + Sync`, or the tree read's
+/// future is `!Send`) holding the typed error (the #810 intent).
+pub(super) const SERIALIZATION_ERROR_MAP: &str =
+    "|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) }";
+
 /// Emit the complete adapter file for one entity.
 fn emit_adapter(
     tree: &EntityTree,
@@ -252,7 +263,7 @@ fn emit_adapter(
     wln!(
         code,
         "/// Preserve a database error's source detail (issue #810).\n\
-         fn db_err(e: tokio_postgres::Error) -> Box<dyn std::error::Error> {{\n\
+         fn db_err(e: tokio_postgres::Error) -> Box<dyn std::error::Error + Send + Sync> {{\n\
          \x20   Box::new(e)\n\
          }}\n"
     );
@@ -358,7 +369,10 @@ fn emit_adapter_create(tree: &EntityTree, code: &mut CodeWriter) {
     if tree.parent_ref.is_some() {
         wln!(code, "        parent_id: Uuid,");
     }
-    wln!(code, "    ) -> Result<Uuid, Box<dyn std::error::Error>> {{");
+    wln!(
+        code,
+        "    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {{"
+    );
 
     // Bind args: data columns in tree order; child entities append the parent
     // FK bind at the end (the SQL's trailing :parent_id param).
@@ -507,7 +521,7 @@ fn emit_adapter_find_by_id(tree: &EntityTree, code: &mut CodeWriter) {
     }
     wln!(
         code,
-        "    ) -> Result<Option<{entity_name}Response>, Box<dyn std::error::Error>> {{"
+        "    ) -> Result<Option<{entity_name}Response>, Box<dyn std::error::Error + Send + Sync>> {{"
     );
     if tree.is_auditable {
         wln!(code, "        let response = if include_deleted {{");
@@ -580,7 +594,7 @@ fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut CodeWriter) {
     }
     wln!(
         code,
-        "    ) -> Result<Option<{entity_name}Response>, Box<dyn std::error::Error>> {{"
+        "    ) -> Result<Option<{entity_name}Response>, Box<dyn std::error::Error + Send + Sync>> {{"
     );
     if tree.is_auditable {
         wln!(code, "        let response = if include_deleted {{");
@@ -646,7 +660,7 @@ fn emit_adapter_update(tree: &EntityTree, code: &mut CodeWriter) {
          \x20       tx: &C,\n\
          \x20       id: Uuid,\n\
          \x20       cmd: Update{entity_name}Request,\n\
-         \x20   ) -> Result<(), Box<dyn std::error::Error>> {{"
+         \x20   ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {{"
     );
     let binds = update_bind_args(tree);
     wln!(
@@ -708,7 +722,7 @@ fn emit_adapter_delete(tree: &EntityTree, code: &mut CodeWriter) {
          \x20       &self,\n\
          \x20       tx: &C,\n\
          \x20       id: Uuid,\n\
-         \x20   ) -> Result<(), Box<dyn std::error::Error>> {{"
+         \x20   ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {{"
     );
     // Surface the rows-affected count: under RLS a cross-tenant (or already
     // deleted) row matches zero rows, which the handler maps to NotFound
@@ -748,7 +762,7 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut CodeWriter, ux_sort: bool) {
     }
     wln!(
         code,
-        "    ) -> Result<(Vec<{entity_name}Response>, u64), Box<dyn std::error::Error>> {{"
+        "    ) -> Result<(Vec<{entity_name}Response>, u64), Box<dyn std::error::Error + Send + Sync>> {{"
     );
     if ux_sort {
         // Trait parity only: the static cornucopia list SQL cannot take a
@@ -953,7 +967,7 @@ fn emit_adapter_search(tree: &EntityTree, code: &mut CodeWriter) {
     }
     wln!(
         code,
-        "    ) -> Result<(Vec<Uuid>, u64), Box<dyn std::error::Error>> {{"
+        "    ) -> Result<(Vec<Uuid>, u64), Box<dyn std::error::Error + Send + Sync>> {{"
     );
     wln!(
         code,
@@ -1020,7 +1034,7 @@ fn emit_adapter_semantic_search(tree: &EntityTree, code: &mut CodeWriter) {
     }
     wln!(
         code,
-        "    ) -> Result<Vec<Uuid>, Box<dyn std::error::Error>> {{"
+        "    ) -> Result<Vec<Uuid>, Box<dyn std::error::Error + Send + Sync>> {{"
     );
     wln!(code, "        let limit_i = limit as i64;");
     wln!(
@@ -1070,7 +1084,7 @@ pub(super) fn emit_adapter_tree(tree: &EntityTree, code: &mut CodeWriter) {
          \x20       db: &C,\n\
          \x20       root_id: Uuid,\n\
          \x20       max_depth: Option<i32>,\n\
-         \x20   ) -> Result<Vec<{ret}>, Box<dyn std::error::Error>> {{"
+         \x20   ) -> Result<Vec<{ret}>, Box<dyn std::error::Error + Send + Sync>> {{"
     );
     wln!(
         code,
@@ -1111,7 +1125,7 @@ pub(super) fn emit_adapter_tree(tree: &EntityTree, code: &mut CodeWriter) {
     if as_json {
         wln!(
             code,
-            "            let mut val = serde_json::to_value(resp).map_err(db_err)?;"
+            "            let mut val = serde_json::to_value(resp).map_err({SERIALIZATION_ERROR_MAP})?;"
         );
         for inc in &tree.tree_include {
             wln!(
@@ -1208,13 +1222,13 @@ fn emit_adapter_design_query(
     if finder.returns_many {
         wln!(
             code,
-            "    ) -> Result<Vec<{}>, Box<dyn std::error::Error>> {{",
+            "    ) -> Result<Vec<{}>, Box<dyn std::error::Error + Send + Sync>> {{",
             finder.return_rust_type
         );
     } else {
         wln!(
             code,
-            "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+            "    ) -> Result<Option<{}>, Box<dyn std::error::Error + Send + Sync>> {{",
             finder.return_rust_type
         );
     }
@@ -1355,13 +1369,13 @@ fn emit_adapter_design_finder(
     if finder.returns_many {
         wln!(
             code,
-            "    ) -> Result<Vec<{}>, Box<dyn std::error::Error>> {{",
+            "    ) -> Result<Vec<{}>, Box<dyn std::error::Error + Send + Sync>> {{",
             finder.return_rust_type
         );
     } else {
         wln!(
             code,
-            "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+            "    ) -> Result<Option<{}>, Box<dyn std::error::Error + Send + Sync>> {{",
             finder.return_rust_type
         );
     }

@@ -182,7 +182,7 @@ async fn library_query_operations_lower_to_parameterized_repository_methods() {
         .or_else(|| impl_src.split("async fn longest_runtime(").nth(1))
         .expect("the single-row query is emitted");
     assert!(
-        single.contains("Result<Option<MovieResponse>, Box<dyn std::error::Error>>"),
+        single.contains("Result<Option<MovieResponse>, Box<dyn std::error::Error + Send + Sync>>"),
         "0..1 returns an optional: {single}"
     );
     assert!(single.contains("query.one(db)"), "{single}");

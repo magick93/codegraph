@@ -101,7 +101,10 @@ impl RepositoryImplEmitter {
         if tree.parent_ref.is_some() {
             wln!(code, "        parent_id: Uuid,");
         }
-        wln!(code, "    ) -> Result<Uuid, Box<dyn std::error::Error>> {{");
+        wln!(
+            code,
+            "    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {{"
+        );
         wln!(code, "        let id = Uuid::new_v4();");
         wln!(code);
         code.push_str(body.as_str());
@@ -354,7 +357,7 @@ impl RepositoryImplEmitter {
         }
         wln!(
             code,
-            "    ) -> Result<Option<{}Response>, Box<dyn std::error::Error>> {{",
+            "    ) -> Result<Option<{}Response>, Box<dyn std::error::Error + Send + Sync>> {{",
             tree.entity_name
         );
         if tree.is_auditable {
@@ -427,7 +430,7 @@ impl RepositoryImplEmitter {
         }
         wln!(
             code,
-            "    ) -> Result<Option<{}Response>, Box<dyn std::error::Error>> {{",
+            "    ) -> Result<Option<{}Response>, Box<dyn std::error::Error + Send + Sync>> {{",
             tree.entity_name
         );
         if tree.is_auditable {
@@ -516,7 +519,10 @@ impl RepositoryImplEmitter {
             "        {cmd_ident}: Update{}Request,",
             tree.entity_name
         );
-        wln!(code, "    ) -> Result<(), Box<dyn std::error::Error>> {{");
+        wln!(
+            code,
+            "    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {{"
+        );
         code.push_str(body.as_str());
         wln!(code);
         wln!(code, "        Ok(())");
@@ -807,7 +813,10 @@ impl RepositoryImplEmitter {
         wln!(code, "        &self,");
         wln!(code, "        tx: &DatabaseTransaction,");
         wln!(code, "        id: Uuid,");
-        wln!(code, "    ) -> Result<(), Box<dyn std::error::Error>> {{");
+        wln!(
+            code,
+            "    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {{"
+        );
         if tree.is_auditable {
             wln!(
                 code,
@@ -828,7 +837,7 @@ impl RepositoryImplEmitter {
             wln!(code, "            .await?");
             wln!(
                 code,
-                "            .ok_or_else(|| Box::<dyn std::error::Error>::from(\"Entity not found or already deleted\"))?;"
+                "            .ok_or_else(|| Box::<dyn std::error::Error + Send + Sync>::from(\"Entity not found or already deleted\"))?;"
             );
             wln!(
                 code,

@@ -325,7 +325,7 @@ fn emit_include_adapter_scalar(inc: &IncludeAdapterPlan<'_>, qmod: &str, code: &
          \x20       &self,\n\
          \x20       db: &C,\n\
          \x20       source_id: Uuid,\n\
-         \x20   ) -> Result<Option<{resp}>, Box<dyn std::error::Error>> {{",
+         \x20   ) -> Result<Option<{resp}>, Box<dyn std::error::Error + Send + Sync>> {{",
         inc.fetch_method
     );
     wln!(
@@ -356,7 +356,7 @@ fn emit_include_adapter_scalar(inc: &IncludeAdapterPlan<'_>, qmod: &str, code: &
          \x20       &self,\n\
          \x20       db: &C,\n\
          \x20       source_ids: &[Uuid],\n\
-         \x20   ) -> Result<std::collections::HashMap<Uuid, Option<{resp}>>, Box<dyn std::error::Error>> {{",
+         \x20   ) -> Result<std::collections::HashMap<Uuid, Option<{resp}>>, Box<dyn std::error::Error + Send + Sync>> {{",
         inc.batch_fetch_method
     );
     wln!(
@@ -400,7 +400,7 @@ fn emit_include_adapter_array(inc: &IncludeAdapterPlan<'_>, qmod: &str, code: &m
          \x20       &self,\n\
          \x20       db: &C,\n\
          \x20       source_id: Uuid,\n\
-         \x20   ) -> Result<Vec<{resp}>, Box<dyn std::error::Error>> {{",
+         \x20   ) -> Result<Vec<{resp}>, Box<dyn std::error::Error + Send + Sync>> {{",
         inc.fetch_method
     );
     wln!(
@@ -434,7 +434,7 @@ fn emit_include_adapter_array(inc: &IncludeAdapterPlan<'_>, qmod: &str, code: &m
          \x20       &self,\n\
          \x20       db: &C,\n\
          \x20       source_ids: &[Uuid],\n\
-         \x20   ) -> Result<std::collections::HashMap<Uuid, Vec<{resp}>>, Box<dyn std::error::Error>> {{",
+         \x20   ) -> Result<std::collections::HashMap<Uuid, Vec<{resp}>>, Box<dyn std::error::Error + Send + Sync>> {{",
         inc.batch_fetch_method
     );
     wln!(
@@ -511,7 +511,7 @@ fn emit_include_adapter_dot(inc: &IncludeAdapterPlan<'_>, qmod: &str, code: &mut
          \x20       &self,\n\
          \x20       db: &C,\n\
          \x20       source_id: Uuid,\n\
-         \x20   ) -> Result<Option<{combined}>, Box<dyn std::error::Error>> {{",
+         \x20   ) -> Result<Option<{combined}>, Box<dyn std::error::Error + Send + Sync>> {{",
         inc.fetch_method
     );
     wln!(
@@ -549,7 +549,7 @@ fn emit_include_adapter_dot(inc: &IncludeAdapterPlan<'_>, qmod: &str, code: &mut
          \x20       &self,\n\
          \x20       db: &C,\n\
          \x20       source_ids: &[Uuid],\n\
-         \x20   ) -> Result<std::collections::HashMap<Uuid, {combined}>, Box<dyn std::error::Error>> {{",
+         \x20   ) -> Result<std::collections::HashMap<Uuid, {combined}>, Box<dyn std::error::Error + Send + Sync>> {{",
         inc.batch_fetch_method
     );
     wln!(
@@ -745,7 +745,7 @@ mod include_adapter_tests {
         );
         assert!(
             out.contains(
-                "Result<std::collections::HashMap<Uuid, Option<PersonResponse>>, Box<dyn std::error::Error>>"
+                "Result<std::collections::HashMap<Uuid, Option<PersonResponse>>, Box<dyn std::error::Error + Send + Sync>>"
             ),
             "{out}"
         );
@@ -823,7 +823,9 @@ mod include_adapter_tests {
             "{out}"
         );
         assert!(
-            out.contains(") -> Result<Vec<DeploymentResponse>, Box<dyn std::error::Error>> {"),
+            out.contains(
+                ") -> Result<Vec<DeploymentResponse>, Box<dyn std::error::Error + Send + Sync>> {"
+            ),
             "{out}"
         );
         assert!(
@@ -833,7 +835,7 @@ mod include_adapter_tests {
         assert!(out.contains("out.push(resp);"), "{out}");
         assert!(
             out.contains(
-                ") -> Result<std::collections::HashMap<Uuid, Vec<DeploymentResponse>>, Box<dyn std::error::Error>> {"
+                ") -> Result<std::collections::HashMap<Uuid, Vec<DeploymentResponse>>, Box<dyn std::error::Error + Send + Sync>> {"
             ),
             "{out}"
         );
@@ -893,7 +895,7 @@ mod include_adapter_tests {
 
         assert!(
             out.contains(
-                ") -> Result<Option<CustomerCombinedResponse>, Box<dyn std::error::Error>> {"
+                ") -> Result<Option<CustomerCombinedResponse>, Box<dyn std::error::Error + Send + Sync>> {"
             ),
             "{out}"
         );
@@ -925,7 +927,7 @@ mod include_adapter_tests {
         // seeded from the intermediate batch and filled by SOURCE id.
         assert!(
             out.contains(
-                ") -> Result<std::collections::HashMap<Uuid, CustomerCombinedResponse>, Box<dyn std::error::Error>> {"
+                ") -> Result<std::collections::HashMap<Uuid, CustomerCombinedResponse>, Box<dyn std::error::Error + Send + Sync>> {"
             ),
             "{out}"
         );
