@@ -133,8 +133,13 @@ pub async fn declared_error_defs(db: &dyn GraphQuerier, domain: &str) -> Result<
     // Variants the template always emits itself — graph-seeded built-ins
     // (e.g. domain="common" Conflict/NotFound from the metamodel ingest)
     // must not duplicate them (E0428).
-    const TEMPLATE_BUILTIN_VARIANTS: [&str; 4] =
-        ["Conflict", "NotFound", "Forbidden", "InternalError"];
+    const TEMPLATE_BUILTIN_VARIANTS: [&str; 5] = [
+        "Conflict",
+        "NotFound",
+        "Forbidden",
+        "Unprocessable",
+        "InternalError",
+    ];
     let mut domain_errors: Vec<ErrorDef> = all_errors
         .iter()
         .filter(|e| e.domain.as_deref() == Some(domain) || e.domain.as_deref() == Some("common"))

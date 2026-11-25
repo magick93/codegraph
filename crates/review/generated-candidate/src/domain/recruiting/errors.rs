@@ -12,6 +12,12 @@ pub enum RecruitingError {
     NotFound,
     #[error("{0}")]
     Forbidden(String),
+    /// A database integrity/validation refusal — FK, not-null and check
+    /// constraint violations (SQLSTATE 23503/23502/23514) lower here so the
+    /// client gets 422 with the constraint named, never an opaque 500
+    /// (issue #828).
+    #[error("{0}")]
+    Unprocessable(String),
     #[error("{0}")]
     InternalError(String),
 }
@@ -23,6 +29,7 @@ impl RecruitingError {
             Self::Conflict => "CONFLICT",
             Self::NotFound => "NOT_FOUND",
             Self::Forbidden(_) => "FORBIDDEN",
+            Self::Unprocessable(_) => "UNPROCESSABLE_ENTITY",
             Self::InternalError(_) => "INTERNAL_ERROR",
         }
     }
@@ -33,36 +40,36 @@ impl RecruitingError {
             Self::Conflict => StatusCode::CONFLICT,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
+            Self::Unprocessable(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
-    /// Classify a repository error surfaced inside a command/query (#169).
-    /// RLS denials raised by the generated policies carry machine-readable
-    /// payloads: P0403 errors embed an INSUFFICIENT_SCOPE / ROLE_FORBIDDEN
-    /// JSON payload; org-isolation write violations surface as Postgres'
-    /// canonical "violates row-level security policy" message. Both mean the
-    /// caller is not permitted the operation → HTTP 403. Everything else is
-    /// an internal error.
+    /// Classify a repository error surfaced inside a command/query (#169,
+    /// #828).
     ///
-    /// The HTTP envelope stays generic, but the log carries the FULL detail
-    /// (issue #810): `tokio-postgres` renders a server error as the bare
-    /// string "db error" — the SQLSTATE, message, detail and hint live on
-    /// the error's source, reachable only through its Debug form.
-    pub fn from_repo_err(e: impl std::fmt::Display + std::fmt::Debug) -> Self {
-        tracing::error!(
-            error = %e,
-            error_debug = ?e,
-            "database/repository error mapped to a domain error"
-        );
-        let msg = e.to_string();
-        if msg.contains("INSUFFICIENT_SCOPE")
-            || msg.contains("ROLE_FORBIDDEN")
-            || msg.contains("violates row-level security policy")
-        {
-            Self::Forbidden(msg)
-        } else {
-            Self::InternalError(msg)
+    /// Classification is by SQLSTATE, never by `Display` text: on
+    /// `tokio-postgres` >= 0.7.15 a server error renders as the bare string
+    /// `db error` (the typed `DbError` lives in `source()`), so every
+    /// string-based classifier on the workers slice was dead — a refused
+    /// INSERT collapsed to `500 "db error"` and cost a multi-day consumer
+    /// investigation (codegraph#810). `sqlx`/SeaORM happens to carry the
+    /// message in `Display`, which is why the monolith only *looked* better;
+    /// that difference is deliberately not the contract.
+    ///
+    /// The HTTP envelope stays generic for 5xx, but the log carries the full
+    /// diagnosis (SQLSTATE, message, detail, hint, constraint).
+    ///
+    /// The classifier itself lives in the app-level error plane
+    /// (`crate::error::classify_db_error`) so EVERY consumer — this enum,
+    /// the tree handler, the media handlers — reaches ONE derivation.
+    pub fn from_repo_err(e: impl std::fmt::Display + std::fmt::Debug + 'static) -> Self {
+        use crate::error::DbErrorClass;
+        match crate::error::classify_db_error(&e) {
+            DbErrorClass::Forbidden(message) => Self::Forbidden(message),
+            DbErrorClass::Conflict(_) => Self::Conflict,
+            DbErrorClass::Unprocessable(message) => Self::Unprocessable(message),
+            DbErrorClass::Internal(message) => Self::InternalError(message),
         }
     }
 }
@@ -73,22 +80,19 @@ impl RecruitingError {
 #[cfg(not(target_arch = "wasm32"))]
 impl From<sea_orm::DbErr> for RecruitingError {
     fn from(e: sea_orm::DbErr) -> Self {
-        tracing::error!(error = %e, error_debug = ?e, "database error");
-        Self::InternalError(e.to_string())
+        Self::from_repo_err(e)
     }
 }
 
 impl From<Box<dyn std::error::Error>> for RecruitingError {
     fn from(e: Box<dyn std::error::Error>) -> Self {
-        tracing::error!(error = %e, error_debug = ?e, "database error");
-        Self::InternalError(e.to_string())
+        Self::from_repo_err(e)
     }
 }
 
 impl From<Box<dyn std::error::Error + Send + Sync>> for RecruitingError {
     fn from(e: Box<dyn std::error::Error + Send + Sync>) -> Self {
-        tracing::error!(error = %e, error_debug = ?e, "database error");
-        Self::InternalError(e.to_string())
+        Self::from_repo_err(e)
     }
 }
 

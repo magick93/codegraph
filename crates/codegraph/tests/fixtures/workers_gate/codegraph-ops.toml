@@ -60,17 +60,16 @@ api_version = "v1"
 
 [hurl]
 dir = "generated-workers/hurl"
-# Fixture-specific skips ONLY: these two generated files reference keys the
-# workers suite does not provision (it passes exactly base_url + api_key —
-# no api_key_limited / api_key_b). The scope-denial and cross-tenant 403/404
-# surfaces they pin are covered by the monolith api suite (hr-specs
-# precedent); 08_rls_isolation is skipped by the harness's default list and
-# intentionally NOT repeated here. The fixture's hand-authored
-# 90_workflow_transition_409.hurl is copied into the generated hurl dir by
-# the post_generate hook below.
-skip = ["03_scope_denial_403.hurl", "04_cross_tenant_404.hurl"]
+# No fixture-specific skips: the workers suite provisions the same key set the
+# monolith api suite does, so the scope-denial (P0403 → 403) and cross-tenant
+# (404) contracts run through the gateway too (issue #828 — the class that let
+# a scope denial read as an opaque 500, codegraph#810). 08_rls_isolation stays
+# skipped by the harness's default list and is intentionally NOT repeated here.
+skip = []
 org_id_a = "00000000-0000-0000-0000-000000000001"
 org_id_b = "00000000-0000-0000-0000-000000000002"
+# The read-only key the scope-denial contract writes with (`api_key_limited`).
+limited_key = true
 
 # The GATE wipes the generated hurl dir with the rest of the generated tree
 # (issue #694: a contract left by an older generation is still discovered by

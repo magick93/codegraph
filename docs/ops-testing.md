@@ -138,6 +138,16 @@ section seeded from the run (`domains`, and optional `profile`/`output_dir`/
 `binary_prefix`/`gateway_port`/`worker_base_port`); absent, the suite keeps
 the historical hr-specs defaults.
 
+The workers suite provisions the SAME extra API keys as the monolith api
+suite — the main Bearer key, the Org B key when `hurl.org_id_b` is set, and
+the read-only key when `hurl.limited_key = true` — and passes all three to
+hurl as `api_key`, `api_key_b`, `api_key_limited`. The scope-denial
+(`03_scope_denial_403.hurl`: read-only write → 403 `INSUFFICIENT_SCOPE`) and
+cross-tenant (`04_cross_tenant_404.hurl`) contracts therefore RUN on the
+workers slice (issue #828; a consumer fixture must not skip them). The
+gateway smoke also repeat-creates the smoke entity 50× and fails on any 5xx
+or transport error — the intermittent-create class can never pass silently.
+
 ### smoke
 
 ```

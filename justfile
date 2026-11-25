@@ -51,7 +51,7 @@ audit:
 
 # CI test-ops-integration job: the ignored gates (service_ops_compile_gate
 # is wired into CI by issue #629's pin work — mirrored here ahead of it).
-ops: ops-db-integration ops-generator-tests ops-wrapper-compile ops-hooks-runtime ops-wasm-compile ops-service-ops-compile ops-service-ops-hurl ops-invariants-live ops-boot-migration ops-webhook-pgmq
+ops: ops-db-integration ops-generator-tests ops-wrapper-compile ops-hooks-runtime ops-error-mapping ops-wasm-compile ops-service-ops-compile ops-service-ops-hurl ops-invariants-live ops-boot-migration ops-webhook-pgmq
 
 ops-db-integration:
     #!/usr/bin/env bash
@@ -94,6 +94,16 @@ ops-hooks-runtime:
         exit 0
     fi
     cargo test -p codegraph --test hooks_cornucopia_runtime_tests -- --ignored --nocapture
+
+ops-error-mapping:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DB_URL="${DATABASE_URL:-postgres://postgres:postgres@localhost:5432/postgres}"
+    if ! command -v psql >/dev/null 2>&1 || ! psql "$DB_URL" -c 'select 1' >/dev/null 2>&1; then
+        echo "WARN ops — Postgres unreachable ($DB_URL); skipping error_mapping_runtime_tests"
+        exit 0
+    fi
+    cargo test -p codegraph --test error_mapping_runtime_tests -- --ignored --nocapture
 
 ops-wasm-compile:
     #!/usr/bin/env bash

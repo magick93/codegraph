@@ -161,9 +161,11 @@ impl GenderCodeListCommandHandler {
 
         let id = self.repo.create(&tx, cmd).await
             .map_err(|e| {
-                if e.to_string().contains("duplicate key") || e.to_string().contains("UNIQUE constraint") {
-                    CommonError::Conflict
-                } else if e.to_string().contains("not found") {
+                // 23505 / 23503 / P0403 are classified by SQLSTATE inside
+                // `from_repo_err` (issue #828) — never by Display text: a
+                // tokio-postgres server error renders as the bare "db error".
+                let message = e.to_string();
+                if message == "Entity not found or already deleted" || message == "not found" {
                     CommonError::NotFound
                 } else {
                     CommonError::from_repo_err(e)
@@ -193,7 +195,8 @@ impl GenderCodeListCommandHandler {
 
         self.repo.update(&tx, id, cmd).await
             .map_err(|e| {
-                if e.to_string().contains("not found") {
+                let message = e.to_string();
+                if message == "Entity not found or already deleted" || message == "not found" {
                     CommonError::NotFound
                 } else {
                     CommonError::from_repo_err(e)
@@ -222,7 +225,8 @@ impl GenderCodeListCommandHandler {
 
         self.repo.delete(&tx, id).await
             .map_err(|e| {
-                if e.to_string().contains("not found") {
+                let message = e.to_string();
+                if message == "Entity not found or already deleted" || message == "not found" {
                     CommonError::NotFound
                 } else {
                     CommonError::from_repo_err(e)

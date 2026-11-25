@@ -728,6 +728,11 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
                 "worker_name": &ctx.gateway_name,
                 "name": "gateway",
                 "observability": gateway_observability,
+                // The gateway carries no tokio-postgres/deadpool/sea-orm
+                // dependencies, so the app error plane skips the SQLSTATE
+                // classifier there (issue #828). The catalog handlers only
+                // use `AppError`.
+                "is_gateway": true,
             });
             let mut gateway_project = project.clone();
             gateway_project.identity.hooks_api_crate = String::new();
