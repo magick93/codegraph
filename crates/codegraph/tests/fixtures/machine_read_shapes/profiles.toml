@@ -1,0 +1,86 @@
+# Issue #824 repro fixture profiles.
+#
+# `default` — monolith + cornucopia: the topology that MOUNTS the machine
+#             read-model route, so the `…Code` shape's handler module is
+#             routed and registered while the loader-less shape's absence
+#             shows on every surface (module, mod line, router, OpenAPI,
+#             API contract).
+#
+# `workers` — the reporting consumer's topology (workers + cornucopia, the
+#             only provider the topology accepts). The route is
+#             monolith-only, but the loader rule is topology-independent:
+#             the loader-less shape emits no module here either — the exact
+#             `application_machine.rs` that failed the consumer's
+#             `cargo check`.
+
+[profiles.default.meta]
+name = "default"
+version = "1.0.0"
+description = "Machine read-model shapes repro — monolith cornucopia"
+app_name = "read-shapes"
+generator_name = "read-shapes-graph"
+api_title = "Machine Read Shapes API"
+domain_types_crate = "read_shapes_domain_types"
+domain_types_base = "domain-types"
+codegraph_workflow_base = "../../../../../crates/codegraph-workflow"
+type_contracts_base = "../../../../../crates/codegraph-type-contracts"
+
+[profiles.default.features]
+auth = true
+pagination = true
+validation_level = "strict"
+database_target = "postgres"
+persistence_provider = "cornucopia"
+deployment_topology = "monolith"
+dependency_strategy = "path"
+
+[profiles.default.api]
+generators = [
+    "ddl", "sea_orm_entity", "cornucopia_queries", "cornucopia_repo",
+    "dto", "repository", "command", "query", "handler", "workflow_action",
+    "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
+    "errors", "router", "links",
+    "cornucopia_config", "platform_schema", "workflow_seed", "openapi",
+]
+output = "generated/"
+scripts.post_gen = []
+
+[profiles.default.cli]
+generators = ["cli_command"]
+output = "generated/"
+scripts.post_gen = []
+
+[profiles.workers.meta]
+name = "workers"
+version = "1.0.0"
+description = "Machine read-model shapes repro — workers cornucopia"
+app_name = "read-shapes-workers"
+generator_name = "read-shapes-graph"
+api_title = "Machine Read Shapes Workers API"
+domain_types_crate = "read_shapes_workers_domain_types"
+domain_types_base = "read-shapes-domain-types"
+codegraph_workflow_base = "../../../../../crates/codegraph-workflow"
+type_contracts_base = "../../../../../crates/codegraph-type-contracts"
+
+[profiles.workers.features]
+auth = true
+pagination = true
+validation_level = "strict"
+database_target = "postgres"
+persistence_provider = "cornucopia"
+deployment_topology = "workers"
+dependency_strategy = "path"
+
+[profiles.workers.api]
+generators = [
+    "ddl", "sea_orm_entity", "cornucopia_queries", "cornucopia_repo",
+    "dto", "repository", "command", "query", "event", "handler",
+    "workflow_action",
+    "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
+    "errors", "router", "links",
+    "cornucopia_config", "worker_scaffold", "basejump_setup", "pgmq_setup",
+    "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "report_views", "openapi",
+]
+output = "generated-workers/"
+scripts.post_gen = []
