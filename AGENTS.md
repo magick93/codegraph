@@ -1023,12 +1023,38 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   exactly one machine-bearing design (typed lifecycles) — grant `when`s
   are the unconditional-availability path.
 - **Ask 1 diagnostics (WARN, transitional)**:
-  `dead_surface_warnings` (protected / entity-unbound ops) +
+  `dead_surface_warnings` (entity-unbound ops — service ops binding no
+  entity, child ops whose class resolves to no schema) +
   `ifml_dead_triggers` (`.ifml` action names binding ci-case-insensitive
-  to a dead op: "action 'X' targets op 'Y' which emits no API surface;
-  the trigger is dead") ride the run-path validation pass
-  (`validate.rs::check_service_op_surface`, Warning severity) and doctor
-  (`check_ddd_files` warns on protected ops from the compiled model).
+  to a dead op: "action 'X' targets op 'Service::op' which emits no API
+  surface (<reason>); the trigger is dead") ride the run-path validation
+  pass (`validate.rs::check_service_op_surface`, Warning severity).
+  **Issue #619 — a `protected` op is warned about ONLY when an `.ifml`
+  action binds it, and then exactly once** (by `ifml_dead_triggers`,
+  naming the action). Sculptor `protected` is a valid, intentional
+  visibility, so an op no action binds is by design — no WARN, and no
+  INFO channel either. Before #619 `dead_surface_warnings` warned on
+  EVERY protected op (19 WARNs on a 10-domain consumer, ~9 actionable)
+  and a bound one was reported twice. The join is ONE function
+  (`service_ops::protected_binding` over `OpRef`s — service ops outrank
+  same-named child ops, which are action targets too: the IFML action
+  planner resolves against `routes_for_entity`, which carries child-op
+  routes), the line is ONE shape (`dead_trigger_message`), and the three
+  former unconditional sites are retired: the `dead_surface_warnings`
+  branches (service + child ops) and the generation-time
+  `child-op-protected` `warn_once` in `routes.rs`. Doctor parity without
+  the graph: `check_ddd_files` no longer warns on protected ops (the
+  entity-unbound class keeps its graph-free mirror WARN), and
+  `doctor_graph::report_protected_op_dead_triggers` joins the compiled
+  designs + flows the cross-surface gather already holds (the two artifact
+  sets upstream's `check_action_bindings` joins) and prints the run path's
+  line per bound protected op. The entity-unbound class is untouched — it
+  still warns from both checks when an action binds it. Gates:
+  `cargo test -p codegraph-generate --lib -- ddd::service_ops::dead_surface_tests`
+  (10) + `cargo test -p codegraph --test service_ops_tests -- protected_op
+  entity_unbound status_bypass` (4) + `--test init_tests -- protected` (2,
+  the doctor baseline-delta pair) + the in-crate
+  `doctor_graph::tests::protected_op_dead_triggers_join_compiled_designs_with_flows`.
 - **Ask 3 (WARN)**: `validate.rs::check_status_bypass` — an entity with a
   `domains.toml` workflow whose status field is not codelist-bound warns
   that scaffold CRUD bypasses the machine (typed lifecycles = pherolang
@@ -1606,11 +1632,13 @@ child plane — the cross-aggregate 501 seam retires FOR OPS THAT CARRY IT:
   `remove`→delete), a non-object parameter (a scalar cannot be bound; the
   child id rides the path), an `add` with a `when` guard (no record exists
   pre-add), and a `when` guard with no `read` plane all answer 501 naming
-  the fix. A child op whose class resolves to no schema, is `protected`, or
-  whose entity is NOT declared a nested child of that root
-  (domains.toml `role = "child"` + `parent` + `parent_ref`) emits NO route
-  and a WARN naming the modeling fix — never a top-level route that drops
-  the parent anchor. Contained children (mox `contains` ⇒ value object,
+  the fix. A child op whose class resolves to no schema, or whose entity
+  is NOT declared a nested child of that root (domains.toml `role = "child"`
+  + `parent` + `parent_ref`) emits NO route and a WARN naming the modeling
+  fix — never a top-level route that drops the parent anchor. A `protected`
+  child op emits no route and no WARN of its own (issue #619: it warns only
+  when an `.ifml` action binds it, through `ifml_dead_triggers`).
+  Contained children (mox `contains` ⇒ value object,
   upstream Rule 6 forbids a standalone repository) are out of scope by
   design.
 - **The retained cross-aggregate refusal** (an op WITHOUT `child_scope`

@@ -2834,3 +2834,185 @@ application Payroll {
         "config parent == the authored root must not warn: {quiet:?} vs baseline {baseline:?}"
     );
 }
+
+// ── Issue #619: doctor parity for the protected-op WARN ────────────────
+
+/// `cmd_doctor` over a mox + design (+ optional flow) fixture, with no
+/// profiles.toml / ops manifest — the one invocation shape the #619
+/// baseline-delta pins compare.
+fn doctor_over(
+    config: &Path,
+    mox: &Path,
+    ddd: &Path,
+    ifml: Option<&Path>,
+) -> codegraph::init::commands::DoctorSummary {
+    cmd_doctor(&DoctorArgs {
+        config: config.to_path_buf(),
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![mox.to_path_buf()],
+        rosetta_files: vec![],
+        ddd_files: vec![ddd.to_path_buf()],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: ifml.map(|p| vec![p.to_path_buf()]).unwrap_or_default(),
+        extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
+    })
+    .unwrap()
+}
+
+/// The #619 doctor fixture: a payroll domain whose service carries a
+/// (caller-chosen) `recordStatus` op beside a public, delegation-bound
+/// `approveRun`.
+fn protected_op_project(dir: &Path, record_status: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let mox = dir.join("payroll.mox");
+    fs::write(
+        &mox,
+        "package payroll\n\nclass PayRun {\n    String [1] reference\n    int sequence\n}\n",
+    )
+    .unwrap();
+    let config = dir.join("domains.toml");
+    fs::write(
+        &config,
+        "[defaults]\noperations = [\"create\", \"read\", \"update\", \"delete\", \"list\"]\n\n\
+         [domains.payroll]\nlabel = \"Payroll\"\nschema_dir = \"payroll\"\npostgres_schema = \"payroll\"\n",
+    )
+    .unwrap();
+    let ddd = dir.join("payroll.ddd");
+    fs::write(
+        &ddd,
+        format!(
+            r#"import "payroll.mox";
+
+application Payroll {{
+    base payroll
+    module ops {{
+        service PayRunService {{
+            inject PayRunRepository;
+            {record_status}
+            approveRun => PayRunRepository.save;
+        }}
+        entity PayRun repository PayRunRepository {{
+            findById;
+            findAll;
+            save;
+            delete;
+        }}
+    }}
+}}
+"#
+        ),
+    )
+    .unwrap();
+    (config, mox, ddd)
+}
+
+/// An `.ifml` flow whose one event fires the named action.
+fn flow_firing(dir: &Path, action: &str) -> PathBuf {
+    let ifml = dir.join("payroll.ifml");
+    fs::write(
+        &ifml,
+        format!(
+            r#"domain "payroll" {{ schema "payroll"; }}
+
+view "PayRunBoard" {{
+    label "Pay Run Board";
+
+    component "board" {{
+        type: details;
+        data: PayRun;
+        fields: [reference];
+
+        on fire -> action("{action}");
+    }}
+}}
+
+action "{action}" {{
+    target: PayRun;
+}}
+"#
+        ),
+    )
+    .unwrap();
+    ifml
+}
+
+/// (d1) Doctor used to warn on EVERY `protected` op (the unconditional Ask
+/// 1 WARN). A protected op no `.ifml` action binds is valid, intentional
+/// visibility: the protected design and its twin WITHOUT the op differ by
+/// zero warnings.
+#[test]
+fn doctor_is_silent_on_an_unbound_protected_service_op() {
+    let dir = TempDir::new().unwrap();
+    let protected = dir.path().join("protected");
+    let public = dir.path().join("twin");
+    fs::create_dir_all(&protected).unwrap();
+    fs::create_dir_all(&public).unwrap();
+
+    let (config, mox, ddd) = protected_op_project(
+        &protected,
+        "protected recordStatus => PayRunRepository.save;",
+    );
+    let summary = doctor_over(&config, &mox, &ddd, None);
+    assert_eq!(summary.hard_failures, 0, "{summary:?}");
+
+    // The twin: the same design minus the protected op line.
+    let (twin_config, twin_mox, twin_ddd) = protected_op_project(&public, "");
+    let twin = doctor_over(&twin_config, &twin_mox, &twin_ddd, None);
+    assert_eq!(twin.hard_failures, 0, "{twin:?}");
+    assert_eq!(
+        summary.soft_warnings, twin.soft_warnings,
+        "an unbound protected op is by design — zero warnings over its twin: \
+         {summary:?} vs {twin:?}"
+    );
+}
+
+/// (d2) A protected op an `.ifml` action binds contributes exactly ONE
+/// doctor warning — and the SAME design with an action that binds the
+/// public op instead contributes none. The binding is what warns, never
+/// the `protected` modifier on its own.
+#[test]
+fn doctor_warns_once_on_a_protected_op_an_ifml_action_binds() {
+    let dir = TempDir::new().unwrap();
+    let bound = dir.path().join("bound");
+    let other = dir.path().join("other");
+    fs::create_dir_all(&bound).unwrap();
+    fs::create_dir_all(&other).unwrap();
+
+    // Identical designs (one protected op, one public op); the flows
+    // differ only in which op their single action names.
+    let (config, mox, ddd) =
+        protected_op_project(&bound, "protected recordStatus => PayRunRepository.save;");
+    let bound_summary = doctor_over(
+        &config,
+        &mox,
+        &ddd,
+        Some(&flow_firing(&bound, "RecordStatus")),
+    );
+    assert_eq!(bound_summary.hard_failures, 0, "{bound_summary:?}");
+
+    let (config, mox, ddd) =
+        protected_op_project(&other, "protected recordStatus => PayRunRepository.save;");
+    let other_summary = doctor_over(
+        &config,
+        &mox,
+        &ddd,
+        Some(&flow_firing(&other, "ApproveRun")),
+    );
+    assert_eq!(other_summary.hard_failures, 0, "{other_summary:?}");
+    assert_eq!(
+        other_summary.soft_warnings,
+        bound_summary.soft_warnings - 1,
+        "the bound protected op must be the ONE warning the two runs differ by: \
+         {bound_summary:?} vs {other_summary:?}"
+    );
+    assert!(
+        bound_summary.soft_warnings > 0,
+        "the bound protected op must warn: {bound_summary:?}"
+    );
+}

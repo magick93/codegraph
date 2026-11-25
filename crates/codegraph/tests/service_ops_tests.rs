@@ -11,7 +11,9 @@
 //! - routes + handlers + authorize fns (capability / SoD / `when`) render
 //! - wired delegation legs (delete → command, findById → read) and the
 //!   501 seam naming the gap for everything else
-//! - `dead_surface_warnings` + the run-path validation WARNs (Ask 1, Ask 3)
+//! - `dead_surface_warnings` + the run-path validation WARNs (Ask 1, Ask 3):
+//!   a `protected` op warns only when an `.ifml` action binds it, exactly
+//!   once (issue #619); entity-unbound ops keep warning
 //! - no `.ddd` services ⇒ byte-identical router/handler (presence gating)
 
 #[path = "service_ops_fixture.rs"]
@@ -26,11 +28,11 @@ use tempfile::TempDir;
 use fixture::{
     DOMAINS_TOML, Fixture, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, RELEASE_DDD,
     guard_fixture_with_ambiguous_fk, guard_fixture_with_deep_path, guard_fixture_without_fk,
-    ingest, ingest_authored_boundary_graph, ingest_binding, ingest_child_ops, ingest_guard, read,
-    run_generation, run_generation_result, tempdir, write_binding_fixture,
-    write_binding_fixture_with, write_child_ops_fixture, write_child_ops_fixture_with,
-    write_child_ops_fixture_with_sources, write_fixture_in, write_guard_fixture,
-    write_mox_first_fixture_in,
+    ifml_with_action, ingest, ingest_authored_boundary_graph, ingest_binding, ingest_child_ops,
+    ingest_guard, ingest_ifml, read, run_generation, run_generation_result, tempdir,
+    write_binding_fixture, write_binding_fixture_with, write_child_ops_fixture,
+    write_child_ops_fixture_with, write_child_ops_fixture_with_sources, write_fixture_in,
+    write_guard_fixture, write_mox_first_fixture_in,
 };
 
 /// The first `HTTP <status>` after `needle` in a hurl file.
@@ -839,38 +841,180 @@ async fn unlowerable_body_constructs_fail_validation_naming_the_op() {
     );
 }
 
+// ── Ask 1 dead-surface diagnostics (issue #590, narrowed by #619) ──────
+//
+// A `protected` op is valid, intentional visibility (Sculptor: the op
+// stays off the public interface). It is warned about ONLY when an `.ifml`
+// action binds it — the model contradicts itself — and then exactly once,
+// by the binding-specific check, naming the action. Before #619 the
+// unconditional WARN fired for EVERY protected op.
+
+fn parse_config(fixture: &fixture::Fixture) -> codegraph_config::DomainConfig {
+    codegraph_config::config::parse_domain_config(&fixture.config).unwrap()
+}
+
+/// (a) An unbound protected op produces NO warning, from either check.
 #[tokio::test]
-async fn dead_surface_warnings_report_protected_and_unbound_ops() {
-    let fixture = write_fixture_in("service_ops_dead_surface", PAYROLL_DDD);
+async fn unbound_protected_op_warns_nowhere() {
+    let fixture = write_fixture_in("service_ops_protected_unbound", PAYROLL_DDD);
     let engine = ingest(&fixture).await;
-    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let config = parse_config(&fixture);
+
+    // The fixture really does carry a protected op.
+    let models = engine.get_ddd_models().await.unwrap();
+    assert!(
+        models
+            .iter()
+            .flat_map(|m| &m.services)
+            .flat_map(|s| &s.operations)
+            .any(|op| op.is_protected && op.name == "internalAdjust"),
+        "the fixture must carry the protected op"
+    );
+
     let warnings = codegraph_generate::ddd::service_ops::dead_surface_warnings(&engine, &config)
         .await
         .unwrap();
     assert!(
-        warnings
+        warnings.is_empty(),
+        "an unbound protected op is by design, not dead surface: {warnings:?}"
+    );
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    let mentions: Vec<_> = issues
+        .iter()
+        .filter(|i| i.message.contains("internalAdjust"))
+        .collect();
+    assert!(
+        mentions.is_empty(),
+        "no Ask 1 check may mention an unbound protected op: {issues:?}"
+    );
+}
+
+/// (b) A bound protected op warns EXACTLY once across both checks, and the
+/// surviving line names the action and the op it binds.
+#[tokio::test]
+async fn bound_protected_op_warns_exactly_once_naming_the_action() {
+    let fixture = write_fixture_in("service_ops_protected_bound", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let actions = ingest_ifml(
+        &engine,
+        fixture.ddd.parent().unwrap(),
+        &ifml_with_action("InternalAdjust"),
+    )
+    .await;
+    assert_eq!(actions, 1, "the action declaration must ingest");
+    let config = parse_config(&fixture);
+
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    let mentions: Vec<_> = issues
+        .iter()
+        .filter(|i| i.message.contains("internalAdjust"))
+        .collect();
+    assert_eq!(
+        mentions.len(),
+        1,
+        "exactly one line across `dead_surface_warnings` and `ifml_dead_triggers`: {issues:?}"
+    );
+    let issue = mentions[0];
+    assert!(
+        matches!(issue.severity, codegraph::validate::Severity::Warning),
+        "{issue:?}"
+    );
+    assert_eq!(issue.check, "ifml_action_dead_surface", "{issue:?}");
+    assert_eq!(issue.entity, "InternalAdjust", "{issue:?}");
+    assert_eq!(
+        issue.message,
+        "action 'InternalAdjust' targets op 'PayRunService::internalAdjust' which emits no \
+         API surface (the op is `protected` (Sculptor visibility)); the trigger is dead",
+        "{issue:?}"
+    );
+    // The other check stays silent about it: the pre-#619 duplicate line
+    // (`service_op_dead_surface`) must not come back.
+    assert!(
+        !issues
             .iter()
-            .any(|w| w.contains("PayRunService::internalAdjust") && w.contains("protected")),
-        "protected ops must warn: {warnings:?}"
+            .any(|i| i.check == "service_op_dead_surface" && i.message.contains("protected")),
+        "{issues:?}"
+    );
+}
+
+/// (c) The OTHER class inside `dead_surface_warnings` — a public op that
+/// binds no entity — is a real defect and still warns, with or without a
+/// bound action (untouched by #619).
+#[tokio::test]
+async fn entity_unbound_ops_still_warn() {
+    let source = PAYROLL_DDD.replace(
+        "            protected String internalAdjust();\n",
+        "            protected String internalAdjust();\n            boolean ping(String name);\n",
+    );
+    assert!(source.contains("boolean ping"), "the mutation must apply");
+    let fixture = write_fixture_in("service_ops_entity_unbound", &source);
+    let engine = ingest(&fixture).await;
+    let config = parse_config(&fixture);
+
+    let warnings = codegraph_generate::ddd::service_ops::dead_surface_warnings(&engine, &config)
+        .await
+        .unwrap();
+    let unbound: Vec<_> = warnings
+        .iter()
+        .filter(|w| w.contains("PayRunService::ping"))
+        .collect();
+    assert_eq!(unbound.len(), 1, "{warnings:?}");
+    assert!(
+        unbound[0].contains("binds no entity") && unbound[0].contains("emits no API surface"),
+        "the entity-unbound warning keeps its wording: {unbound:?}"
+    );
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    assert!(
+        issues.iter().any(|i| {
+            i.check == "service_op_dead_surface" && i.message.contains("PayRunService::ping")
+        }),
+        "{issues:?}"
+    );
+
+    // With an action bound to the unbound op, both checks keep reporting
+    // it — the pre-#619 shape, deliberately unchanged.
+    ingest_ifml(
+        &engine,
+        fixture.ddd.parent().unwrap(),
+        &ifml_with_action("ping"),
+    )
+    .await;
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    assert!(
+        issues.iter().any(|i| {
+            i.check == "service_op_dead_surface" && i.message.contains("PayRunService::ping")
+        }),
+        "{issues:?}"
+    );
+    let trigger = issues
+        .iter()
+        .find(|i| i.check == "ifml_action_dead_surface" && i.message.contains("targets op 'ping'"))
+        .unwrap_or_else(|| panic!("the bound unbound op keeps its trigger line: {issues:?}"));
+    assert_eq!(trigger.entity, "ping", "{trigger:?}");
+    assert!(
+        trigger
+            .message
+            .contains("which emits no API surface (the op binds no entity"),
+        "no reflow gap in the surviving line: {trigger:?}"
     );
 }
 
 #[tokio::test]
-async fn validation_pass_warns_on_dead_surface_and_status_bypass() {
+async fn validation_pass_keeps_the_status_bypass_warning() {
+    // Ask 3: a workflow whose status field is a bare String is bypassable.
+    // (The Ask 1 half of this pin — the protected op warning through the
+    // `service_op_dead_surface` check — moved to the three pins above with
+    // #619: an unbound protected op no longer warns.)
     let fixture = write_fixture_in("service_ops_validation", PAYROLL_DDD);
     let engine = ingest(&fixture).await;
-    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let config = parse_config(&fixture);
     let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
-    // Ask 1: the protected op is dead surface.
     assert!(
-        issues.iter().any(|i| {
-            matches!(i.severity, codegraph::validate::Severity::Warning)
-                && i.check == "service_op_dead_surface"
-                && i.message.contains("PayRunService::internalAdjust")
-        }),
-        "the protected op must warn: {issues:?}"
+        !issues
+            .iter()
+            .any(|i| i.check == "service_op_dead_surface" && i.message.contains("internalAdjust")),
+        "the unbound protected op must not ride the dead-surface check: {issues:?}"
     );
-    // Ask 3: a workflow whose status field is a bare String is bypassable.
     let workflow_config = fixture.config.clone();
     let mut text = fs::read_to_string(&workflow_config).unwrap();
     text.push_str(

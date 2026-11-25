@@ -9,10 +9,122 @@ use super::execution::{bind_entity_service_scoped, consults_the_machine};
 use super::routes::{BodyRenderContext, bind_entity, routes_for_entity, schema_title_for_class};
 use super::transitions::{binding_spelling, heuristic_transitions, resolve_transition_binding};
 
+/// The Ask 1 binding rule: an `.ifml` action binds an operation by
+/// ASCII-case-insensitive name equality — the pherolang
+/// `check_action_bindings` convention (IFML actions are user-facing
+/// PascalCase labels, operations camelCase) and the one the IFML action
+/// planner resolves routes by.
+pub fn op_binds_action(op_name: &str, action_name: &str) -> bool {
+    op_name.eq_ignore_ascii_case(action_name)
+}
+
+/// One operation as the protected-op join sees it, whatever plane it was
+/// read from (graph readbacks on the run path, compiled models in doctor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpRef<'a> {
+    /// The owner: a service name, or the aggregate root's class for a
+    /// child operation. The qualified label the warning carries is
+    /// `{owner}::{name}`.
+    pub owner: &'a str,
+    /// The operation name, as authored.
+    pub name: &'a str,
+    /// The `protected` modifier.
+    pub protected: bool,
+}
+
+impl<'a> OpRef<'a> {
+    /// The qualified spelling the dead-trigger line names the op by.
+    pub fn qualified(&self) -> String {
+        format!("{}::{}", self.owner, self.name)
+    }
+}
+
+/// The protected-op half of the Ask 1 join (issue #619) — ONE function for
+/// the run path (graph readbacks, [`ifml_dead_triggers`]) and `codegraph
+/// doctor` (compiled models), so the rule, the precedence, the labels and
+/// the reasons cannot drift. For `action`, the protected operation it
+/// binds, as `(qualified op, reason)`; `None` when the action binds a
+/// PUBLIC service op, or no protected operation at all.
+///
+/// Service operations outrank child operations of the same name (the
+/// action plane resolves service ops first), and a public child op is
+/// never a trigger — it emits a route or the generation-time warns cover
+/// the unmounted shapes.
+pub fn protected_binding<'a>(
+    action: &str,
+    service_ops: impl Iterator<Item = OpRef<'a>>,
+    child_ops: impl Iterator<Item = OpRef<'a>>,
+) -> Option<(String, &'static str)> {
+    let bind = |op: OpRef<'_>, reason: &'static str| op.protected.then(|| (op.qualified(), reason));
+    for op in service_ops {
+        if op_binds_action(op.name, action) {
+            return bind(op, PROTECTED_OP_REASON);
+        }
+    }
+    for op in child_ops {
+        if op_binds_action(op.name, action) {
+            return bind(op, PROTECTED_CHILD_OP_REASON);
+        }
+    }
+    None
+}
+
+/// The dead-trigger reason for a `protected` service op (Sculptor
+/// visibility: the op stays off the public interface).
+pub const PROTECTED_OP_REASON: &str = "the op is `protected` (Sculptor visibility)";
+
+/// The dead-trigger reason for a `protected` aggregate child operation
+/// (issue #661): the same visibility, one plane over.
+pub const PROTECTED_CHILD_OP_REASON: &str =
+    "the child operation is `protected` (Sculptor visibility)";
+
+/// The dead-trigger reason for a public op the run cannot route.
+const UNBOUND_OP_REASON: &str =
+    "the op binds no entity (no capability class, repository delegation, or class-typed signature)";
+
+/// The Ask 1 dead-trigger line — ONE shape shared by the run-path
+/// validation pass (`validate.rs::check_service_op_surface`) and
+/// `codegraph doctor`, so the two surfaces cannot drift (issue #619).
+pub fn dead_trigger_message(action: &str, op: &str, reason: &str) -> String {
+    format!(
+        "action '{action}' targets op '{op}' which emits no API surface ({reason}); \
+         the trigger is dead"
+    )
+}
+
+/// The service operation `action` binds by name, with its owning service.
+fn service_op_named<'a>(
+    models: &'a [codegraph_core::types::DddModelGraph],
+    action: &str,
+) -> Option<(&'a str, &'a codegraph_core::types::DddServiceOperation)> {
+    models.iter().find_map(|model| {
+        model.services.iter().find_map(|service| {
+            service
+                .operations
+                .iter()
+                .find(|op| op_binds_action(&op.name, action))
+                .map(|op| (service.name.as_str(), op))
+        })
+    })
+}
+
 /// The IFML dead-trigger scan (Ask 1): every `.ifml` action whose name
-/// binds (ASCII-case-insensitive, the pherolang `check_action_bindings`
-/// convention) a service op that emits no API surface — `protected`, or
-/// entity-unbound — is a dead button. Returns `(action, op, reason)`.
+/// binds an op that emits no API surface is a dead button. Returns
+/// `(action, op, reason)` per trigger.
+///
+/// Since issue #619 this scan is the ONLY place a `protected` op is
+/// warned about: Sculptor `protected` is a valid, intentional visibility,
+/// so an op nobody bound is by design and [`dead_surface_warnings`]
+/// stays silent about it. The two classes reported here:
+///
+/// - **`protected`** — a service op, or an aggregate child operation no
+///   service op outranks (the IFML action planner resolves actions against
+///   `routes_for_entity`, which carries child-op routes, so an action
+///   naming a protected child op is the same dead button). `op` carries the
+///   qualified `Service::op` / `RootClass::op` spelling, because this line
+///   is the whole report for the op;
+/// - **entity-unbound** — a public op with no capability class, repository
+///   delegation, or class-typed signature (the unchanged #590 shape).
 pub async fn ifml_dead_triggers(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
@@ -25,40 +137,52 @@ pub async fn ifml_dead_triggers(
         return Ok(triggers);
     }
     let models = db.get_ddd_models().await?;
-    if models.iter().all(|m| m.services.is_empty()) {
+    if models
+        .iter()
+        .all(|m| m.services.is_empty() && m.designs.iter().all(|d| d.child_operations.is_empty()))
+    {
         return Ok(triggers);
     }
+    let service_ops = || {
+        models.iter().flat_map(|model| {
+            model.services.iter().flat_map(|service| {
+                service.operations.iter().map(move |op| OpRef {
+                    owner: service.name.as_str(),
+                    name: op.name.as_str(),
+                    protected: op.is_protected,
+                })
+            })
+        })
+    };
+    let child_ops = || {
+        models.iter().flat_map(|model| {
+            model.designs.iter().flat_map(|design| {
+                design.child_operations.iter().map(move |op| OpRef {
+                    owner: design.class.as_str(),
+                    name: op.name.as_str(),
+                    protected: op.is_protected,
+                })
+            })
+        })
+    };
     let type_suffix = config.defaults.type_suffix.clone();
     for action in &actions {
-        let Some((service, op)) = models.iter().find_map(|model| {
-            for service in &model.services {
-                for op in &service.operations {
-                    if op.name.eq_ignore_ascii_case(&action.name) {
-                        return Some((service.name.clone(), op.clone()));
-                    }
-                }
-            }
-            None
-        }) else {
-            // Binds no service op at all: the upstream binding check owns
-            // that class of defect.
-            continue;
-        };
-        if op.is_protected {
-            triggers.push((
-                action.name.clone(),
-                op.name.clone(),
-                "the op is `protected` (Sculptor visibility)".to_string(),
-            ));
+        if let Some((op, reason)) = protected_binding(&action.name, service_ops(), child_ops()) {
+            triggers.push((action.name.clone(), op, reason.to_string()));
             continue;
         }
-        let bound = bind_entity_service_scoped(&models, &service, &op, db, &type_suffix).await;
+        // Either no service op is named (an action binding no operation at
+        // all is the upstream binding check's class of defect), or a PUBLIC
+        // service op is: that is the entity-binding question.
+        let Some((service, op)) = service_op_named(&models, &action.name) else {
+            continue;
+        };
+        let bound = bind_entity_service_scoped(&models, service, op, db, &type_suffix).await;
         if bound.is_none() {
             triggers.push((
                 action.name.clone(),
                 op.name.clone(),
-                "the op binds no entity (no capability class, repository                  delegation, or class-typed signature)"
-                    .to_string(),
+                UNBOUND_OP_REASON.to_string(),
             ));
         }
     }
@@ -523,9 +647,16 @@ pub async fn child_parent_load_refusals(
     Ok(refusals)
 }
 
-/// The Ask 1 diagnostic: service operations that emit no API surface —
-/// `protected` ops and ops that bind no entity. Returned strings are
+/// The Ask 1 diagnostic for the class that is a DEFECT: service operations
+/// that bind no entity, and child operations whose child class resolves to
+/// no schema — public surface the run cannot route. Returned strings are
 /// human-readable warnings (empty = clean).
+///
+/// `protected` ops are NOT reported here (issue #619): Sculptor
+/// `protected` is a valid, intentional visibility, so an op nobody bound is
+/// by design. A protected op an `.ifml` action binds IS a defect (the model
+/// contradicts itself) and is reported — exactly once, naming the action —
+/// by [`ifml_dead_triggers`].
 pub async fn dead_surface_warnings(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
@@ -537,12 +668,9 @@ pub async fn dead_surface_warnings(
         for service in &model.services {
             for op in &service.operations {
                 if op.is_protected {
-                    warnings.push(format!(
-                        "service op `{}::{}` is `protected` — it emits no API \
-                         surface (Sculptor visibility); IFML actions bound to \
-                         it are dead triggers",
-                        service.name, op.name
-                    ));
+                    // Off the public interface by design; it is not an
+                    // entity-binding question (`ifml_dead_triggers` owns
+                    // the bound case).
                     continue;
                 }
                 if bind_entity(model, op, db, &type_suffix).await.is_none() {
@@ -556,19 +684,13 @@ pub async fn dead_surface_warnings(
             }
         }
         // Aggregate child operations (issue #661): a `children <Class>` op
-        // with no mounted route is dead surface too — `protected` ops and
-        // ops whose child class is not a schema in the graph (the nesting /
-        // lowering misses warn at generation time, where the child's plane
-        // is known).
+        // whose child class is not a schema in the graph is dead surface
+        // too (the nesting / lowering misses warn at generation time, where
+        // the child's plane is known). A `protected` child op is by design
+        // — `ifml_dead_triggers` owns the bound case.
         for design in &model.designs {
             for op in &design.child_operations {
                 if op.is_protected {
-                    warnings.push(format!(
-                        "child operation `{}::{}` is `protected` — it emits no API \
-                         surface (Sculptor visibility); IFML actions bound to it \
-                         are dead triggers",
-                        design.class, op.name
-                    ));
                     continue;
                 }
                 if let Some(scope) = &op.child_scope

@@ -43,6 +43,13 @@
 //! compiled `ActorModel`s — feeding one projection from the other would
 //! invert a dependency for no generation benefit (documented in
 //! `docs/pherolang-upgrade.md`).
+//!
+//! # Ask 1 protected-op join (issue #619)
+//!
+//! [`report_protected_op_dead_triggers`] is the one cross-surface check this
+//! module owns besides the analytics: doctor's half of the run path's
+//! "a `protected` op warns only when an `.ifml` action binds it" WARN,
+//! joined over the compiled designs + flows the gather already holds.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -706,4 +713,189 @@ pub(crate) fn full_gather(mox: &MoxSources, cross: &UnionGather) -> UnionGather 
         }
     }
     full
+}
+
+/// The run path's protected-op WARN, in doctor (issue #619): a `protected`
+/// operation is warned about ONLY when an `.ifml` action binds it — the
+/// model contradicts itself — and then exactly once, naming the action.
+///
+/// Doctor holds no graph, but the cross-surface gather already compiled
+/// both surfaces: the `.ddd` designs carry every `protected` operation and
+/// the `.ifml` flows every action declaration — the same two artifact sets
+/// upstream's `check_action_bindings` joins — so the join is the run
+/// path's own [`codegraph_generate::ddd::service_ops::protected_binding`]
+/// over compiled models: no graph, nothing compiled twice. A flow that
+/// failed its compile is absent from the gather (doctor already reported
+/// it), so nothing it declares counts as bound. Returns the warning texts
+/// in flow order, actions in declaration order.
+fn protected_op_dead_triggers(cross: &UnionGather) -> Vec<String> {
+    use codegraph_generate::ddd::service_ops::{OpRef, dead_trigger_message, protected_binding};
+
+    let service_ops = || {
+        cross.designs.iter().flat_map(|file| {
+            file.model
+                .modules
+                .iter()
+                .flat_map(|module| &module.services)
+                .flat_map(|service| {
+                    service.operations.iter().map(move |op| OpRef {
+                        owner: service.name.as_str(),
+                        name: op.name.as_str(),
+                        protected: op.is_protected,
+                    })
+                })
+        })
+    };
+    let child_ops = || {
+        cross.designs.iter().flat_map(|file| {
+            file.model
+                .modules
+                .iter()
+                .flat_map(|module| &module.designs)
+                .flat_map(|design| {
+                    // DD3: only a class-bearing design can own a `children`
+                    // block; a class-less (standalone dto) design has none.
+                    let owner = design.class.as_deref().unwrap_or_default();
+                    design.child_operations.iter().map(move |op| OpRef {
+                        owner,
+                        name: op.name.as_str(),
+                        protected: op.is_protected,
+                    })
+                })
+        })
+    };
+    let mut warnings = Vec::new();
+    for flow in &cross.flows {
+        for action in &flow.model.actions {
+            if let Some((op, reason)) = protected_binding(&action.name, service_ops(), child_ops())
+            {
+                warnings.push(dead_trigger_message(&action.name, &op, reason));
+            }
+        }
+    }
+    warnings
+}
+
+/// Print and count [`protected_op_dead_triggers`] — the doctor-side WARN
+/// lines, each one soft warning (the `check_graph_plane` shape: the stage
+/// prints its own lines and returns its contribution).
+pub(crate) fn report_protected_op_dead_triggers(cross: &UnionGather) -> usize {
+    let warnings = protected_op_dead_triggers(cross);
+    for warning in &warnings {
+        println!("WARN ddd — {warning}");
+    }
+    warnings.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gather_cross_surface;
+    use super::protected_op_dead_triggers;
+    use std::fs;
+    use tempfile::TempDir;
+
+    /// Issue #619 (doctor parity): the protected-op WARN is the JOIN of
+    /// the compiled designs and flows the union gather already holds —
+    /// a `protected` op is reported only when an `.ifml` action binds it,
+    /// once, naming the action. Exercised through the real
+    /// `gather_cross_surface` compile path over temp sources.
+    #[test]
+    fn protected_op_dead_triggers_join_compiled_designs_with_flows() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("payroll.mox"),
+            "package payroll\n\nclass PayRun {\n    String [1] reference\n    refers PayLine[] lines\n}\n\n\
+             class PayLine {\n    String [1] note\n}\n",
+        )
+        .unwrap();
+        let ddd = root.join("payroll.ddd");
+        fs::write(
+            &ddd,
+            r#"import "payroll.mox";
+
+application Payroll {
+    base payroll
+    module ops {
+        service PayRunService {
+            inject PayRunRepository;
+            protected recordStatus => PayRunRepository.save;
+            approveRun => PayRunRepository.save;
+        }
+        entity PayRun repository PayRunRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        children PayRun {
+            protected boolean removeLine(String lineId) => lines.remove;
+        }
+    }
+}
+"#,
+        )
+        .unwrap();
+
+        // No flow input ⇒ nothing is bound ⇒ no protected-op warning.
+        let (cross, _) = gather_cross_surface(std::slice::from_ref(&ddd), &[], &[], &[]);
+        assert_eq!(cross.designs.len(), 1, "the design must compile");
+        assert!(
+            protected_op_dead_triggers(&cross).is_empty(),
+            "an unbound protected op is by design"
+        );
+
+        // One flow binding a protected service op, a protected child op, a
+        // public op, and nothing at all.
+        let ifml = root.join("payroll.ifml");
+        fs::write(
+            &ifml,
+            r#"domain "payroll" { schema "payroll"; }
+
+view "PayRunBoard" {
+    label "Pay Run Board";
+
+    component "board" {
+        type: details;
+        data: PayRun;
+        fields: [reference];
+
+        on record -> action("RecordStatus");
+        on remove -> action("RemoveLine");
+        on approve -> action("ApproveRun");
+        on stray -> action("Unrelated");
+    }
+}
+
+action "RecordStatus" {
+    target: PayRun;
+}
+
+action "RemoveLine" {
+    target: PayRun;
+}
+
+action "ApproveRun" {
+    target: PayRun;
+}
+
+action "Unrelated" {
+    target: PayRun;
+}
+"#,
+        )
+        .unwrap();
+        let (cross, _) = gather_cross_surface(&[ddd], &[], &[], &[ifml]);
+        assert_eq!(cross.flows.len(), 1, "the flow must compile");
+        assert_eq!(
+            protected_op_dead_triggers(&cross),
+            vec![
+                "action 'RecordStatus' targets op 'PayRunService::recordStatus' which emits no \
+                 API surface (the op is `protected` (Sculptor visibility)); the trigger is dead",
+                "action 'RemoveLine' targets op 'PayRun::removeLine' which emits no API surface \
+                 (the child operation is `protected` (Sculptor visibility)); the trigger is dead",
+            ],
+            "exactly one line per bound protected op, naming the action — the run path's line"
+        );
+    }
 }

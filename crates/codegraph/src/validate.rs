@@ -460,8 +460,15 @@ impl ValidationPass {
     }
 
     /// Dead service-op surface (issue #590, Ask 1 — WARN minimum while the
-    /// diagnostics are transitional): ops that emit no API surface, and
-    /// `.ifml` actions bound to them.
+    /// diagnostics are transitional; narrowed by issue #619):
+    ///
+    /// - `service_op_dead_surface` — ops that are a DEFECT: a public op
+    ///   binding no entity (`dead_surface_warnings`);
+    /// - `ifml_action_dead_surface` — `.ifml` actions bound to an op that
+    ///   emits no API surface (`ifml_dead_triggers`). This is the ONLY
+    ///   check that reports a `protected` op: Sculptor `protected` is a
+    ///   valid, intentional visibility, so an op no action binds is by
+    ///   design, and a bound one is reported here exactly once.
     async fn check_service_op_surface(
         db: &dyn GraphQuerier,
         config: &DomainConfig,
@@ -490,8 +497,8 @@ impl ValidationPass {
                 severity: Severity::Warning,
                 entity: action.clone(),
                 check: "ifml_action_dead_surface",
-                message: format!(
-                    "action '{action}' targets op '{op}' which emits no API                      surface ({reason}); the trigger is dead"
+                message: codegraph_generate::ddd::service_ops::dead_trigger_message(
+                    &action, &op, &reason,
                 ),
             });
         }

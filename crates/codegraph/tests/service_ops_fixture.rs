@@ -1461,6 +1461,53 @@ pub async fn ingest(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
     engine
 }
 
+// ── Issue #619: protected ops × bound IFML actions ─────────────────────
+
+/// An `.ifml` flow whose one event fires the named action — the shape the
+/// Ask 1 dead-trigger scan joins on (an action declaration binds a service
+/// op by ASCII-case-insensitive name). The view is otherwise minimal.
+pub fn ifml_with_action(action: &str) -> String {
+    format!(
+        r#"domain "payroll" {{ schema "payroll"; }}
+
+view "PayRunBoard" {{
+    label "Pay Run Board";
+
+    component "board" {{
+        type: details;
+        data: PayRunType;
+        fields: [payRunId];
+
+        on fire -> action("{action}");
+    }}
+}}
+
+action "{action}" {{
+    target: PayRunType;
+}}
+"#
+    )
+}
+
+/// Ingest an `.ifml` flow through the run path's own front door
+/// (`compile_and_check_ifml` → `ingest_ifml_model`, the driver's Pass 1b
+/// order). Returns the ingested action count.
+pub async fn ingest_ifml(
+    engine: &codegraph_grafeo::GrafeoEngine,
+    dir: &Path,
+    source: &str,
+) -> usize {
+    let path = dir.join("flow.ifml");
+    fs::write(&path, source).unwrap();
+    let compiled = codegraph::ifml_compile::compile_and_check_ifml(&path)
+        .expect("the flow compiles and checks");
+    let stats =
+        codegraph::ingest::ifml_ingest::ingest_ifml_model(engine, &compiled.compilation.model)
+            .await
+            .expect("the flow ingests");
+    stats.actions
+}
+
 pub fn profiles_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

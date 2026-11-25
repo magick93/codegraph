@@ -50,6 +50,18 @@ pub(crate) fn warn_once(key: &str, message: &str) {
     }
 }
 
+/// The keys warned so far in this process — the test-side view of the
+/// once-set. `warn_once` prints to stderr, which no in-process test can
+/// read, so a NEGATIVE pin (a walker must not reach a given warn site —
+/// issue #619) asserts on the keys instead.
+#[cfg(test)]
+pub(crate) fn warned_keys() -> Vec<String> {
+    let set = WARNED.get_or_init(|| Mutex::new(HashSet::new()));
+    set.lock()
+        .map(|set| set.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
 /// One declared parameter of a [`DesignFinder`].
 #[derive(Debug, Clone, Serialize)]
 pub struct FinderParam {
