@@ -398,6 +398,29 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // Validate that every entity in the generation order has entity-specific files
     report.validate_consistency(order, &ctx.config.defaults.type_suffix);
 
+    // Issue #824: the read model is withheld for a machine-bearing design
+    // without a loader. The pre-generation sweep keys per entity, so a
+    // `*_machine.rs` left by a previous run survives it — and the
+    // filesystem-scanning mod pass would re-declare it, compiling a module
+    // whose loader no longer exists (`E0599`). Sweep what this run did not
+    // emit, gated on the plan carrying the emitting generator (the
+    // StaleSurfaceGates contract: a plan that never produced the artifacts
+    // never deletes them).
+    if ctx.plan_has_entity("workflow_action") {
+        let emitted: std::collections::HashSet<std::path::PathBuf> =
+            report.files.iter().map(|file| file.path.clone()).collect();
+        let domain_names: Vec<&str> = domains_with_entities
+            .iter()
+            .map(|(domain, _)| domain.as_str())
+            .collect();
+        crate::output::sweep_unemitted_machine_modules(
+            ctx.output_dir,
+            ctx.workers_topology,
+            &domain_names,
+            &emitted,
+        );
+    }
+
     // Generate mod.rs files for all directories under src/.
     write_mod_files(&ctx, &domains_with_entities, &mut report)?;
 

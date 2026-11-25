@@ -186,6 +186,18 @@ Local, through `mbx`, `RUSTFLAGS="-C debuginfo=0"`:
 
 ## 5. Deferred / follow-ups
 
+- **The regeneration sweep (fixed in the follow-up PR).** The withholding
+  is correct on a fresh tree, but a consumer's EXISTING tree keeps the
+  `{module}_machine.rs` a previous run emitted: the pre-generation sweep
+  keys per ENTITY and cannot see a per-generator artifact that stops being
+  emitted, and the filesystem-scanning `generate_mod_files` pass
+  re-declares every `.rs` it finds — so the stale module was compiled
+  again (`E0599`) on the first regeneration. Reproduced on the consumer's
+  tree; every upstream gate builds a fresh tree, which is why all of them
+  stayed green. `output::sweep_unemitted_machine_modules` now runs
+  post-generation, before the mod pass, plan-gated on `workflow_action`
+  (`StaleSurfaceGates` contract), pinned on both topologies
+  (`stale_read_model_module_is_swept_on_regeneration`).
 - **The scoped loader for parent-scoped members — #827.** The nested route
   already carries the parent id and `find_by_id_scoped` exists; until then
   a member's read model is withheld (with a Warning naming it), and a

@@ -731,6 +731,54 @@ fn clean_file_routes(dir: &Path, active_views: &[String], file_name: impl Fn(&st
     }
 }
 
+/// Sweep machine read-model modules this run did NOT emit (issue #824).
+///
+/// The pre-generation sweep ([`clean_generated_output`]) keys per ENTITY, so
+/// it cannot see a per-generator artifact that stops being emitted for a
+/// still-expected entity — and the filesystem-scanning [`generate_mod_files`]
+/// pass re-declares every `.rs` file it finds, so a leftover
+/// `{module}_machine.rs` was compiled again (`E0599`: no method
+/// `find_by_id`) on the first regeneration after the read model was
+/// withheld. Called AFTER the generators and BEFORE the mod pass.
+///
+/// Plan-gated like [`StaleSurfaceGates`]: a profile that does not carry the
+/// emitting generator (`workflow_action`) never produced these artifacts, so
+/// it must not delete them either. `emitted` is this run's file set (absolute
+/// paths under `output_dir`).
+pub(crate) fn sweep_unemitted_machine_modules(
+    output_dir: &Path,
+    workers_topology: bool,
+    domains: &[&str],
+    emitted: &std::collections::HashSet<PathBuf>,
+) {
+    for domain in domains {
+        let backend_base = if workers_topology {
+            output_dir.join("workers").join(domain)
+        } else {
+            output_dir.to_path_buf()
+        };
+        let api_domain_dir = backend_base.join("src").join("api").join(domain);
+        let Ok(entries) = fs::read_dir(&api_domain_dir) else {
+            continue;
+        };
+        for child in entries.flatten() {
+            let path = child.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !name.ends_with("_machine.rs") || emitted.contains(&path) {
+                continue;
+            }
+            tracing::debug!(
+                domain = %domain,
+                module = %name,
+                "removing read-model module this run did not emit (issue #824)"
+            );
+            let _ = fs::remove_file(&path);
+        }
+    }
+}
+
 /// Remove stale `mod.rs` files from a previous generation run.
 /// This ensures `generate_mod_files` always creates fresh module declarations
 /// that include all `.rs` files in the directory.
