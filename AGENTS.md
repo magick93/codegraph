@@ -6562,6 +6562,17 @@ spelling).
   withholding is VISIBLE: `ValidationPass::check_machine_read_model`
   (check `machine_read_model`, Warning) names the class and the reason,
   and decides through the SAME predicate the emitters withhold by.
+- **The sweep (follow-up)**: a withheld read model is removed from an
+  EXISTING tree before the filesystem-scanning mod pass —
+  `output::sweep_unemitted_machine_modules` runs post-generation and
+  deletes `src/api/{domain}/*_machine.rs` files this run did not emit,
+  plan-gated on `workflow_action` (the `StaleSurfaceGates` contract). The
+  pre-generation sweep keys per ENTITY and cannot see a per-generator
+  artifact that stops being emitted, so without this the leftover was
+  re-declared and compiled again (`E0599`) on the first regeneration after
+  the fix — a consumer-only failure, because every upstream gate builds a
+  fresh tree. Pinned on both topologies
+  (`machine_read_shape_tests::stale_read_model_module_is_swept_on_regeneration`).
 - **`…Code` status fields**: the accessor is the graph property's
   `rust_field_name` — the DTO emitter's own field name — with
   `strip_code_suffix_safe(to_snake_case(..))` as the fallback for graphs
