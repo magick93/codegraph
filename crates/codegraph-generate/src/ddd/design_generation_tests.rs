@@ -465,7 +465,8 @@ async fn finder_emitted_in_trait_and_seaorm_impl_single() {
     );
     assert!(trait_src.contains("title: String,"));
     assert!(
-        trait_src.contains("Result<Option<BookResponse>, Box<dyn std::error::Error>>;"),
+        trait_src
+            .contains("Result<Option<BookResponse>, Box<dyn std::error::Error + Send + Sync>>;"),
         "single finder returns Option"
     );
     let impl_src = render_impl(&db).await;
@@ -483,7 +484,7 @@ async fn finder_emitted_in_trait_and_seaorm_impl_many() {
     let db = db_with_model(Some(finder_model(true))).await;
     let trait_src = render_trait(&db, &ProjectConfig::default()).await;
     assert!(
-        trait_src.contains("Result<Vec<BookResponse>, Box<dyn std::error::Error>>;"),
+        trait_src.contains("Result<Vec<BookResponse>, Box<dyn std::error::Error + Send + Sync>>;"),
         "many finder returns Vec"
     );
     let impl_src = render_impl(&db).await;
@@ -1051,7 +1052,7 @@ async fn query_emitted_in_trait_and_seaorm_impl_with_parameters_order_and_page()
         "the resolved read capability is documented: {trait_src}"
     );
     assert!(
-        trait_src.contains("Result<Vec<BookResponse>, Box<dyn std::error::Error>>;"),
+        trait_src.contains("Result<Vec<BookResponse>, Box<dyn std::error::Error + Send + Sync>>;"),
         "many-valued query returns Vec: {trait_src}"
     );
     assert!(
@@ -1190,7 +1191,7 @@ async fn query_without_a_page_has_no_runtime_page_parameters() {
         "0..1 → one row: {impl_src}"
     );
     assert!(
-        impl_src.contains("Result<Option<BookResponse>, Box<dyn std::error::Error>>"),
+        impl_src.contains("Result<Option<BookResponse>, Box<dyn std::error::Error + Send + Sync>>"),
         "0..1 returns an optional and never throws not-found: {impl_src}"
     );
 }

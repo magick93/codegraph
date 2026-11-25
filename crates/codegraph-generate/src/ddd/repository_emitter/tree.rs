@@ -28,12 +28,12 @@ impl RepositoryImplEmitter {
         if has_tree_include {
             wln!(
                 code,
-                "    ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {{"
+                "    ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {{"
             );
         } else {
             wln!(
                 code,
-                "    ) -> Result<Vec<{}Response>, Box<dyn std::error::Error>> {{",
+                "    ) -> Result<Vec<{}Response>, Box<dyn std::error::Error + Send + Sync>> {{",
                 tree.entity_name
             );
         }
@@ -125,7 +125,7 @@ impl RepositoryImplEmitter {
         if has_tree_include {
             wln!(
                 code,
-                "            }}).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Serialization error: {{e}}\").into() }})?;"
+                "            }}).map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {{ format!(\"Serialization error: {{e}}\").into() }})?;"
             );
             // Emit worker merge block
             for inc in &tree.tree_include {
@@ -210,11 +210,11 @@ impl RepositoryImplEmitter {
             wln!(code, "        for wr in &worker_rows {{");
             wln!(
                 code,
-                "            let pos_id: Uuid = wr.try_get_by_index(0).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Missing position_id: {{e}}\").into() }})?;"
+                "            let pos_id: Uuid = wr.try_get_by_index(0).map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {{ format!(\"Missing position_id: {{e}}\").into() }})?;"
             );
             wln!(
                 code,
-                "            let worker_json: serde_json::Value = wr.try_get_by_index(1).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Missing deployed_worker: {{e}}\").into() }})?;"
+                "            let worker_json: serde_json::Value = wr.try_get_by_index(1).map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {{ format!(\"Missing deployed_worker: {{e}}\").into() }})?;"
             );
             wln!(code, "            worker_map.insert(pos_id, worker_json);");
             wln!(code, "        }}");
@@ -498,13 +498,13 @@ impl RepositoryImplEmitter {
         if seg.is_array {
             wln!(
                 code,
-                "    ) -> Result<Vec<{}>, Box<dyn std::error::Error>> {{",
+                "    ) -> Result<Vec<{}>, Box<dyn std::error::Error + Send + Sync>> {{",
                 resp_type
             );
         } else {
             wln!(
                 code,
-                "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+                "    ) -> Result<Option<{}>, Box<dyn std::error::Error + Send + Sync>> {{",
                 resp_type
             );
         }
@@ -726,13 +726,13 @@ impl RepositoryImplEmitter {
         if seg.is_array {
             wln!(
                 code,
-                "    ) -> Result<std::collections::HashMap<Uuid, Vec<{}>>, Box<dyn std::error::Error>> {{",
+                "    ) -> Result<std::collections::HashMap<Uuid, Vec<{}>>, Box<dyn std::error::Error + Send + Sync>> {{",
                 resp_type
             );
         } else {
             wln!(
                 code,
-                "    ) -> Result<std::collections::HashMap<Uuid, Option<{}>>, Box<dyn std::error::Error>> {{",
+                "    ) -> Result<std::collections::HashMap<Uuid, Option<{}>>, Box<dyn std::error::Error + Send + Sync>> {{",
                 resp_type
             );
         }
@@ -1029,7 +1029,7 @@ impl RepositoryImplEmitter {
         wln!(code, "        source_id: Uuid,");
         wln!(
             code,
-            "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+            "    ) -> Result<Option<{}>, Box<dyn std::error::Error + Send + Sync>> {{",
             resp_type
         );
 
@@ -1209,7 +1209,7 @@ impl RepositoryImplEmitter {
         wln!(code, "        source_ids: &[Uuid],");
         wln!(
             code,
-            "    ) -> Result<std::collections::HashMap<Uuid, {resp_type}>, Box<dyn std::error::Error>> {{"
+            "    ) -> Result<std::collections::HashMap<Uuid, {resp_type}>, Box<dyn std::error::Error + Send + Sync>> {{"
         );
         wln!(
             code,

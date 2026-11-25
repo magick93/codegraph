@@ -21,7 +21,7 @@ impl NameRepository<sea_orm::DatabaseTransaction> for NameRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         cmd: CreateNameRequest,
-    ) -> Result<Uuid, Box<dyn std::error::Error>> {
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
         let id = Uuid::new_v4();
 
         // Insert into common.name (direct columns)
@@ -43,7 +43,7 @@ impl NameRepository<sea_orm::DatabaseTransaction> for NameRepositoryImpl {
         db: &DatabaseTransaction,
         id: Uuid,
         include_deleted: bool,
-    ) -> Result<Option<NameResponse>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<NameResponse>, Box<dyn std::error::Error + Send + Sync>> {
         let mut query = crate::entity::common_name::Entity::find()
             .filter(crate::entity::common_name::Column::Id.eq(id));
 
@@ -76,7 +76,7 @@ impl NameRepository<sea_orm::DatabaseTransaction> for NameRepositoryImpl {
         tx: &DatabaseTransaction,
         id: Uuid,
         cmd: UpdateNameRequest,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Update common.name — only set fields present in the update request
         let mut model = crate::entity::common_name::ActiveModel {
             id: Set(id),
@@ -99,13 +99,13 @@ impl NameRepository<sea_orm::DatabaseTransaction> for NameRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let model = crate::entity::common_name::Entity::find()
             .filter(crate::entity::common_name::Column::Id.eq(id))
             .filter(crate::entity::common_name::Column::DeletedAt.is_null())
             .one(tx)
             .await?
-            .ok_or_else(|| Box::<dyn std::error::Error>::from("Entity not found or already deleted"))?;
+            .ok_or_else(|| Box::<dyn std::error::Error + Send + Sync>::from("Entity not found or already deleted"))?;
         let mut active: crate::entity::common_name::ActiveModel = model.into();
         active.deleted_at = sea_orm::ActiveValue::Set(Some(chrono::Utc::now().into()));
         match active.update(tx).await {
@@ -124,7 +124,7 @@ impl NameRepository<sea_orm::DatabaseTransaction> for NameRepositoryImpl {
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
         include_deleted: bool,
-    ) -> Result<(Vec<NameResponse>, u64), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<NameResponse>, u64), Box<dyn std::error::Error + Send + Sync>> {
         let mut query = crate::entity::common_name::Entity::find()
 ;
         if !include_deleted {

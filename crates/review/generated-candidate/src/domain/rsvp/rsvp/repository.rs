@@ -25,7 +25,7 @@ pub trait RsvpRepository<C>: Send + Sync {
         tx: &C,
         cmd: CreateRsvpRequest,
 
-    ) -> Result<Uuid, Box<dyn std::error::Error>>;
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -36,7 +36,7 @@ pub trait RsvpRepository<C>: Send + Sync {
 
         include_deleted: bool,
 
-    ) -> Result<Option<RsvpResponse>, Box<dyn std::error::Error>>;
+    ) -> Result<Option<RsvpResponse>, Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -48,7 +48,7 @@ pub trait RsvpRepository<C>: Send + Sync {
         tx: &C,
         id: Uuid,
         cmd: UpdateRsvpRequest,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -56,7 +56,7 @@ pub trait RsvpRepository<C>: Send + Sync {
         &self,
         tx: &C,
         id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -69,7 +69,7 @@ pub trait RsvpRepository<C>: Send + Sync {
 
         include_deleted: bool,
 
-    ) -> Result<(Vec<RsvpResponse>, u64), Box<dyn std::error::Error>>;
+    ) -> Result<(Vec<RsvpResponse>, u64), Box<dyn std::error::Error + Send + Sync>>;
 
 
 

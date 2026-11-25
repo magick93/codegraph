@@ -365,13 +365,13 @@ impl super::RepositoryImplEmitter {
         if finder.returns_many {
             wln!(
                 code,
-                "    ) -> Result<Vec<{}>, Box<dyn std::error::Error>> {{",
+                "    ) -> Result<Vec<{}>, Box<dyn std::error::Error + Send + Sync>> {{",
                 finder.return_rust_type
             );
         } else {
             wln!(
                 code,
-                "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+                "    ) -> Result<Option<{}>, Box<dyn std::error::Error + Send + Sync>> {{",
                 finder.return_rust_type
             );
         }
@@ -561,13 +561,13 @@ impl super::RepositoryImplEmitter {
         if finder.returns_many {
             wln!(
                 code,
-                "    ) -> Result<Vec<{}>, Box<dyn std::error::Error>> {{",
+                "    ) -> Result<Vec<{}>, Box<dyn std::error::Error + Send + Sync>> {{",
                 finder.return_rust_type
             );
         } else {
             wln!(
                 code,
-                "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+                "    ) -> Result<Option<{}>, Box<dyn std::error::Error + Send + Sync>> {{",
                 finder.return_rust_type
             );
         }

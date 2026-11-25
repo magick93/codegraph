@@ -73,7 +73,7 @@ fn emit_nested_filter_parse(code: &mut CodeWriter, nf: &NestedFilterFieldInfo) -
         "Uuid" | "uuid::Uuid" => {
             wln!(
                 code,
-                "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{key}': {{e}}\")))?;",
+                "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid UUID for filter '{key}': {{e}}\")))?;",
             );
             "parsed"
         }
@@ -81,63 +81,63 @@ fn emit_nested_filter_parse(code: &mut CodeWriter, nf: &NestedFilterFieldInfo) -
         ty if ty.ends_with("Type") && ty.chars().next().is_some_and(|c| c.is_uppercase()) => {
             wln!(
                 code,
-                "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{key}': {{e}}\")))?;",
+                "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid UUID for filter '{key}': {{e}}\")))?;",
             );
             "parsed"
         }
         "i32" => {
             wln!(
                 code,
-                "            let parsed: i32 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i32 for filter '{key}': {{e}}\")))?;",
+                "            let parsed: i32 = val.parse().map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid i32 for filter '{key}': {{e}}\")))?;",
             );
             "parsed"
         }
         "i64" => {
             wln!(
                 code,
-                "            let parsed: i64 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i64 for filter '{key}': {{e}}\")))?;",
+                "            let parsed: i64 = val.parse().map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid i64 for filter '{key}': {{e}}\")))?;",
             );
             "parsed"
         }
         "f32" => {
             wln!(
                 code,
-                "            let parsed: f32 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid f32 for filter '{key}': {{e}}\")))?;",
+                "            let parsed: f32 = val.parse().map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid f32 for filter '{key}': {{e}}\")))?;",
             );
             "parsed"
         }
         "f64" => {
             wln!(
                 code,
-                "            let parsed: f64 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid f64 for filter '{key}': {{e}}\")))?;",
+                "            let parsed: f64 = val.parse().map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid f64 for filter '{key}': {{e}}\")))?;",
             );
             "parsed"
         }
         "bool" => {
             wln!(
                 code,
-                "            let parsed: bool = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid bool for filter '{key}': {{e}}\")))?;",
+                "            let parsed: bool = val.parse().map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid bool for filter '{key}': {{e}}\")))?;",
             );
             "parsed"
         }
         "Decimal" | "rust_decimal::Decimal" => {
             wln!(
                 code,
-                "            let parsed: rust_decimal::Decimal = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid Decimal for filter '{key}': {{e}}\")))?;",
+                "            let parsed: rust_decimal::Decimal = val.parse().map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid Decimal for filter '{key}': {{e}}\")))?;",
             );
             "parsed"
         }
         "NaiveDate" | "chrono::NaiveDate" => {
             wln!(
                 code,
-                "            let parsed = chrono::NaiveDate::parse_from_str(val, \"%Y-%m-%d\").map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid date for filter '{key}': {{e}}\")))?;",
+                "            let parsed = chrono::NaiveDate::parse_from_str(val, \"%Y-%m-%d\").map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid date for filter '{key}': {{e}}\")))?;",
             );
             "parsed"
         }
         "DateTime<Utc>" | "chrono::DateTime<chrono::Utc>" => {
             wln!(
                 code,
-                "            let parsed = val.parse::<chrono::DateTime<chrono::Utc>>().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid datetime for filter '{key}': {{e}}\")))?;",
+                "            let parsed = val.parse::<chrono::DateTime<chrono::Utc>>().map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid datetime for filter '{key}': {{e}}\")))?;",
             );
             "parsed"
         }
@@ -187,7 +187,7 @@ impl RepositoryImplEmitter {
         }
         wln!(
             code,
-            "    ) -> Result<(Vec<{}Response>, u64), Box<dyn std::error::Error>> {{",
+            "    ) -> Result<(Vec<{}Response>, u64), Box<dyn std::error::Error + Send + Sync>> {{",
             tree.entity_name
         );
 
@@ -224,7 +224,7 @@ impl RepositoryImplEmitter {
                     "Uuid" | "uuid::Uuid" => {
                         wln!(
                             code,
-                            "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\")))?;",
+                            "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid UUID for filter '{}': {{e}}\")))?;",
                             ff.field_name
                         );
                         wln!(
@@ -237,7 +237,7 @@ impl RepositoryImplEmitter {
                     "i32" => {
                         wln!(
                             code,
-                            "            let parsed: i32 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i32 for filter '{}': {{e}}\")))?;",
+                            "            let parsed: i32 = val.parse().map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid i32 for filter '{}': {{e}}\")))?;",
                             ff.field_name
                         );
                         wln!(
@@ -250,7 +250,7 @@ impl RepositoryImplEmitter {
                     "i64" => {
                         wln!(
                             code,
-                            "            let parsed: i64 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i64 for filter '{}': {{e}}\")))?;",
+                            "            let parsed: i64 = val.parse().map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid i64 for filter '{}': {{e}}\")))?;",
                             ff.field_name
                         );
                         wln!(
@@ -263,7 +263,7 @@ impl RepositoryImplEmitter {
                     "bool" => {
                         wln!(
                             code,
-                            "            let parsed: bool = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid bool for filter '{}': {{e}}\")))?;",
+                            "            let parsed: bool = val.parse().map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid bool for filter '{}': {{e}}\")))?;",
                             ff.field_name
                         );
                         wln!(
@@ -280,7 +280,7 @@ impl RepositoryImplEmitter {
                     {
                         wln!(
                             code,
-                            "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\")))?;",
+                            "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid UUID for filter '{}': {{e}}\")))?;",
                             ff.field_name
                         );
                         wln!(
@@ -312,7 +312,7 @@ impl RepositoryImplEmitter {
                 );
                 wln!(
                     code,
-                    "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{parent_ref}': {{e}}\")))?;"
+                    "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!(\"Invalid UUID for filter '{parent_ref}': {{e}}\")))?;"
                 );
                 wln!(
                     code,
@@ -508,7 +508,7 @@ impl RepositoryImplEmitter {
         }
         wln!(
             code,
-            "    ) -> Result<(Vec<uuid::Uuid>, u64), Box<dyn std::error::Error>> {{"
+            "    ) -> Result<(Vec<uuid::Uuid>, u64), Box<dyn std::error::Error + Send + Sync>> {{"
         );
         wln!(
             code,
@@ -613,7 +613,7 @@ impl RepositoryImplEmitter {
         }
         wln!(
             code,
-            "    ) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error>> {{"
+            "    ) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error + Send + Sync>> {{"
         );
         wln!(
             code,

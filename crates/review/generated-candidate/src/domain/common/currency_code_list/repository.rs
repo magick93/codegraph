@@ -25,7 +25,7 @@ pub trait CurrencyCodeListRepository<C>: Send + Sync {
         tx: &C,
         cmd: CreateCurrencyCodeListRequest,
 
-    ) -> Result<Uuid, Box<dyn std::error::Error>>;
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -36,7 +36,7 @@ pub trait CurrencyCodeListRepository<C>: Send + Sync {
 
         include_deleted: bool,
 
-    ) -> Result<Option<CurrencyCodeListResponse>, Box<dyn std::error::Error>>;
+    ) -> Result<Option<CurrencyCodeListResponse>, Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -48,7 +48,7 @@ pub trait CurrencyCodeListRepository<C>: Send + Sync {
         tx: &C,
         id: Uuid,
         cmd: UpdateCurrencyCodeListRequest,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -56,7 +56,7 @@ pub trait CurrencyCodeListRepository<C>: Send + Sync {
         &self,
         tx: &C,
         id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -69,7 +69,7 @@ pub trait CurrencyCodeListRepository<C>: Send + Sync {
 
         include_deleted: bool,
 
-    ) -> Result<(Vec<CurrencyCodeListResponse>, u64), Box<dyn std::error::Error>>;
+    ) -> Result<(Vec<CurrencyCodeListResponse>, u64), Box<dyn std::error::Error + Send + Sync>>;
 
 
 

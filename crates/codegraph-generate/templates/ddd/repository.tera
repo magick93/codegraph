@@ -30,7 +30,7 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
 {% if parent_ref %}
         parent_id: Uuid,
 {% endif %}
-    ) -> Result<Uuid, Box<dyn std::error::Error>>;
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>>;
 {% endif %}
 
 {% if has_create or (has_read and not parent_ref) or has_fts or has_embeddings %}
@@ -41,7 +41,7 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
 {% if is_auditable %}
         include_deleted: bool,
 {% endif %}
-    ) -> Result<Option<{{ entity_name }}Response>, Box<dyn std::error::Error>>;
+    ) -> Result<Option<{{ entity_name }}Response>, Box<dyn std::error::Error + Send + Sync>>;
 {% endif %}
 {% if has_read %}
 {% if parent_ref %}
@@ -55,7 +55,7 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
 {% if is_auditable %}
         include_deleted: bool,
 {% endif %}
-    ) -> Result<Option<{{ entity_name }}Response>, Box<dyn std::error::Error>>;
+    ) -> Result<Option<{{ entity_name }}Response>, Box<dyn std::error::Error + Send + Sync>>;
 {% endif %}
 {% endif %}
 
@@ -65,7 +65,7 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
         tx: &C,
         id: Uuid,
         cmd: Update{{ entity_name }}Request,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 {% endif %}
 
 {% if has_delete %}
@@ -73,7 +73,7 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
         &self,
         tx: &C,
         id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 {% endif %}
 
 {% if has_list %}
@@ -87,7 +87,7 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
         include_deleted: bool,
 {% endif %}
 {% if ux_sort %}        sort: Option<(String, bool)>,
-{% endif %}    ) -> Result<(Vec<{{ entity_name }}Response>, u64), Box<dyn std::error::Error>>;
+{% endif %}    ) -> Result<(Vec<{{ entity_name }}Response>, u64), Box<dyn std::error::Error + Send + Sync>>;
 {% endif %}
 {% if has_fts %}
 
@@ -102,7 +102,7 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
 {% if is_auditable %}
         include_deleted: bool,
 {% endif %}
-    ) -> Result<(Vec<Uuid>, u64), Box<dyn std::error::Error>>;
+    ) -> Result<(Vec<Uuid>, u64), Box<dyn std::error::Error + Send + Sync>>;
 {% endif %}
 {% if has_embeddings %}
 
@@ -116,7 +116,7 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
 {% if is_auditable %}
         include_deleted: bool,
 {% endif %}
-    ) -> Result<Vec<Uuid>, Box<dyn std::error::Error>>;
+    ) -> Result<Vec<Uuid>, Box<dyn std::error::Error + Send + Sync>>;
 {% endif %}
 {% if hierarchy_field %}
 
@@ -126,7 +126,7 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
         db: &C,
         root_id: Uuid,
         max_depth: Option<i32>,
-    ) -> Result<Vec<{% if tree_include %}serde_json::Value{% else %}{{ entity_name }}Response{% endif %}>, Box<dyn std::error::Error>>;
+    ) -> Result<Vec<{% if tree_include %}serde_json::Value{% else %}{{ entity_name }}Response{% endif %}>, Box<dyn std::error::Error + Send + Sync>>;
 {% endif %}
 {%- for finder in design_finders %}
 
@@ -141,6 +141,6 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
 {% for p in finder.params %}        {{ p.name }}: {% if p.optional %}Option<{{ p.rust_type }}>{% else %}{{ p.rust_type }}{% endif %},
 {% endfor %}{% if finder.kind == "query" %}{% if finder.query.page %}        limit: Option<u64>,
         offset: Option<u64>,
-{% endif %}{% endif %}    ) -> Result<{% if finder.returns_many %}Vec<{{ finder.return_rust_type }}>{% else %}Option<{{ finder.return_rust_type }}>{% endif %}, Box<dyn std::error::Error>>;
+{% endif %}{% endif %}    ) -> Result<{% if finder.returns_many %}Vec<{{ finder.return_rust_type }}>{% else %}Option<{{ finder.return_rust_type }}>{% endif %}, Box<dyn std::error::Error + Send + Sync>>;
 {%- endfor %}
 }

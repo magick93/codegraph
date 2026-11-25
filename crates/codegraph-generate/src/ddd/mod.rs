@@ -33,3 +33,6 @@ mod design_generation_tests;
 
 #[cfg(test)]
 mod refers_junction_tests;
+
+#[cfg(test)]
+mod repository_error_type_tests;

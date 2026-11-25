@@ -21,7 +21,7 @@ impl PayRunRepository<sea_orm::DatabaseTransaction> for PayRunRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         cmd: CreatePayRunRequest,
-    ) -> Result<Uuid, Box<dyn std::error::Error>> {
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
         let id = Uuid::new_v4();
 
         // Insert into compensation.pay_run (direct columns)
@@ -44,7 +44,7 @@ impl PayRunRepository<sea_orm::DatabaseTransaction> for PayRunRepositoryImpl {
         db: &DatabaseTransaction,
         id: Uuid,
         include_deleted: bool,
-    ) -> Result<Option<PayRunResponse>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<PayRunResponse>, Box<dyn std::error::Error + Send + Sync>> {
         let mut query = crate::entity::compensation_pay_run::Entity::find()
             .filter(crate::entity::compensation_pay_run::Column::Id.eq(id));
 
@@ -78,7 +78,7 @@ impl PayRunRepository<sea_orm::DatabaseTransaction> for PayRunRepositoryImpl {
         tx: &DatabaseTransaction,
         id: Uuid,
         cmd: UpdatePayRunRequest,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Update compensation.pay_run — only set fields present in the update request
         let mut model = crate::entity::compensation_pay_run::ActiveModel {
             id: Set(id),
@@ -102,13 +102,13 @@ impl PayRunRepository<sea_orm::DatabaseTransaction> for PayRunRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let model = crate::entity::compensation_pay_run::Entity::find()
             .filter(crate::entity::compensation_pay_run::Column::Id.eq(id))
             .filter(crate::entity::compensation_pay_run::Column::DeletedAt.is_null())
             .one(tx)
             .await?
-            .ok_or_else(|| Box::<dyn std::error::Error>::from("Entity not found or already deleted"))?;
+            .ok_or_else(|| Box::<dyn std::error::Error + Send + Sync>::from("Entity not found or already deleted"))?;
         let mut active: crate::entity::compensation_pay_run::ActiveModel = model.into();
         active.deleted_at = sea_orm::ActiveValue::Set(Some(chrono::Utc::now().into()));
         match active.update(tx).await {
@@ -127,7 +127,7 @@ impl PayRunRepository<sea_orm::DatabaseTransaction> for PayRunRepositoryImpl {
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
         include_deleted: bool,
-    ) -> Result<(Vec<PayRunResponse>, u64), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<PayRunResponse>, u64), Box<dyn std::error::Error + Send + Sync>> {
         let mut condition = sea_orm::Condition::all();
         if let Some(val) = filters.get("pay_run_id") {
             condition = condition.add(crate::entity::compensation_pay_run::Column::PayRunId.eq(val.clone()));
