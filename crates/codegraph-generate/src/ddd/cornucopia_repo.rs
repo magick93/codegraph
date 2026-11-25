@@ -1053,7 +1053,7 @@ fn emit_adapter_semantic_search(tree: &EntityTree, code: &mut CodeWriter) {
 }
 
 /// Emit recursive tree query.
-fn emit_adapter_tree(tree: &EntityTree, code: &mut CodeWriter) {
+pub(super) fn emit_adapter_tree(tree: &EntityTree, code: &mut CodeWriter) {
     let entity_name = &tree.entity_name;
     let qmod = qmod(tree);
     let as_json = !tree.tree_include.is_empty();

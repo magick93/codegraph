@@ -31,7 +31,9 @@
 //! directly, poisoning `notify`'s `Send`) and asserts the wasm check
 //! REJECTS the tree; then removes `mod integration_dispatch;` from the
 //! emitted `main.rs` (the #537 module-gap class) and asserts the native
-//! whole-package check REJECTS it. Both mutations are restored.
+//! whole-package check REJECTS it; then re-introduces the #813 non-`Send`
+//! repository error box and asserts the native check REJECTS it. All three
+//! mutations are restored.
 //!
 //! Ignored by default: downloads crates.io deps and compiles the worker
 //! workspace for two targets (~3–6 min cold, ~1–2 min warm). Wired into
@@ -50,6 +52,24 @@
 //! owns the query slots, so a `!Send` or object-safety regression in the
 //! include emission surfaces here rather than at a consumer's
 //! `wrangler dev`.
+//!
+//! The root entity also carries a CONTAINED value-object collection
+//! (issue #813: `PayRunType.annotations`, a class targeted only by
+//! `contains`). That is the shape that makes a repository future `!Send`
+//! when a non-`Send` value crosses an `.await`: `find_by_id` loads the row in
+//! an `if let` scrutinee, so the load's `?` temporary lives to the end of the
+//! statement and is held across the child read the success block awaits
+//! (`list` and the design finders await it inside their row loops the same
+//! way). PR #811 mapped the adapter's errors to a non-`Send`
+//! `Box<dyn std::error::Error>` and this gate stayed green, because the
+//! fixture's root entity had no contained child — only a scalar include and
+//! a config back-ref child, neither of which is read inside the load block.
+//! A consumer's ten-domain workers workspace failed `cargo check` with the
+//! `#[async_trait]` `Send` bound (issue #813). The leg is now three-fold:
+//! the emitted-shape pin
+//! (`assert_contained_child_read_crosses_the_find_by_id_load`) so a fixture
+//! edit cannot silently drop the shape, the compile phases, and mutation C
+//! (the non-`Send` box re-introduced — the check must REJECT it).
 //!
 //! Known gaps (documented deferrals, not regressions this fixture
 //! exercises): the events/webhook worker surfaces ride separate fixtures;
@@ -85,7 +105,18 @@ const TABLE: &str = "pay_run";
 /// (config `parent_ref`) is the reverse-FK collection.
 const SCALAR_TARGET_TITLE: &str = "CompensationType";
 const SCALAR_TARGET_TABLE: &str = "compensation";
-/// Every fixture table whose emitted SQL feeds the stub tripwire.
+/// Issue #813: the contained value-object collection on the root entity.
+/// `AnnotationType` is a class targeted ONLY by `contains` — no table and no
+/// entity module of its own; it projects onto the child table
+/// `pay_run_annotations`, which `find_by_id` reads inside its load block
+/// (see the module doc).
+const CONTAINED_VO_TITLE: &str = "AnnotationType";
+/// The collection's feature name on `PayRunType` (the child table is
+/// `{TABLE}_{CONTAINED_CHILD_FIELD}`).
+const CONTAINED_CHILD_FIELD: &str = "annotations";
+/// Every fixture table whose emitted SQL feeds the stub tripwire. The
+/// contained child's queries are written into its PARENT's SQL file (there is
+/// no `pay_run_annotations.sql`), so the child table is not listed here.
 const FIXTURE_TABLES: &[&str] = &[TABLE, "pay_run_line", SCALAR_TARGET_TABLE];
 const APP_NAME: &str = "compilecheck";
 const WORKER_CRATE: &str = "compilecheck-compensation";
@@ -486,6 +517,87 @@ pub mod compensation {
             IncludeCompensationBatchForPayRunQuery<'c, 'a, 's, C>
         {
             pub async fn all(&self) -> Result<Vec<IncludeCompensationBatchForPayRun>, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // ── Issue #813: the contained value-object collection ──
+        //
+        // `PayRunType.annotations` (`contains AnnotationType[1..*]`) projects
+        // onto the child table `pay_run_annotations`. The LIST read is what
+        // `find_by_id` awaits INSIDE the load's `if let` success block — the
+        // shape that holds the load's `?` temporary across a second `.await`.
+
+        // --! list_pay_run_pay_run_annotations (pay_run_id) : (id, text)
+        #[derive(Debug)]
+        pub struct ListPayRunPayRunAnnotations {
+            pub id: uuid::Uuid,
+            pub text: String,
+        }
+
+        pub struct ListPayRunPayRunAnnotationsStmt;
+
+        pub fn list_pay_run_pay_run_annotations() -> ListPayRunPayRunAnnotationsStmt {
+            ListPayRunPayRunAnnotationsStmt
+        }
+
+        pub struct ListPayRunPayRunAnnotationsQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a uuid::Uuid, &'s ())>,
+        }
+
+        impl ListPayRunPayRunAnnotationsStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _pay_run_id: &'a uuid::Uuid,
+            ) -> ListPayRunPayRunAnnotationsQuery<'c, 'a, 's, C> {
+                ListPayRunPayRunAnnotationsQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> ListPayRunPayRunAnnotationsQuery<'c, 'a, 's, C> {
+            pub async fn all(&self) -> Result<Vec<ListPayRunPayRunAnnotations>, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! insert_pay_run_pay_run_annotations (id, pay_run_id, text) — exec:
+        // the adapter generates the child id and binds the parent id, then
+        // the column (text columns stringify — the SQL casts `::text`).
+        pub struct InsertPayRunPayRunAnnotationsStmt;
+
+        pub fn insert_pay_run_pay_run_annotations() -> InsertPayRunPayRunAnnotationsStmt {
+            InsertPayRunPayRunAnnotationsStmt
+        }
+
+        impl InsertPayRunPayRunAnnotationsStmt {
+            pub async fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _id: &'a uuid::Uuid,
+                _pay_run_id: &'a uuid::Uuid,
+                _text: &'a String,
+            ) -> Result<u64, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! delete_pay_run_pay_run_annotations (pay_run_id) — exec (the
+        // update path's delete-then-reinsert)
+        pub struct DeletePayRunPayRunAnnotationsStmt;
+
+        pub fn delete_pay_run_pay_run_annotations() -> DeletePayRunPayRunAnnotationsStmt {
+            DeletePayRunPayRunAnnotationsStmt
+        }
+
+        impl DeletePayRunPayRunAnnotationsStmt {
+            pub async fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _pay_run_id: &'a uuid::Uuid,
+            ) -> Result<u64, Error> {
                 unreachable!("check stub never executes")
             }
         }
@@ -1157,6 +1269,87 @@ fn compensation_schema() -> codegraph_core::types::SchemaNode {
     }
 }
 
+/// Issue #813: the contained value object (`contains AnnotationType[1..*]`).
+/// `is_entity: false` + `classification: "value_object"` is what makes the
+/// repository tree project the feature onto a child table instead of an FK
+/// or a junction. The table name is deliberately EMPTY:
+/// `ordering::compute_generation_order` runs the entity phase for every
+/// schema that carries one (the mox bridge gives each class a table name, so
+/// real models also emit a module for the value object) — that module is the
+/// value object's own CRUD, orthogonal to this leg, and a hand-built fixture
+/// keeps the stub query surface to what the leg needs.
+fn annotation_schema() -> codegraph_core::types::SchemaNode {
+    codegraph_core::types::SchemaNode {
+        namespace: None,
+        schema_id: "compensation/json/AnnotationType.json".to_string(),
+        title: CONTAINED_VO_TITLE.to_string(),
+        description: Some("A pay run annotation".to_string()),
+        schema_type: "object".to_string(),
+        classification: "value_object".to_string(),
+        domain: Some(DOMAIN.to_string()),
+        rel_path: "compensation/json/AnnotationType.json".to_string(),
+        pg_type: "text".to_string(),
+        rust_type: "String".to_string(),
+        sea_orm_type: "String".to_string(),
+        rust_type_name: "Annotation".to_string(),
+        // No table of its own: the child table is derived from the PARENT
+        // (`pay_run_annotations`).
+        pg_table_name: String::new(),
+        api_path_segment: "annotation".to_string(),
+        parent_schema: None,
+        is_entity: false,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: true,
+        custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
+    }
+}
+
+/// Issue #813: a contained value-object COLLECTION (`contains T[1..*]`) —
+/// required (non-nullable) so the create DTO carries `Vec<..>` and the
+/// response DTO the hydrated rows. The target resolves through the mock's
+/// `with_ref_target` registry (the array-item lookup the tree builder uses).
+fn fixture_vo_array_prop(name: &str, ref_target: &str) -> codegraph_core::types::PropertyNode {
+    codegraph_core::types::PropertyNode {
+        is_id: false,
+        name: name.to_string(),
+        prop_type: "array".to_string(),
+        description: Some(name.to_string()),
+        format: None,
+        is_required: true,
+        is_nullable: false,
+        is_array: true,
+        min_items: None,
+        max_items: None,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: name.to_string(),
+        // A child-table feature has no column type of its own.
+        pg_column_type: String::new(),
+        rust_field_name: name.to_string(),
+        rust_field_type: ref_target.to_string(),
+        sea_orm_type: String::new(),
+        render_strategy: "child_table".to_string(),
+        ref_target: Some(ref_target.to_string()),
+        classification: Some("value_object".to_string()),
+        classification_kind: None,
+        projection: None,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+        type_expr: None,
+    }
+}
+
 // WS4: the refers-linked CHILD entity — `role = "child"` config with a
 // synthetic parent FK (`parent_ref`), exercising the child service-op
 // plane's scoped load + nested routes under the workers topology.
@@ -1201,6 +1394,10 @@ fn fixture_mock() -> codegraph_core::mock::MockEngine {
             "compensation_id",
             "compensation/json/CompensationType.json",
         ),
+        // Issue #813: the contained value-object collection. Its child read
+        // is awaited INSIDE `find_by_id`'s load block — the shape that holds
+        // a `?` temporary across an `.await`.
+        fixture_vo_array_prop(CONTAINED_CHILD_FIELD, CONTAINED_VO_TITLE),
     ];
     let line_props = vec![
         fixture_text_prop("line_id", false),
@@ -1225,6 +1422,12 @@ fn fixture_mock() -> codegraph_core::mock::MockEngine {
         })
         .with_schema(compensation)
         .with_properties(SCALAR_TARGET_TITLE, scalar_props)
+        // Issue #813: the contained value-object collection's target. One
+        // text column, so the child table has a column to read and the
+        // adapter emits the `list_pay_run_pay_run_annotations` read.
+        .with_schema(annotation_schema())
+        .with_ref_target(CONTAINED_CHILD_FIELD, ENTITY_TITLE, annotation_schema())
+        .with_properties(CONTAINED_VO_TITLE, vec![fixture_text_prop("text", false)])
         .build()
 }
 
@@ -1922,6 +2125,67 @@ fn assert_generated_surface(output_dir: &Path) {
     }
 }
 
+/// Issue #813: the contained child read must sit INSIDE `find_by_id`'s load
+/// block. The row is read in an `if let` scrutinee, so the load's `?`
+/// temporary lives to the end of the whole statement — a non-`Send` error
+/// box is then held across the child read the success block awaits, and the
+/// `#[async_trait]` future stops being `Send`. That is the shape the compile
+/// phases (and mutation C) exist to arbitrate; this pin makes a fixture edit
+/// that silently drops it name itself instead of hollowing the gate out.
+fn assert_contained_child_read_crosses_the_find_by_id_load(output_dir: &Path) {
+    let sql = fs::read_to_string(output_dir.join("queries").join(DOMAIN).join("pay_run.sql"))
+        .expect("pay_run query SQL emits");
+    for annotation in [
+        "--! list_pay_run_pay_run_annotations (pay_run_id) : (id, text)",
+        "--! insert_pay_run_pay_run_annotations (",
+        "--! delete_pay_run_pay_run_annotations (pay_run_id)",
+    ] {
+        assert!(
+            sql.contains(annotation),
+            "the contained child table's SQL must carry `{annotation}`:\n{sql}"
+        );
+    }
+
+    let worker_src = output_dir.join("workers").join(DOMAIN).join("src");
+    let adapter = fs::read_to_string(
+        worker_src.join("domain/compensation/pay_run/cornucopia_repository_impl.rs"),
+    )
+    .expect("pay_run cornucopia repository emits");
+    let find_by_id = adapter_method(&adapter, "find_by_id");
+
+    let load =
+        "if let Some(row) = pay_run::get_pay_run().bind(db, &id).opt().await.map_err(db_err)? {";
+    let load_at = find_by_id.find(load).unwrap_or_else(|| {
+        panic!("`find_by_id` must load its row in an `if let` scrutinee:\n{find_by_id}")
+    });
+    let child_read = "pay_run::list_pay_run_pay_run_annotations().bind(db, &row.id).all().await.map_err(db_err)?;";
+    let child_at = find_by_id.find(child_read).unwrap_or_else(|| {
+        panic!("`find_by_id` must read the contained child collection:\n{find_by_id}")
+    });
+    let else_at = find_by_id[load_at..]
+        .find("} else {")
+        .unwrap_or_else(|| panic!("the load block must close with an else arm:\n{find_by_id}"));
+    assert!(
+        load_at < child_at && child_at < load_at + else_at,
+        "the child read must be awaited INSIDE the load's success block — the \
+         `?` temporary then crosses its `.await`:\n{find_by_id}"
+    );
+}
+
+/// One trait method of the emitted adapter, from its signature line through
+/// its closing brace (a `\n    }\n` at method indentation — the body is
+/// indented deeper).
+fn adapter_method(adapter: &str, method: &str) -> String {
+    let start = adapter
+        .find(&format!("    async fn {method}("))
+        .unwrap_or_else(|| panic!("the adapter must emit `{method}`:\n{adapter}"));
+    let rest = &adapter[start..];
+    let end = rest
+        .find("\n    }\n")
+        .unwrap_or_else(|| panic!("`{method}` must close:\n{rest}"));
+    rest[..end + "\n    }".len()].to_string()
+}
+
 /// Issue #781 P1: the cornucopia `?include=` hydration plane must be WIRED
 /// into the worker tree before the compile phases mean anything — SQL,
 /// adapter, query wrappers and handler call sites are four files that have to
@@ -2096,6 +2360,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
 
     assert_generated_surface(&output_dir);
     assert_include_surface(&output_dir);
+    assert_contained_child_read_crosses_the_find_by_id_load(&output_dir);
 
     let worker_src = output_dir.join("workers").join(DOMAIN).join("src");
 
@@ -2207,4 +2472,51 @@ async fn generated_worker_wasm_check_is_in_ci() {
         &native_mutated,
     );
     fs::write(&main_path, &main_original).unwrap();
+
+    // ── Phase 6: mutation C — the #813 non-Send error box re-introduced ─
+    // PR #811 mapped the cornucopia adapter's errors to
+    // `Box<dyn std::error::Error>` (no `Send + Sync`) and every native check
+    // stayed green, because the fixture's root entity had no contained
+    // child: `find_by_id` loads its row in an `if let` scrutinee, so the
+    // load's `?` temporary lives to the end of the statement, and only a
+    // contained child collection makes the success block `.await` inside
+    // that scope. The future stops being `Send` and `#[async_trait]`'s
+    // `Pin<Box<dyn Future + Send>>` cast fails — the failure that reached a
+    // consumer's workers workspace (issue #813). Re-create the pre-#813
+    // emission (trait + adapter agree on the non-Send box, so nothing else
+    // is ill-typed) and the check must REJECT it.
+    let domain_src = worker_src.join("domain").join(DOMAIN).join("pay_run");
+    let trait_path = domain_src.join("repository.rs");
+    let adapter_path = domain_src.join("cornucopia_repository_impl.rs");
+    let trait_original = fs::read_to_string(&trait_path).unwrap();
+    let adapter_original = fs::read_to_string(&adapter_path).unwrap();
+    let re_introduce_non_send_box = |source: &str, what: &str| {
+        let mutated = source.replace(
+            "Box<dyn std::error::Error + Send + Sync>",
+            "Box<dyn std::error::Error>",
+        );
+        assert!(
+            mutated != source,
+            "mutation C prerequisite: the emitted {what} must spell the Send + Sync error box"
+        );
+        mutated
+    };
+    fs::write(
+        &trait_path,
+        re_introduce_non_send_box(&trait_original, "repository trait"),
+    )
+    .unwrap();
+    fs::write(
+        &adapter_path,
+        re_introduce_non_send_box(&adapter_original, "cornucopia adapter"),
+    )
+    .unwrap();
+    let native_mutated = cargo_check(&["check", "-p", WORKER_CRATE]);
+    assert_check_red(
+        "native whole-package with the #813 non-Send error box re-introduced",
+        "future cannot be sent between threads safely",
+        &native_mutated,
+    );
+    fs::write(&trait_path, &trait_original).unwrap();
+    fs::write(&adapter_path, &adapter_original).unwrap();
 }
