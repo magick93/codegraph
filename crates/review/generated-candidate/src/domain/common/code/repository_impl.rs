@@ -21,7 +21,7 @@ impl CodeRepository<sea_orm::DatabaseTransaction> for CodeRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         _cmd: CreateCodeRequest,
-    ) -> Result<Uuid, Box<dyn std::error::Error>> {
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
         let id = Uuid::new_v4();
 
         // Insert into common.code (direct columns)
@@ -40,7 +40,7 @@ impl CodeRepository<sea_orm::DatabaseTransaction> for CodeRepositoryImpl {
         db: &DatabaseTransaction,
         id: Uuid,
         include_deleted: bool,
-    ) -> Result<Option<CodeResponse>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<CodeResponse>, Box<dyn std::error::Error + Send + Sync>> {
         let mut query = crate::entity::common_code::Entity::find()
             .filter(crate::entity::common_code::Column::Id.eq(id));
 
@@ -70,7 +70,7 @@ impl CodeRepository<sea_orm::DatabaseTransaction> for CodeRepositoryImpl {
         tx: &DatabaseTransaction,
         id: Uuid,
         _cmd: UpdateCodeRequest,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Update common.code — only set fields present in the update request
         let model = crate::entity::common_code::ActiveModel {
             id: Set(id),
@@ -90,13 +90,13 @@ impl CodeRepository<sea_orm::DatabaseTransaction> for CodeRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let model = crate::entity::common_code::Entity::find()
             .filter(crate::entity::common_code::Column::Id.eq(id))
             .filter(crate::entity::common_code::Column::DeletedAt.is_null())
             .one(tx)
             .await?
-            .ok_or_else(|| Box::<dyn std::error::Error>::from("Entity not found or already deleted"))?;
+            .ok_or_else(|| Box::<dyn std::error::Error + Send + Sync>::from("Entity not found or already deleted"))?;
         let mut active: crate::entity::common_code::ActiveModel = model.into();
         active.deleted_at = sea_orm::ActiveValue::Set(Some(chrono::Utc::now().into()));
         match active.update(tx).await {
@@ -115,7 +115,7 @@ impl CodeRepository<sea_orm::DatabaseTransaction> for CodeRepositoryImpl {
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
         include_deleted: bool,
-    ) -> Result<(Vec<CodeResponse>, u64), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<CodeResponse>, u64), Box<dyn std::error::Error + Send + Sync>> {
         let mut query = crate::entity::common_code::Entity::find()
 ;
         if !include_deleted {

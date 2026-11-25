@@ -21,7 +21,7 @@ impl PublicEventRepository<sea_orm::DatabaseTransaction> for PublicEventReposito
         &self,
         tx: &DatabaseTransaction,
         cmd: CreatePublicEventRequest,
-    ) -> Result<Uuid, Box<dyn std::error::Error>> {
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
         let id = Uuid::new_v4();
 
         // Insert into events.public_event (direct columns)
@@ -46,7 +46,7 @@ impl PublicEventRepository<sea_orm::DatabaseTransaction> for PublicEventReposito
         db: &DatabaseTransaction,
         id: Uuid,
         include_deleted: bool,
-    ) -> Result<Option<PublicEventResponse>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<PublicEventResponse>, Box<dyn std::error::Error + Send + Sync>> {
         let mut query = crate::entity::events_public_event::Entity::find()
             .filter(crate::entity::events_public_event::Column::Id.eq(id));
 
@@ -82,7 +82,7 @@ impl PublicEventRepository<sea_orm::DatabaseTransaction> for PublicEventReposito
         tx: &DatabaseTransaction,
         id: Uuid,
         cmd: UpdatePublicEventRequest,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Update events.public_event — only set fields present in the update request
         let mut model = crate::entity::events_public_event::ActiveModel {
             id: Set(id),
@@ -108,13 +108,13 @@ impl PublicEventRepository<sea_orm::DatabaseTransaction> for PublicEventReposito
         &self,
         tx: &DatabaseTransaction,
         id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let model = crate::entity::events_public_event::Entity::find()
             .filter(crate::entity::events_public_event::Column::Id.eq(id))
             .filter(crate::entity::events_public_event::Column::DeletedAt.is_null())
             .one(tx)
             .await?
-            .ok_or_else(|| Box::<dyn std::error::Error>::from("Entity not found or already deleted"))?;
+            .ok_or_else(|| Box::<dyn std::error::Error + Send + Sync>::from("Entity not found or already deleted"))?;
         let mut active: crate::entity::events_public_event::ActiveModel = model.into();
         active.deleted_at = sea_orm::ActiveValue::Set(Some(chrono::Utc::now().into()));
         match active.update(tx).await {
@@ -133,7 +133,7 @@ impl PublicEventRepository<sea_orm::DatabaseTransaction> for PublicEventReposito
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
         include_deleted: bool,
-    ) -> Result<(Vec<PublicEventResponse>, u64), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<PublicEventResponse>, u64), Box<dyn std::error::Error + Send + Sync>> {
         let mut query = crate::entity::events_public_event::Entity::find()
 ;
         if !include_deleted {

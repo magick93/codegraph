@@ -26,7 +26,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         &self,
         tx: &DatabaseTransaction,
         cmd: CreateCandidateRequest,
-    ) -> Result<Uuid, Box<dyn std::error::Error>> {
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
         let id = Uuid::new_v4();
 
         // Insert into recruiting.candidate (direct columns)
@@ -112,7 +112,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         db: &DatabaseTransaction,
         id: Uuid,
         include_deleted: bool,
-    ) -> Result<Option<CandidateResponse>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<CandidateResponse>, Box<dyn std::error::Error + Send + Sync>> {
         let mut query = crate::entity::recruiting_candidate::Entity::find()
             .filter(crate::entity::recruiting_candidate::Column::Id.eq(id));
 
@@ -259,7 +259,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         tx: &DatabaseTransaction,
         id: Uuid,
         cmd: UpdateCandidateRequest,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Update recruiting.candidate — only set fields present in the update request
         let mut model = crate::entity::recruiting_candidate::ActiveModel {
             id: Set(id),
@@ -363,7 +363,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
         include_deleted: bool,
-    ) -> Result<(Vec<CandidateResponse>, u64), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<CandidateResponse>, u64), Box<dyn std::error::Error + Send + Sync>> {
         let mut condition = sea_orm::Condition::all();
         if let Some(val) = filters.get("candidate_id") {
             condition = condition.add(crate::entity::recruiting_candidate::Column::CandidateId.eq(val.clone()));
@@ -372,7 +372,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             condition = condition.add(crate::entity::recruiting_candidate::Column::Gender.eq(val.clone()));
         }
         if let Some(val) = filters.get("referred_by_application_id") {
-            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid UUID for filter 'referred_by_application_id': {e}")))?;
+            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!("Invalid UUID for filter 'referred_by_application_id': {e}")))?;
             condition = condition.add(crate::entity::recruiting_candidate::Column::ReferredByApplicationId.eq(parsed));
         }
         if let Some(val) = filters.get("status") {
@@ -533,7 +533,7 @@ impl CandidateRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         source_id: Uuid,
-    ) -> Result<Vec<ApplicationResponse>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<ApplicationResponse>, Box<dyn std::error::Error + Send + Sync>> {
         let rows = crate::entity::recruiting_application::Entity::find()
             .filter(crate::entity::recruiting_application::Column::CandidateId.eq(source_id))
             .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
@@ -559,7 +559,7 @@ impl CandidateRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         source_ids: &[Uuid],
-    ) -> Result<std::collections::HashMap<Uuid, Vec<ApplicationResponse>>, Box<dyn std::error::Error>> {
+    ) -> Result<std::collections::HashMap<Uuid, Vec<ApplicationResponse>>, Box<dyn std::error::Error + Send + Sync>> {
         let rows = crate::entity::recruiting_application::Entity::find()
             .filter(crate::entity::recruiting_application::Column::CandidateId.is_in(source_ids.to_vec()))
             .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())

@@ -25,7 +25,7 @@ pub trait CandidateRepository<C>: Send + Sync {
         tx: &C,
         cmd: CreateCandidateRequest,
 
-    ) -> Result<Uuid, Box<dyn std::error::Error>>;
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -36,7 +36,7 @@ pub trait CandidateRepository<C>: Send + Sync {
 
         include_deleted: bool,
 
-    ) -> Result<Option<CandidateResponse>, Box<dyn std::error::Error>>;
+    ) -> Result<Option<CandidateResponse>, Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -48,7 +48,7 @@ pub trait CandidateRepository<C>: Send + Sync {
         tx: &C,
         id: Uuid,
         cmd: UpdateCandidateRequest,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -63,7 +63,7 @@ pub trait CandidateRepository<C>: Send + Sync {
 
         include_deleted: bool,
 
-    ) -> Result<(Vec<CandidateResponse>, u64), Box<dyn std::error::Error>>;
+    ) -> Result<(Vec<CandidateResponse>, u64), Box<dyn std::error::Error + Send + Sync>>;
 
 
 

@@ -21,7 +21,7 @@ impl IdentifierRepository<sea_orm::DatabaseTransaction> for IdentifierRepository
         &self,
         tx: &DatabaseTransaction,
         cmd: CreateIdentifierRequest,
-    ) -> Result<Uuid, Box<dyn std::error::Error>> {
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
         let id = Uuid::new_v4();
 
         // Insert into common.identifier (direct columns)
@@ -44,7 +44,7 @@ impl IdentifierRepository<sea_orm::DatabaseTransaction> for IdentifierRepository
         db: &DatabaseTransaction,
         id: Uuid,
         include_deleted: bool,
-    ) -> Result<Option<IdentifierResponse>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<IdentifierResponse>, Box<dyn std::error::Error + Send + Sync>> {
         let mut query = crate::entity::common_identifier::Entity::find()
             .filter(crate::entity::common_identifier::Column::Id.eq(id));
 
@@ -78,7 +78,7 @@ impl IdentifierRepository<sea_orm::DatabaseTransaction> for IdentifierRepository
         tx: &DatabaseTransaction,
         id: Uuid,
         cmd: UpdateIdentifierRequest,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Update common.identifier — only set fields present in the update request
         let mut model = crate::entity::common_identifier::ActiveModel {
             id: Set(id),
@@ -102,13 +102,13 @@ impl IdentifierRepository<sea_orm::DatabaseTransaction> for IdentifierRepository
         &self,
         tx: &DatabaseTransaction,
         id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let model = crate::entity::common_identifier::Entity::find()
             .filter(crate::entity::common_identifier::Column::Id.eq(id))
             .filter(crate::entity::common_identifier::Column::DeletedAt.is_null())
             .one(tx)
             .await?
-            .ok_or_else(|| Box::<dyn std::error::Error>::from("Entity not found or already deleted"))?;
+            .ok_or_else(|| Box::<dyn std::error::Error + Send + Sync>::from("Entity not found or already deleted"))?;
         let mut active: crate::entity::common_identifier::ActiveModel = model.into();
         active.deleted_at = sea_orm::ActiveValue::Set(Some(chrono::Utc::now().into()));
         match active.update(tx).await {
@@ -127,7 +127,7 @@ impl IdentifierRepository<sea_orm::DatabaseTransaction> for IdentifierRepository
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
         include_deleted: bool,
-    ) -> Result<(Vec<IdentifierResponse>, u64), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<IdentifierResponse>, u64), Box<dyn std::error::Error + Send + Sync>> {
         let mut condition = sea_orm::Condition::all();
         if let Some(val) = filters.get("scheme_agency_id") {
             condition = condition.add(crate::entity::common_identifier::Column::SchemeAgencyId.eq(val.clone()));

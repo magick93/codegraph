@@ -22,7 +22,7 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         cmd: CreateRsvpRequest,
-    ) -> Result<Uuid, Box<dyn std::error::Error>> {
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
         let id = Uuid::new_v4();
 
         // Insert into rsvp.rsvp (direct columns)
@@ -54,7 +54,7 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
         db: &DatabaseTransaction,
         id: Uuid,
         include_deleted: bool,
-    ) -> Result<Option<RsvpResponse>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<RsvpResponse>, Box<dyn std::error::Error + Send + Sync>> {
         let mut query = crate::entity::rsvp_rsvp::Entity::find()
             .filter(crate::entity::rsvp_rsvp::Column::Id.eq(id));
 
@@ -109,7 +109,7 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
         tx: &DatabaseTransaction,
         id: Uuid,
         cmd: UpdateRsvpRequest,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Update rsvp.rsvp — only set fields present in the update request
         let mut model = crate::entity::rsvp_rsvp::ActiveModel {
             id: Set(id),
@@ -144,13 +144,13 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let model = crate::entity::rsvp_rsvp::Entity::find()
             .filter(crate::entity::rsvp_rsvp::Column::Id.eq(id))
             .filter(crate::entity::rsvp_rsvp::Column::DeletedAt.is_null())
             .one(tx)
             .await?
-            .ok_or_else(|| Box::<dyn std::error::Error>::from("Entity not found or already deleted"))?;
+            .ok_or_else(|| Box::<dyn std::error::Error + Send + Sync>::from("Entity not found or already deleted"))?;
         let mut active: crate::entity::rsvp_rsvp::ActiveModel = model.into();
         active.deleted_at = sea_orm::ActiveValue::Set(Some(chrono::Utc::now().into()));
         match active.update(tx).await {
@@ -169,7 +169,7 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
         include_deleted: bool,
-    ) -> Result<(Vec<RsvpResponse>, u64), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<RsvpResponse>, u64), Box<dyn std::error::Error + Send + Sync>> {
         let mut condition = sea_orm::Condition::all();
         if let Some(val) = filters.get("status") {
             condition = condition.add(crate::entity::rsvp_rsvp::Column::Status.eq(val.clone()));

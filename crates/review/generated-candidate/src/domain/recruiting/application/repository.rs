@@ -25,7 +25,7 @@ pub trait ApplicationRepository<C>: Send + Sync {
         tx: &C,
         cmd: CreateApplicationRequest,
 
-    ) -> Result<Uuid, Box<dyn std::error::Error>>;
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -36,7 +36,7 @@ pub trait ApplicationRepository<C>: Send + Sync {
 
         include_deleted: bool,
 
-    ) -> Result<Option<ApplicationResponse>, Box<dyn std::error::Error>>;
+    ) -> Result<Option<ApplicationResponse>, Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -48,7 +48,7 @@ pub trait ApplicationRepository<C>: Send + Sync {
         tx: &C,
         id: Uuid,
         cmd: UpdateApplicationRequest,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -56,7 +56,7 @@ pub trait ApplicationRepository<C>: Send + Sync {
         &self,
         tx: &C,
         id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 
 
@@ -69,7 +69,7 @@ pub trait ApplicationRepository<C>: Send + Sync {
 
         include_deleted: bool,
 
-    ) -> Result<(Vec<ApplicationResponse>, u64), Box<dyn std::error::Error>>;
+    ) -> Result<(Vec<ApplicationResponse>, u64), Box<dyn std::error::Error + Send + Sync>>;
 
 
 

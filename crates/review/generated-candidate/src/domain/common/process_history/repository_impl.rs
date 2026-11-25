@@ -21,7 +21,7 @@ impl ProcessHistoryRepository<sea_orm::DatabaseTransaction> for ProcessHistoryRe
         &self,
         tx: &DatabaseTransaction,
         cmd: CreateProcessHistoryRequest,
-    ) -> Result<Uuid, Box<dyn std::error::Error>> {
+    ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
         let id = Uuid::new_v4();
 
         // Insert into common.process_history (direct columns)
@@ -42,7 +42,7 @@ impl ProcessHistoryRepository<sea_orm::DatabaseTransaction> for ProcessHistoryRe
         db: &DatabaseTransaction,
         id: Uuid,
         include_deleted: bool,
-    ) -> Result<Option<ProcessHistoryResponse>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<ProcessHistoryResponse>, Box<dyn std::error::Error + Send + Sync>> {
         let mut query = crate::entity::common_process_history::Entity::find()
             .filter(crate::entity::common_process_history::Column::Id.eq(id));
 
@@ -74,7 +74,7 @@ impl ProcessHistoryRepository<sea_orm::DatabaseTransaction> for ProcessHistoryRe
         tx: &DatabaseTransaction,
         id: Uuid,
         cmd: UpdateProcessHistoryRequest,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Update common.process_history — only set fields present in the update request
         let mut model = crate::entity::common_process_history::ActiveModel {
             id: Set(id),
@@ -96,13 +96,13 @@ impl ProcessHistoryRepository<sea_orm::DatabaseTransaction> for ProcessHistoryRe
         &self,
         tx: &DatabaseTransaction,
         id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let model = crate::entity::common_process_history::Entity::find()
             .filter(crate::entity::common_process_history::Column::Id.eq(id))
             .filter(crate::entity::common_process_history::Column::DeletedAt.is_null())
             .one(tx)
             .await?
-            .ok_or_else(|| Box::<dyn std::error::Error>::from("Entity not found or already deleted"))?;
+            .ok_or_else(|| Box::<dyn std::error::Error + Send + Sync>::from("Entity not found or already deleted"))?;
         let mut active: crate::entity::common_process_history::ActiveModel = model.into();
         active.deleted_at = sea_orm::ActiveValue::Set(Some(chrono::Utc::now().into()));
         match active.update(tx).await {
@@ -121,7 +121,7 @@ impl ProcessHistoryRepository<sea_orm::DatabaseTransaction> for ProcessHistoryRe
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
         include_deleted: bool,
-    ) -> Result<(Vec<ProcessHistoryResponse>, u64), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<ProcessHistoryResponse>, u64), Box<dyn std::error::Error + Send + Sync>> {
         let mut query = crate::entity::common_process_history::Entity::find()
 ;
         if !include_deleted {
