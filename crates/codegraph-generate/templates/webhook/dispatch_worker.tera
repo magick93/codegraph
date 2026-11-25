@@ -411,8 +411,12 @@ async fn dead_letter(
         .execute("SELECT pgmq.send($1, $2)", &[&dlq, &envelope])
         .await
         .map_err(|e| e.to_string())?;
+    // The casts are load-bearing (issue #825): pgmq ships BOTH
+    // delete(text, bigint) and delete(text, bigint[]), and tokio-postgres
+    // declares no parameter types — an untyped `$1, $2` is ambiguous, so
+    // the move never completes and the poison message redelivers forever.
     client
-        .execute("SELECT pgmq.delete($1, $2)", &[&queue, &msg_id])
+        .execute("SELECT pgmq.delete($1::text, $2::bigint)", &[&queue, &msg_id])
         .await
         .map_err(|e| e.to_string())?;
     tracing::warn!(
@@ -461,11 +465,13 @@ async fn sweep_archive(source: &dyn crate::db_client::ClientSource) -> Result<()
         .map_err(|e| e.to_string())
 }
 {% endif %}
-/// Delete a processed pgmq message.
+/// Delete a processed pgmq message. The parameter casts are load-bearing
+/// (see `dead_letter`): without them the delete is ambiguous, the message
+/// is never removed, and every later drain replays it.
 async fn delete_pgmq_msg(state: &AppState, queue_name: &str, msg_id: i64) -> Result<(), String> {
     let client = state.client_source.client().await.map_err(|e| e.to_string())?;
     client
-        .execute("SELECT pgmq.delete($1, $2)", &[&queue_name, &msg_id])
+        .execute("SELECT pgmq.delete($1::text, $2::bigint)", &[&queue_name, &msg_id])
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
