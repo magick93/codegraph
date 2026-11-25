@@ -58,6 +58,32 @@ class WidgetType {
 }
 "#;
 
+/// A `.ddd` design binding a machine to `WidgetPartType.status` whose
+/// initial state (`Retired`) is NOT the codelist's first declared value
+/// (`Active`). Issue #752: the create body must seed `Retired`, not
+/// `values[0]`.
+const INVENTORY_DDD: &str = r#"import "inventory.mox";
+
+application Inventory {
+    base inventory
+
+    module inventory {
+        entity WidgetPartType scaffold repository WidgetPartRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+
+        machine status: PartStatus {
+            initial Retired;
+            Retired -> Active via Reactivate;
+            terminal Active;
+        }
+    }
+}
+"#;
+
 const DOMAINS_TOML: &str = r#"
 [defaults]
 operations = ["create", "read", "update", "delete", "list"]
@@ -73,6 +99,7 @@ struct Fixture {
     root: tempfile::TempDir,
     config: PathBuf,
     mox: PathBuf,
+    ddd: Option<PathBuf>,
 }
 
 fn write_fixture() -> Fixture {
@@ -83,8 +110,19 @@ fn write_fixture() -> Fixture {
     Fixture {
         config: root.path().join("domains.toml"),
         mox: root.path().join("model/inventory.mox"),
+        ddd: None,
         root,
     }
+}
+
+/// The same fixture plus a `.ddd` machine whose initial state is not the
+/// codelist's first value (issue #752).
+fn write_machine_fixture() -> Fixture {
+    let mut fixture = write_fixture();
+    let ddd = fixture.root.path().join("model/inventory.ddd");
+    fs::write(&ddd, INVENTORY_DDD).unwrap();
+    fixture.ddd = Some(ddd);
+    fixture
 }
 
 fn run_args<'a>(fixture: &'a Fixture, output: &'a Path) -> codegraph::driver::RunArgs<'a> {
@@ -107,7 +145,7 @@ fn run_args<'a>(fixture: &'a Fixture, output: &'a Path) -> codegraph::driver::Ru
         openapi_files: &[],
         mox_files: std::slice::from_ref(&fixture.mox),
         rosetta_files: &[],
-        ddd_files: &[],
+        ddd_files: fixture.ddd.as_slice(),
         evt_files: &[],
         deploy_files: &[],
         ifml_framework: &[],
@@ -532,5 +570,43 @@ async fn ops_manifest_carries_the_generated_hurl_section() {
     assert_eq!(
         hurl.org_id_b.as_deref(),
         Some("00000000-0000-0000-0000-000000000002")
+    );
+}
+
+/// Issue #752: a machine whose declared initial is not the codelist's first
+/// value seeds the CREATE body (and the PUT) with the DECLARED initial. The
+/// action simulation (`state_aware_legs`) starts from the same graph value,
+/// so the two now agree.
+#[tokio::test]
+async fn machine_initial_seeds_the_create_body_not_the_first_enum_value() {
+    let fixture = write_machine_fixture();
+    let output = fixture.root.path().join("generated");
+    codegraph::driver::run(run_args(&fixture, &output))
+        .await
+        .expect("pipeline run with a .ddd machine must succeed");
+    let hurl_dir = output.join("hurl");
+    let entries: Vec<String> = fs::read_dir(&hurl_dir)
+        .unwrap()
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    let widget_part = entries
+        .iter()
+        .find(|n| n.ends_with("_widget_part.hurl"))
+        .unwrap_or_else(|| panic!("expected a widget_part contract, got {entries:?}"));
+    let body = fs::read_to_string(hurl_dir.join(widget_part)).unwrap();
+
+    assert!(
+        body.contains(r#""status": "Retired""#),
+        "the create body must seed the machine's declared initial (Retired), \
+         not the codelist's first value (Active):\n{body}"
+    );
+    assert!(
+        body.contains(r#"jsonpath "$.data.status" == "Retired""#),
+        "the echo must assert the declared initial:\n{body}"
+    );
+    assert!(
+        !body.contains(r#""status": "Active""#),
+        "the codelist's first value must not be seeded:\n{body}"
     );
 }
