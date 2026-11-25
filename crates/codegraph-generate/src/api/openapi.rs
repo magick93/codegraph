@@ -346,15 +346,23 @@ impl GlobalGenerator for OpenApiGenerator {
                         parent_entity,
                         parent_domain,
                         media_fields,
-                        has_machine: crate::machines::machine_surface_for_entity(
-                            db,
-                            title,
-                            entity_cfg
-                                .and_then(|ec| ec.workflow.as_ref())
-                                .map(|wf| wf.status_field.as_str()),
-                        )
-                        .await
-                        .is_some(),
+                        // The router's own expression (issues #817 + #824):
+                        // the `/machine` route is monolith-only and exists
+                        // only where the read model has a loader, so the
+                        // document never lists a path the router does not
+                        // mount.
+                        has_machine: !project.is_workers_topology()
+                            && crate::machines::machine_read_model_surface_for_entity(
+                                db,
+                                config,
+                                domain_name,
+                                title,
+                                entity_cfg
+                                    .and_then(|ec| ec.workflow.as_ref())
+                                    .map(|wf| wf.status_field.as_str()),
+                            )
+                            .await
+                            .is_some(),
                         media_mode_presigned,
                     });
                 }
@@ -395,16 +403,21 @@ impl GlobalGenerator for OpenApiGenerator {
                     parent_entity: None,
                     parent_domain: None,
                     media_fields,
-                    has_machine: crate::machines::machine_surface_for_entity(
-                        db,
-                        title,
-                        domain_entry
-                            .get_entity_config(title)
-                            .and_then(|ec| ec.workflow.as_ref())
-                            .map(|wf| wf.status_field.as_str()),
-                    )
-                    .await
-                    .is_some(),
+                    // The router's own expression (issues #817 + #824) — see
+                    // the configured-entity arm above.
+                    has_machine: !project.is_workers_topology()
+                        && crate::machines::machine_read_model_surface_for_entity(
+                            db,
+                            config,
+                            domain_name,
+                            title,
+                            domain_entry
+                                .get_entity_config(title)
+                                .and_then(|ec| ec.workflow.as_ref())
+                                .map(|wf| wf.status_field.as_str()),
+                        )
+                        .await
+                        .is_some(),
                     media_mode_presigned,
                 });
             }

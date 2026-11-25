@@ -307,10 +307,15 @@ impl DomainGenerator for RouterGenerator {
                 // The machine read-model route (issue #817): graph-driven,
                 // monolith-only (the #703 posture — workers compile no
                 // root `src/` tree, so the route would reference a module
-                // no worker crate carries).
+                // no worker crate carries), and only where the read model
+                // has a loader (issue #824) — the SAME resolver the
+                // emission site uses, so the router never mounts a module
+                // that was not emitted.
                 let has_machine = !project.is_workers_topology()
-                    && crate::machines::machine_surface_for_entity(
+                    && crate::machines::machine_read_model_surface_for_entity(
                         db,
+                        config,
+                        domain,
                         title,
                         workflow.as_ref().map(|wf| wf.status_field.as_str()),
                     )
@@ -723,10 +728,13 @@ pub async fn build_router_context(
 
             // The machine read-model route (issue #817): the SAME helper
             // as the sibling build_router_context site so the api contract
-            // cannot drift (#590 precedent). Monolith-only (#703 posture).
+            // cannot drift (#590 precedent). Monolith-only (#703 posture)
+            // and only where the read model has a loader (issue #824).
             let has_machine = !project.is_workers_topology()
-                && crate::machines::machine_surface_for_entity(
+                && crate::machines::machine_read_model_surface_for_entity(
                     db,
+                    config,
+                    domain,
                     title,
                     workflow.as_ref().map(|wf| wf.status_field.as_str()),
                 )

@@ -67,23 +67,34 @@ impl IfmlE2eTestGenerator {
         id_param: Option<&str>,
     ) -> Option<super::super::spec_payload::MachineTest> {
         use super::super::spec_payload::{MachineTest, MachineTransitionLeg};
-        use crate::machines::machine_surface_for_entity;
+        use crate::machines::machine_read_model_surface_for_title;
 
         let entity = c.entity.as_deref()?;
         // The surface chain mirrors the route generator (plain, then
         // `{entity}Type`) — the UI and the specs cannot disagree about
-        // which entities are machine-bearing. The workflow scope rides
-        // along (issue #818): a dual entity specs the machine bound to the
-        // workflow's own status field.
+        // which entities have a machine read model (issue #824: the SAME
+        // loader rule the api plane emits by, so no spec drives a route
+        // that was withheld). The workflow scope rides along (issue #818):
+        // a dual entity specs the machine bound to the workflow's own
+        // status field.
         let scope =
             |title: &str| workflow_for_entity(config, title).map(|wf| wf.status_field.clone());
-        let surface = match machine_surface_for_entity(db, entity, scope(entity).as_deref()).await {
+        let surface = match machine_read_model_surface_for_title(
+            db,
+            config,
+            entity,
+            scope(entity).as_deref(),
+        )
+        .await
+        {
             Some(s) => s,
             None => {
-                machine_surface_for_entity(
+                let suffixed = format!("{entity}{}", config.defaults.type_suffix);
+                machine_read_model_surface_for_title(
                     db,
-                    &format!("{entity}{}", config.defaults.type_suffix),
-                    scope(&format!("{entity}{}", config.defaults.type_suffix)).as_deref(),
+                    config,
+                    &suffixed,
+                    scope(&suffixed).as_deref(),
                 )
                 .await?
             }

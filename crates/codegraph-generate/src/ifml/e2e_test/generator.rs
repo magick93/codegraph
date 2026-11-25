@@ -357,9 +357,11 @@ impl IfmlE2eTestGenerator {
             None => HashMap::new(),
         };
         let mut ux_specs: Vec<(String, UxViewTest)> = Vec::new();
-        // The machine-bearing entity set (issue #817): one graph walk, the
-        // SAME resolution the api plane uses (`machine_surface_for_entity`).
-        let machine_entities = crate::machines::machine_bearing_titles(db).await;
+        // The entity set with a machine read MODEL (issues #817 + #824):
+        // one graph walk, narrowed by the SAME loader rule the api plane
+        // emits the read model by — a machine-bearing design without a
+        // loader gets neither machine specs nor machine POM methods.
+        let machine_entities = crate::machines::machine_read_model_titles(db, config).await;
         let human_actors: Vec<String> = if auth_enabled || model.policy.is_some() {
             let mut names: Vec<String> = db
                 .get_actors()
