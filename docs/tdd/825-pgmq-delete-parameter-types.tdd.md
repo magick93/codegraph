@@ -148,6 +148,7 @@ The only generated-text change is the one statement. What moved:
 | ux canary `ux_rules_pre_feature_tree.sha256` | `11180755…` → `dc643f70…` | see below |
 | forms canary `forms_pre_feature_tree.sha256` | `5b33d974…` → `5e0ae9a6…` | see below |
 | review fixture `crates/review/generated-candidate/` | 1 file, 1 line: `src/webhook_dispatch.rs` | the drift pin names the file; `git diff` after the in-place regen |
+| `policy_rls_tests::flag_off_full_output_hashes.snap` | 1 key of 1042: `src/webhook_dispatch.rs` (`3c2287a7…` → `2cf93232…`), plus insta's `assertion_line` metadata on re-bless | the pending `.snap.new` diffed against the baseline before blessing (no blanket `INSTA_UPDATE`) — found by PR CI, not locally: it lives in `policy_rls_tests`, a different binary from `policy_rls_snapshot_tests` |
 | `evt_golden/dispatch_pre_evt.rs` | 2 sites, identical to the template edit | `dispatch_template_flag_off_is_byte_identical_to_pre_evt` stays green (48 `evt_events` pins) |
 | `handler_matrix_tests` / `policy_rls_snapshot_tests` (8) / `machine_read_model_tests` (10) / `template_harness` (125) | **none** | tests pass unchanged |
 | `ux_rules_pre_feature_ifml_tree.sha256` / `forms_pre_feature_ifml_tree.sha256` | **none** | the IFML snapshots carry no dispatcher; unchanged on disk |
@@ -178,7 +179,7 @@ Supabase image; the full matrix rides the PR's CI.
 | `events_runtime_tests -- --ignored` (monolith leg, shared stand-in, the two removal assertions) | pass (61 s) |
 | `cargo test -p codegraph-generate --lib -- evt_events` | 48 pass (the flag-off golden is byte-identical to the template) |
 | `upstream_overrides_tests` (8) / `template_harness` (125) / `machine_read_model_tests` (10) / `policy_rls_snapshot_tests` (8) / `handler_matrix_tests` / `file_length_contract` | pass |
-| `ux_rules_byte_identity_tests` (4) / `forms_byte_identity_tests` (4) | pass after the §3 re-bless |
+| `ux_rules_byte_identity_tests` (4) / `forms_byte_identity_tests` (4) / `policy_rls_tests` (17) | pass after the §3 re-bless |
 | `review_fixture_drift_tests` | pass once the regenerated fixture is committed (the pin compares against `git archive HEAD` by design) |
 | `cargo fmt --all -- --check` | pass |
 | `cargo clippy --workspace --all-targets -- -D warnings -D clippy::too_many_lines` | pass |

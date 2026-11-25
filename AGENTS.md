@@ -2192,9 +2192,11 @@ parameter's type from the bound value, so the server never has to guess.
 - **Byte identity**: `src/webhook_dispatch.rs` moves by ONE line in the
   flag-OFF trees (the drain delete — the dead-letter twin renders only
   with the events plane on). The `forms`/`ux_rules` canaries were
-  re-blessed and the review fixture regenerated for exactly that,
-  enumerated per file against the pre-change template through the driver's
-  template-override directory (235 files, 1 changed).
+  re-blessed, the `policy_rls_tests` per-file hash snapshot re-blessed
+  for its one `src/webhook_dispatch.rs` key, and the review fixture
+  regenerated — enumerated per file against the pre-change template
+  through the driver's template-override directory (235 files, 1
+  changed).
 - **Gates**: `cargo test -p codegraph --test
   webhook_dispatch_pgmq_tests` (3 node-free + the ignored runtime leg),
   `--test events_runtime_tests -- --ignored`,
