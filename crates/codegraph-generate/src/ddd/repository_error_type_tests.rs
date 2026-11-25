@@ -7,9 +7,9 @@
 //! (`cornucopia_repository_impl.rs`), both under `#[async_trait]`, which
 //! requires every method future to be `Send`. A `?` that sits in the
 //! scrutinee of an `if let` (or in the head of a `for`) holds its `Result`
-//! temporary until the end of the whole statement — so when the success block
-//! goes on to `.await` something else, the error type is live across that
-//! await. PR #811 replaced the cornucopia adapter's `|e| e.to_string()`
+//! temporary until the end of the whole statement — so when the success
+//! block or loop body goes on to `.await` something else, the error type is
+//! live across that await. PR #811 replaced the cornucopia adapter's `|e| e.to_string()`
 //! mapping with `db_err`, returning `Box<dyn std::error::Error>` (no
 //! `Send + Sync`): a `String` crossing the await was fine, the non-Send box
 //! was not. The shape exists exactly for an entity with a contained
@@ -25,6 +25,10 @@
 //!   ` + Send + Sync` (the trait template, both provider emitters, and the
 //!   include adapter). A non-Send box anywhere in the plane re-opens the hole
 //!   for the shape that holds a `?` temporary across an await.
+//! - [`no_source_under_the_plane_directories_spells_a_non_send_box`] — the
+//!   closed set: the same rule over the plane's WHOLE directories at run
+//!   time, so an emitter that joins them (a new module, a #751 split of one
+//!   of the seven) cannot bring the spelling in unlisted.
 //! - [`db_err_only_maps_cornucopia_query_results`] — `db_err` takes
 //!   `tokio_postgres::Error`, so it may only be attached to a query call.
 //!   PR #811's blanket replacement also attached it to `serde_json::to_value`
@@ -170,6 +174,105 @@ fn the_checker_checks_every_occurrence_on_a_line() {
 fn the_checker_skips_comment_lines() {
     let source = "// the pre-#813 spelling was Box<dyn std::error::Error>\n";
     assert!(non_send_spelling_lines(source).is_empty(), "{source}");
+}
+
+/// The sources under the plane directories that are exempt from the closed
+/// set, each with its reason.
+///
+/// - this module: its KAT samples legitimately carry the non-Send spelling
+///   as a literal;
+/// - `errors.tera`: it deliberately keeps BOTH `From<Box<dyn std::error::Error>>`
+///   impls — the generated `errors.rs` must not move, so the non-Send one
+///   stays beside the Send + Sync one. It is a consumer of the box, never a
+///   producer: nothing it emits makes a future `!Send`.
+const EXEMPT_LABELS: &[(&str, &str)] = &[
+    (
+        "src/ddd/repository_error_type_tests.rs",
+        "the pins' own KAT samples",
+    ),
+    (
+        "templates/ddd/errors.tera",
+        "keeps both From impls by design (errors.rs must not move)",
+    ),
+];
+
+/// Every `.rs` under `src/ddd/` and `.tera` under `templates/ddd/` — the
+/// plane's directories, listed in [`REPOSITORY_PLANE_SOURCES`] or not.
+fn plane_directory_sources() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, label_root: &str, out: &mut Vec<(String, String)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let label = format!(
+                "{label_root}/{}",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            );
+            if path.is_dir() {
+                walk(&path, &label, out);
+            } else if matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("rs" | "tera")
+            ) && let Ok(text) = std::fs::read_to_string(&path)
+            {
+                out.push((label, text));
+            }
+        }
+    }
+    let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut out = Vec::new();
+    walk(&crate_root.join("src").join("ddd"), "src/ddd", &mut out);
+    walk(
+        &crate_root.join("templates").join("ddd"),
+        "templates/ddd",
+        &mut out,
+    );
+    out
+}
+
+/// The closed set. [`repository_plane_error_boxes_are_send_sync`] pins the
+/// seven listed sources at COMPILE time (`include_str!`); this walks the
+/// plane's whole directories at RUN time, so an emitter that joins them — a
+/// new module, a #751 split of one of the seven — cannot bring the non-Send
+/// spelling in unlisted. The walk must find every listed `src/ddd/…` source,
+/// so a moved directory fails here instead of passing over nothing.
+#[test]
+fn no_source_under_the_plane_directories_spells_a_non_send_box() {
+    let sources = plane_directory_sources();
+    let labels: Vec<&str> = sources.iter().map(|(label, _)| label.as_str()).collect();
+    for (listed, _) in REPOSITORY_PLANE_SOURCES {
+        if listed.starts_with("src/ddd/") {
+            assert!(
+                labels.contains(listed),
+                "the plane walk must reach the listed source `{listed}` (found: {labels:?})"
+            );
+        }
+    }
+    // An exemption whose file is gone is a stale entry: fail, never rot.
+    for (exempt, reason) in EXEMPT_LABELS {
+        assert!(
+            labels.contains(exempt),
+            "stale exemption `{exempt}` ({reason}): the file is no longer under the plane \
+             directories — remove the entry"
+        );
+    }
+
+    let mut offenders = Vec::new();
+    for (label, text) in &sources {
+        if EXEMPT_LABELS.iter().any(|(exempt, _)| exempt == label) {
+            continue;
+        }
+        for (line, line_text) in non_send_spelling_lines(text) {
+            offenders.push(format!("{label}:{line}: {line_text}"));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "no source under the repository plane's directories may spell a non-Send error box \
+         (issue #813):\n{}",
+        offenders.join("\n")
+    );
 }
 
 /// `db_err` takes `tokio_postgres::Error`, so it may only be attached to a
