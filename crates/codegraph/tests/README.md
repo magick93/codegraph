@@ -42,7 +42,10 @@ make emitter breakages fail in seconds naming the plane.
 
 Existing pins: `mox_plane_compile_tests` (#517),
 `repository_compile_tests` and `command_compile_tests` (#551),
-`worker_wasm_compile_tests` (#550), `workers_gateway_compile_tests`
+`worker_wasm_compile_tests` (#550 — including the #813 contained-child
+repository leg: the fixture root carries a `contains VO[]` collection, and
+mutation C re-introduces the non-`Send` repository error box),
+`workers_gateway_compile_tests`
 (#521), `wrapper_compile_tests` (#348), `grafeo_e2e_tests` compile gate
 (backstop). The survey table with the per-plane assignments lives in
 AGENTS.md ("Compile-pin policy").
@@ -95,3 +98,8 @@ Tracked follow-ups reference the AGENTS.md policy section:
 - Integration catalog/config handlers under the monolith (#521 pins the
   gateway leg).
 - Cornucopia repository impl scoped pin (#550 covers it whole-worker).
+- Cornucopia as-json `find_tree` arm (`hierarchy_field` + `tree_include`)
+  — no fixture reaches it; string-pinned only
+  (`ddd::repository_error_type_tests`, issue #813). A permanent pin needs a
+  `tree_include` fixture (a via entity + parent + the two `tree_*` stub
+  queries).

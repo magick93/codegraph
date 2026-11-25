@@ -3847,7 +3847,7 @@ their runtime substitute.
 | SeaORM repository impl (trait + emitter + DTO shims; child tables, junctions, includes, **design finders**, **media child exclusion (#719)**) | `repository_compile_tests` | native, scratch crate (caught the #551 design-finder double-close — never compiled anywhere); the `media_repository_plane_compiles` leg carries a `[media]` through-app fixture pinning the #707 shape — request DTO pair omits the reference, response DTO keeps it, the child insert/replace loops skip the media child while reads hydrate it — and no wasm32 leg (SeaORM; cornucopia/wasm rides #550) |
 | cornucopia include plane (adapter include methods + `query.rs` wrappers + handler include blocks; DEFAULT ON since #781 P1 — the preview flag is deleted; every unimplemented SHAPE still fails closed per path with a named 501) | `cornucopia_include_compile_tests` | native, scratch crate over the stubbed `cornucopia-queries` (the `hooks_cornucopia_runtime_tests` harness pattern); the stub query surface is pinned EXACTLY to the emitted SQL `--! include_*` names and the handler's call set (a renamed query fails before compiling); teeth validated by row-shape (E0609) and bind-arity (E0061) mutations; wasm32 rides the #550 worker gate |
 | command + query (hooks-gated + ext-points-gated), push dispatcher (monolith leg), hooks SPI types | `command_compile_tests` | native, scratch crate; the cornucopia command/repo legs ride #550's wasm gate + the runtime pin |
-| worker crate (cornucopia command + repository impl + dispatcher wasm leg) | `worker_wasm_compile_tests -- --ignored` | native + wasm32 whole-worker (#550) |
+| worker crate (cornucopia command + repository impl + dispatcher wasm leg; the #813 contained-child repository leg) | `worker_wasm_compile_tests -- --ignored` | native + wasm32 whole-worker (#550); the fixture root carries a contained value-object collection, so `find_by_id` / `list` / the design finder await a child read INSIDE the scope that holds a `?` temporary — mutation C re-introduces the non-`Send` error box and the native check must reject it (see the repository-plane error contract below) |
 | gateway crate (integration catalog) | `workers_gateway_compile_tests -- --ignored` | #521 |
 | media route handler + session module (`api/media_route.tera`, `media/session.tera`) | `media_compile_tests` | native + wasm32 for the storage plane; the route handler and `session.rs` native-only (scratch crate stubs AppState/ApiKeyInfo, compiles the REAL storage trait + `scaffold/error.tera`; the presigned branch has its own leg). The #704 OpenAPI registration rides the same scratch tree as `src/openapi_probe.rs` — a `#[derive(utoipa::OpenApi)]` probe carrying the registration SHAPE (the paths `presign` \| `upload`, `display`, `remove`, and the presigned `PresignRequest` schema entry) with the module stem and handler names derived from the emitted media module — so that shape is COMPILED against the real handlers (the `*_media_route_handler_compiles_in_isolation` legs, through-app + presigned + depth-2 + nested). The probe MIRRORS the templates rather than consuming their output: the emitted registrations' text is held by the `media_pipeline_tests` drift pin, and the document the templates actually emit is compiled by `media_runtime_tests` (builds and boots the generated through-app app, root + nested child). The full per-domain document is not compiled here (it needs the whole app crate: every handler + DTO). Teeth: a probe registering `::bogus`, or `::presign` in through-app mode, fails E0433/E0425 (`__path_*` not found); a schema entry naming a type the module lacks fails E0425. Dropping `PresignRequest` from `components(schemas(...))` does NOT fail compilation (utoipa resolves `request_body` from the annotation) — that half is caught by the probe's derived-shape assertion + the `media_pipeline_tests` text pin |
 | full app (every generator the default plan emits) | `grafeo_e2e_tests -- grafeo_generated_code_compiles` | the whole-tree backstop; failures are not plane-attributable |
@@ -3858,6 +3858,32 @@ Adding a new Rust-emitting generator: add its compile pin in the SAME PR
 (follow `crates/codegraph/tests/README.md`); the full-app gate is a
 backstop, never the pin. Teeth are validated à la #550 — break the
 emission, the pin must fail, revert.
+
+**Repository-plane error contract (issue #813).** The `{Entity}Repository<C>`
+trait is provider-neutral, so its error type is ONE spelling shared by the
+SeaORM impl and the cornucopia adapter:
+`Box<dyn std::error::Error + Send + Sync>` — every trait signature, impl
+signature and closure ascription in the plane. Both impls are
+`#[async_trait]` (every method future `Send`), and a `?` in an `if let`
+scrutinee or a `for` head holds its `Result` temporary to the end of the
+whole statement, so a non-`Send` box is live across whatever the success
+block / loop body awaits. The shape that turns a repository future `!Send`
+is a cornucopia entity with a CONTAINED child collection (`contains VO[]`):
+`find_by_id` reads the child rows inside the load's success block, `list`
+and the design finders inside their row loops. PR #811's `db_err` returned
+the non-`Send` box and every native check stayed green on a childless
+fixture; a consumer's workers workspace failed `cargo check`. Two teeth:
+`ddd::repository_error_type_tests` (node-free — every `dyn std::error::Error`
+in the seven plane sources (`include_str!`) and anywhere under the plane's
+directories (a run-time walk, so a split-off module cannot join unlisted)
+is followed by ` + Send + Sync`; `db_err` maps
+query results only; the as-json `find_tree` serialization error has its own
+`SERIALIZATION_ERROR_MAP`) and the `worker_wasm_compile_tests` #813 leg
+(above). Consumer note: a HAND-WRITTEN impl of a generated `*Repository<C>`
+trait must spell the Send + Sync box in every method signature or it stops
+implementing the trait — generated code only needs a regenerate. Known gap:
+no compile pin reaches the cornucopia as-json `find_tree` arm
+(`hierarchy_field` + `tree_include`); it is string-pinned only.
 
 ## UX Rules (#286 ux-rules branch)
 
@@ -5676,8 +5702,11 @@ Hyperdrive wasm32).
   tree, repository trait/DTOs) over the runtime-capable cornucopia-queries
   stub (now shared as `tests/test_framework/cornucopia_queries_stub.rs`)
   plus ONE hand-written repository stand-in (same type/method shape, real
-  INSERT via `GenericClient` — the repo plane has its own pins), then runs
-  against real Postgres: `hook_fires_on_create_under_cornucopia` (hook
+  INSERT via `GenericClient` — the repo plane has its own pins; its method
+  signatures spell the trait's `Box<dyn std::error::Error + Send + Sync>`
+  (issue #813), so a change to the plane's error type must move the
+  stand-in in lockstep or it stops implementing the generated trait), then
+  runs against real Postgres: `hook_fires_on_create_under_cornucopia` (hook
   observes + SQL on the OPEN tx, post-commit marker on a fresh connection,
   row lands) and `abort_rolls_back_under_cornucopia` (Conflict + row AND
   marker absent). Wired into the `test-ops-integration` CI job.
@@ -5851,7 +5880,10 @@ the same detail. This exists because `tokio-postgres` renders a server
 error as the bare string `db error` — the SQLSTATE/message/detail/hint
 live on the error's `source()`, so a stringified error loses the only
 diagnostic a 500 had. The cornucopia repository adapter therefore
-preserves the typed error (`db_err` boxes it) instead of flattening to a
+preserves the typed error (`db_err` boxes it — in a `Send + Sync` box,
+issue #813: a non-`Send` box makes a repository future `!Send` whenever a
+`?` temporary crosses an `.await`; see "Repository-plane error contract")
+instead of flattening to a
 String. Pin: `template_harness::database_errors_keep_their_source_detail`
 (+ the emitted code compiles through `cornucopia_include_compile_tests`
 and the workers wasm gate).
