@@ -115,52 +115,74 @@ fn push_named_transition_arm(block: &mut String, op: &ServiceOpRoute, state: &Se
 }
 
 /// The body-driven arm: the op selects no transition of its own, so a
-/// request that moves the machine field must land on a transition the
-/// machine declares from the current state. The candidate universe (the
-/// machine's declared targets) is probed per pair through the kernel
-/// (issue #818, Option A) — exactly one legal target that matches the
-/// request synthesizes; none or ambiguous is the 409 naming the target.
+/// request that moves the machine field must land on an edge the machine
+/// declares from the CURRENT state (issue #831).
+///
+/// The kernel answers `resolve_target(current, target)`: edges are
+/// restricted to the current state FIRST, then matched by target — so a
+/// target another state also reaches (a fan-in, `Pending -> Active` beside
+/// `Inactive -> Active`) is NOT ambiguous. Exactly one distinct event wins
+/// the move; none is the 409 listing the targets the current state really
+/// offers; two distinct events to the same target is a real ambiguity and
+/// the 409 NAMES the competing edges (event + authored guard).
+///
 /// BEHAVIOR HARDENING (recorded on issue #818): the old hand-rendered
 /// whitelist allowed any value the machine could EVER reach; a state
 /// value with no legal connecting edge from the current state now 409s
 /// instead of persisting. Stay-put is not a transition and stays allowed.
 fn push_whitelist_arm(block: &mut String, op: &ServiceOpRoute, state: &ServiceOpState) {
-    let candidates = candidates_of(&state.all);
+    let wire_key = state.wire_key.as_str();
     block.push_str("\n    if let Some(target) = value.get(\"");
-    block.push_str(state.wire_key.as_str());
+    block.push_str(wire_key);
     block.push_str("\").and_then(|v| v.as_str()) {\n");
     block.push_str("        if target != current_state {\n");
-    block.push_str(&crate::ddd::kernel_probe::probe_legal_block(
-        &candidates,
-        "            ",
-    ));
-    block.push_str("            match legal.as_slice() {\n");
-    block.push_str("                [only] if *only == target => {\n");
+    block.push_str("            match runtime.resolve_target(&current_state, target) {\n");
+    // Exactly one event from the current state reaches the requested target.
+    block.push_str("                codegraph_workflow::TargetResolution::Unique { .. } => {\n");
     block.push_str(&format!(
-        "                    value[\"{}\"] = serde_json::Value::String(target.to_string());\n",
-        state.wire_key.as_str()
+        "                    value[\"{wire_key}\"] = serde_json::Value::String(target.to_string());\n"
     ));
     block.push_str("                }\n");
-    block.push_str("                [] => {\n");
+    // No edge from the current state reaches it: name the state's own
+    // targets (an empty list at a terminal state adds no parenthetical).
+    block.push_str(
+        "                codegraph_workflow::TargetResolution::NoTransition { legal } => {\n",
+    );
+    block.push_str("                    let suffix = if legal.is_empty() {\n");
+    block.push_str("                        String::new()\n");
+    block.push_str("                    } else {\n");
+    block.push_str(
+        "                        format!(\" (legal targets: {})\", legal.join(\", \"))\n",
+    );
+    block.push_str("                    };\n");
     block.push_str("                    return Err(AppError::conflict(format!(\n");
     block.push_str(&format!(
-        "                        \"operation `{}` cannot move `{}` from `{{}}` to `{{}}`: no transition from the current state\",\n",
-        op.op_name,
-        state.wire_key.as_str()
+        "                        \"operation `{}` cannot move `{wire_key}` from `{{}}` to `{{}}`: no transition from the current state{{}}\",\n",
+        op.op_name
     ));
-    block.push_str("                        current_state, target\n");
+    block.push_str("                        current_state, target, suffix\n");
     block.push_str("                    )).with_correlation_id(correlation_id));\n");
     block.push_str("                }\n");
-    block.push_str("                _ => {\n");
+    // Two distinct events reach it: the body named no trigger.
+    block.push_str(
+        "                codegraph_workflow::TargetResolution::Ambiguous { edges } => {\n",
+    );
+    block.push_str("                    let competing = edges\n");
+    block.push_str("                        .iter()\n");
+    block.push_str("                        .map(|edge| match &edge.guard {\n");
+    block.push_str(
+        "                            Some(guard) => format!(\"`{}` (guarded by `{}`)\", edge.event, guard),\n",
+    );
+    block.push_str("                            None => format!(\"`{}`\", edge.event),\n");
+    block.push_str("                        })\n");
+    block.push_str("                        .collect::<Vec<_>>()\n");
+    block.push_str("                        .join(\", \");\n");
     block.push_str("                    return Err(AppError::conflict(format!(\n");
     block.push_str(&format!(
-        "                        \"operation `{}` cannot move `{}` from `{{}}` to `{{}}`: no unambiguous transition from the current state (legal targets: {{}})\",\n",
-        op.op_name,
-        state.wire_key.as_str()
+        "                        \"operation `{}` cannot move `{wire_key}` from `{{}}` to `{{}}`: no unambiguous transition from the current state — competing edges: {{}}\",\n",
+        op.op_name
     ));
-    block.push_str("                        current_state,\n");
-    block.push_str("                        target,\n");
-    block.push_str("                        legal.join(\", \")\n");
+    block.push_str("                        current_state, target, competing\n");
     block.push_str("                    )).with_correlation_id(correlation_id));\n");
     block.push_str("                }\n");
     block.push_str("            }\n");
@@ -382,27 +404,33 @@ mod tests {
         "\n",
         "    if let Some(target) = value.get(\"status\").and_then(|v| v.as_str()) {\n",
         "        if target != current_state {\n",
-        "            let legal: Vec<&str> = [\"Submitted\", \"Approved\"]\n",
-        "                .iter()\n",
-        "                .copied()\n",
-        "                .filter(|candidate| runtime.transition_for(&current_state, candidate).is_some())\n",
-        "                .collect();\n",
-        "            match legal.as_slice() {\n",
-        "                [only] if *only == target => {\n",
+        "            match runtime.resolve_target(&current_state, target) {\n",
+        "                codegraph_workflow::TargetResolution::Unique { .. } => {\n",
         "                    value[\"status\"] = serde_json::Value::String(target.to_string());\n",
         "                }\n",
-        "                [] => {\n",
+        "                codegraph_workflow::TargetResolution::NoTransition { legal } => {\n",
+        "                    let suffix = if legal.is_empty() {\n",
+        "                        String::new()\n",
+        "                    } else {\n",
+        "                        format!(\" (legal targets: {})\", legal.join(\", \"))\n",
+        "                    };\n",
         "                    return Err(AppError::conflict(format!(\n",
-        "                        \"operation `changeStatus` cannot move `status` from `{}` to `{}`: no transition from the current state\",\n",
-        "                        current_state, target\n",
+        "                        \"operation `changeStatus` cannot move `status` from `{}` to `{}`: no transition from the current state{}\",\n",
+        "                        current_state, target, suffix\n",
         "                    )).with_correlation_id(correlation_id));\n",
         "                }\n",
-        "                _ => {\n",
+        "                codegraph_workflow::TargetResolution::Ambiguous { edges } => {\n",
+        "                    let competing = edges\n",
+        "                        .iter()\n",
+        "                        .map(|edge| match &edge.guard {\n",
+        "                            Some(guard) => format!(\"`{}` (guarded by `{}`)\", edge.event, guard),\n",
+        "                            None => format!(\"`{}`\", edge.event),\n",
+        "                        })\n",
+        "                        .collect::<Vec<_>>()\n",
+        "                        .join(\", \");\n",
         "                    return Err(AppError::conflict(format!(\n",
-        "                        \"operation `changeStatus` cannot move `status` from `{}` to `{}`: no unambiguous transition from the current state (legal targets: {})\",\n",
-        "                        current_state,\n",
-        "                        target,\n",
-        "                        legal.join(\", \")\n",
+        "                        \"operation `changeStatus` cannot move `status` from `{}` to `{}`: no unambiguous transition from the current state — competing edges: {}\",\n",
+        "                        current_state, target, competing\n",
         "                    )).with_correlation_id(correlation_id));\n",
         "                }\n",
         "            }\n",
@@ -475,9 +503,10 @@ mod tests {
 
     // ── Option A semantics (issue #818): the three whitelist outcomes ────
 
-    /// UNIQUE legal edge → SYNTHESIZES: the rendered arm's success arm is
-    /// `[only] if *only == target` — the kernel legalized exactly the
-    /// requested move and the handler writes it.
+    /// The move is decided by the KERNEL, restricted to the current
+    /// state's out-edges (issue #831): the `Unique` arm writes the
+    /// requested target, and the baked machine-wide candidate list is
+    /// GONE (that list is what made a fan-in read as ambiguous).
     #[test]
     fn whitelist_unique_legal_edge_synthesizes() {
         let op = matrix_route(
@@ -488,8 +517,14 @@ mod tests {
         );
         let block = render_execution_block(&op);
         assert!(
-            block.contains("                [only] if *only == target => {"),
-            "the unique-legal synthesis arm must render:\n{block}"
+            block.contains("match runtime.resolve_target(&current_state, target) {"),
+            "the arm must ask the kernel for the current-state resolution:\n{block}"
+        );
+        assert!(
+            block.contains(
+                "                codegraph_workflow::TargetResolution::Unique { .. } => {"
+            ),
+            "{block}"
         );
         assert!(
             block.contains(
@@ -497,12 +532,16 @@ mod tests {
             ),
             "{block}"
         );
+        assert!(
+            !block.contains("filter(|candidate| runtime.transition_for"),
+            "the machine-wide candidate probe is retired:\n{block}"
+        );
     }
 
-    /// AMBIGUOUS (a fork: two edges legal from one current state) → 409
-    /// naming the target and the legal set.
+    /// AMBIGUOUS (two DISTINCT events to one target from the current
+    /// state) → 409 naming the competing edges, never a silent pick.
     #[test]
-    fn whitelist_ambiguous_fork_is_the_409_naming_the_target() {
+    fn whitelist_ambiguous_fork_is_the_409_naming_the_competing_edges() {
         let op = matrix_route(
             "changeStatus",
             ExecutionKind::Update {
@@ -511,14 +550,25 @@ mod tests {
         );
         let block = render_execution_block(&op);
         assert!(
-            block.contains("no unambiguous transition from the current state (legal targets: {})"),
+            block
+                .contains("no unambiguous transition from the current state — competing edges: {}"),
             "{block}"
         );
-        assert!(block.contains("                        legal.join(\", \")\n"));
+        assert!(
+            block.contains("codegraph_workflow::TargetResolution::Ambiguous { edges } => {"),
+            "{block}"
+        );
+        assert!(
+            block
+                .contains("Some(guard) => format!(\"`{}` (guarded by `{}`)\", edge.event, guard),"),
+            "the competing edges name their guards:\n{block}"
+        );
+        assert!(block.contains("competing\n"), "{block}");
     }
 
-    /// NO legal edge → 409 naming the target with the contract message
-    /// shape ("no transition from the current state").
+    /// NO legal edge → 409 with the contract message shape ("no
+    /// transition from the current state") plus the current state's OWN
+    /// legal targets (a terminal state adds no parenthetical).
     #[test]
     fn whitelist_no_legal_edge_is_the_409_with_the_contract_message() {
         let op = matrix_route(
@@ -555,18 +605,22 @@ mod tests {
         );
     }
 
-    /// A whitelist machine with NO declared transitions renders an EMPTY
-    /// candidate list (`[]`) — the probe loop stays closed, every move
-    /// answers the none-409, and stay-put stays allowed.
+    /// A body-driven upgrade no longer bakes ANY candidate list: the
+    /// kernel owns the edge set, so `state.all` is a planner-only fact and
+    /// its emptiness changes nothing in the rendered arm (issue #831).
     #[test]
-    fn whitelist_without_declared_transitions_renders_an_empty_candidate_list() {
+    fn whitelist_renders_no_baked_candidate_list() {
         let mut state = status_state(Vec::new());
         state.all = Vec::new();
         let op = matrix_route("changeStatus", ExecutionKind::Update { state: Some(state) });
         let block = render_execution_block(&op);
         assert!(
-            block.contains("            let legal: Vec<&str> = []\n"),
+            block.contains("match runtime.resolve_target(&current_state, target) {"),
             "{block}"
+        );
+        assert!(
+            !block.contains("let legal: Vec<&str> = ["),
+            "no baked candidate list survives:\n{block}"
         );
     }
 

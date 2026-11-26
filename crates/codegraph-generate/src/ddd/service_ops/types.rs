@@ -115,9 +115,11 @@ pub struct ServiceOpState {
     /// rendered kernel probe loads (`machines::machine_json(id)`).
     #[serde(default)]
     pub machine_id: String,
-    /// Every machine transition — the body-driven target whitelist when the
-    /// op has no name/guard/capability binding. Planner-side: the renderer
-    /// bakes the probe candidate set from the targets.
+    /// Every machine transition — the machine-wide universe the PLANNERS
+    /// walk (hurl state simulation, e2e plans). Since issue #831 the renderer
+    /// no longer bakes a candidate list from it: a body-driven op resolves
+    /// its target through `MachineRuntime::resolve_target` against the
+    /// current state's own out-edges.
     pub all: Vec<ServiceOpTransition>,
     /// The transitions this op applies, selected at runtime by the current
     /// state. Empty = the op performs no state transition of its own.

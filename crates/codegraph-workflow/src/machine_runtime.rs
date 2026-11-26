@@ -15,6 +15,11 @@
 //!   the CANONICAL machine JSON ([`canonical_json`], keys sorted
 //!   recursively — the pherolang `machineIr` embed form). Definition rows
 //!   record it; the engine refuses to decide on a drifted machine.
+//! - **Target resolution (issue #831).** A body-driven caller names a
+//!   TARGET, not an event: [`MachineRuntime::resolve_target`] restricts the
+//!   edges to the record's CURRENT state first, then matches the requested
+//!   target ([`TargetResolution`]). [`MachineRuntime::edges_from`] is the
+//!   one derivation behind it and the read model's offered set.
 //! - **wasm32 discipline.** Pure decision path: no sea_orm, no tokio, no
 //!   DB handle. The clock is `MockClock` — delayed (`after`) transitions
 //!   are not driven by the kernel (the workflow engine's timers remain an
@@ -195,6 +200,43 @@ pub struct TransitionOutcome {
     pub event: String,
     /// Whether the target state is final (the workflow's terminal flag).
     pub is_terminal: bool,
+}
+
+/// A body-driven move's resolution (issue #831): the requested target is
+/// matched against the CURRENT state's out-edges ONLY.
+///
+/// The pre-#831 lowering collected the machine's edges machine-wide and then
+/// asked whether the current state offered exactly one legal target — so a
+/// target reached from two different states (a fan-in, e.g. `Pending ->
+/// Active` and `Inactive -> Active`) was refused as "ambiguous" even though
+/// exactly one edge leaves the current state. The kernel now answers the
+/// question the caller actually asks: "which edge from HERE reaches THAT?"
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TargetResolution {
+    /// Exactly one event reaches `target` from the current state. The
+    /// event's conditional guard variants collapse (the kernel's
+    /// first-match order decides which edge fires when it is sent);
+    /// `guard` is the first matching edge's authored guard, when any.
+    Unique {
+        /// The machine event that fires the edge.
+        event: String,
+        /// The authored guard name on the first matching edge, when any.
+        guard: Option<String>,
+    },
+    /// No edge from the current state reaches `target`. `legal` lists the
+    /// distinct targets the state DOES offer, in declaration order — the
+    /// wire 409's explanation (empty at a terminal state).
+    NoTransition {
+        /// The distinct targets reachable from the current state.
+        legal: Vec<String>,
+    },
+    /// Two or more DISTINCT events reach `target` from the current state.
+    /// The request named no trigger, so the move is genuinely ambiguous —
+    /// `edges` names the competing edges (never a silent pick).
+    Ambiguous {
+        /// The competing edges, in declaration order.
+        edges: Vec<MachineTransitionEdge>,
+    },
 }
 
 /// The kernel: one machine definition, one decision-maker.
@@ -417,45 +459,87 @@ impl MachineRuntime {
     /// would 409 — and the `machine_hash` rides every payload so a stale
     /// render is detectable client-side.
     pub fn read_model(&self, current: &str) -> MachineReadModel {
-        let state_known = self.top_state(current).is_some();
-        let mut available_transitions: Vec<MachineTransitionEdge> = Vec::new();
-        if let Some(state) = self.top_state(current) {
-            for t in &state.transitions {
-                // The kernel addresses top-level (atomic) states: a
-                // multi-target edge contributes its FIRST top-level segment.
-                let targets: Vec<String> = match (&t.target, t.targets.first()) {
-                    (Some(target), _) => vec![target.clone()],
-                    (None, Some(first)) => first
-                        .split('.')
-                        .next()
-                        .map(|s| s.to_string())
-                        .into_iter()
-                        .collect(),
-                    (None, None) => Vec::new(),
-                };
-                for to in targets {
-                    let edge = MachineTransitionEdge {
-                        event: t.event.clone(),
-                        from: current.to_string(),
-                        to: to.clone(),
-                        guard: t.guard.as_ref().map(|g| g.name.clone()),
-                    };
-                    if !available_transitions
-                        .iter()
-                        .any(|e| e.event == edge.event && e.to == edge.to)
-                    {
-                        available_transitions.push(edge);
-                    }
-                }
-            }
-        }
+        let edges = self.edges_from(current);
         MachineReadModel {
             machine_id: self.machine.id.clone(),
             current_state: current.to_string(),
-            is_terminal: state_known && self.is_terminal_state(current),
-            state_known,
+            is_terminal: self.top_state(current).is_some() && self.is_terminal_state(current),
+            state_known: self.top_state(current).is_some(),
             machine_hash: self.content_hash(),
-            available_transitions,
+            available_transitions: edges,
+        }
+    }
+
+    /// Every declared edge leaving `current`, in declaration order, deduped
+    /// by `(event, target)` — the ONE derivation behind the read model and
+    /// [`Self::resolve_target`], so the UI's offered set and the write
+    /// plane's legality check can never disagree about what the machine
+    /// offers. `current` must name a top-level (atomic) state; a state a
+    /// multi-target edge reaches contributes its FIRST top-level segment
+    /// (the kernel addresses atomic states).
+    #[must_use]
+    pub fn edges_from(&self, current: &str) -> Vec<MachineTransitionEdge> {
+        let mut edges: Vec<MachineTransitionEdge> = Vec::new();
+        let Some(state) = self.top_state(current) else {
+            return edges;
+        };
+        for t in &state.transitions {
+            let targets: Vec<String> = match (&t.target, t.targets.first()) {
+                (Some(target), _) => vec![target.clone()],
+                (None, Some(first)) => first
+                    .split('.')
+                    .next()
+                    .map(|s| s.to_string())
+                    .into_iter()
+                    .collect(),
+                (None, None) => Vec::new(),
+            };
+            for to in targets {
+                let edge = MachineTransitionEdge {
+                    event: t.event.clone(),
+                    from: current.to_string(),
+                    to: to.clone(),
+                    guard: t.guard.as_ref().map(|g| g.name.clone()),
+                };
+                if !edges
+                    .iter()
+                    .any(|e| e.event == edge.event && e.to == edge.to)
+                {
+                    edges.push(edge);
+                }
+            }
+        }
+        edges
+    }
+
+    /// Resolve a body-driven move (issue #831): which EDGE from `current`
+    /// reaches `target`?
+    ///
+    /// Edges are restricted to the CURRENT state FIRST, then matched by
+    /// target, so a target another state also reaches is not ambiguous.
+    /// Distinct EVENTS to one target are genuinely ambiguous (the body
+    /// names no trigger); the conditional guard variants of a single event
+    /// collapse — the kernel's first-match order owns that choice.
+    #[must_use]
+    pub fn resolve_target(&self, current: &str, target: &str) -> TargetResolution {
+        let edges = self.edges_from(current);
+        let matching: Vec<MachineTransitionEdge> =
+            edges.into_iter().filter(|edge| edge.to == target).collect();
+        let mut events: Vec<&str> = Vec::new();
+        for edge in &matching {
+            if !events.contains(&edge.event.as_str()) {
+                events.push(edge.event.as_str());
+            }
+        }
+        match events.as_slice() {
+            [] => TargetResolution::NoTransition {
+                legal: self.available_transitions(current),
+            },
+            [only] => TargetResolution::Unique {
+                event: (*only).to_string(),
+                guard: matching.first().and_then(|edge| edge.guard.clone()),
+            },
+            _ => TargetResolution::Ambiguous { edges: matching },
         }
     }
 
@@ -659,5 +743,158 @@ mod tests {
         assert!(wire.contains(r#""event":"CALCULATE""#), "{wire}");
         assert!(wire.contains(r#""machine_hash":"#), "{wire}");
         assert!(wire.contains(r#""state_known":true"#), "{wire}");
+    }
+
+    // ── body-driven target resolution (issue #831) ──────────────────────
+    //
+    // The consumer's machine in miniature: `Pending -> Active` and
+    // `Inactive -> Active` both reach Active (a fan-in), a forked state
+    // has two DISTINCT events to one target, and a state has one event
+    // with two guard variants. Pre-#831 the fan-in was reported as
+    // "no unambiguous transition from the current state".
+
+    fn fan_in_machine_json() -> Value {
+        json!({
+            "context": {"fields": []},
+            "id": "worker",
+            "initial": "Pending",
+            "setup": null,
+            "states": [
+                {
+                    "name": "Pending", "description": null,
+                    "transitions": [
+                        {"event": "Activate", "target": "Active"},
+                        {"event": "Terminate", "target": "Terminated"}
+                    ]
+                },
+                {
+                    "name": "Inactive", "description": null,
+                    "transitions": [
+                        {"event": "Reactivate", "target": "Active"},
+                        {"event": "Terminate", "target": "Terminated"}
+                    ]
+                },
+                {
+                    "name": "Fork", "description": null,
+                    "transitions": [
+                        {"event": "GoLeft", "target": "Active"},
+                        {"event": "GoRight", "target": "Active"}
+                    ]
+                },
+                {
+                    "name": "Manual", "description": null,
+                    "transitions": [
+                        {"event": "Approve", "target": "Active",
+                         "guard": {"name": "amount_positive"}},
+                        {"event": "Approve", "target": "Active",
+                         "guard": {"name": "manager_override"}}
+                    ]
+                },
+                {
+                    "name": "Active", "description": null,
+                    "transitions": [
+                        {"event": "Deactivate", "target": "Inactive"},
+                        {"event": "Terminate", "target": "Terminated"}
+                    ]
+                },
+                {"name": "Terminated", "description": null, "type": "final",
+                 "transitions": []}
+            ]
+        })
+    }
+
+    fn fan_in_runtime() -> MachineRuntime {
+        MachineRuntime::from_json(&fan_in_machine_json()).unwrap()
+    }
+
+    /// THE regression pin: a target is resolved against the CURRENT state's
+    /// out-edges, so a fan-in on `Active` cannot make `Pending -> Active`
+    /// ambiguous.
+    #[test]
+    fn resolve_target_ignores_another_states_edge_to_the_same_target() {
+        let runtime = fan_in_runtime();
+        assert_eq!(
+            runtime.resolve_target("Pending", "Active"),
+            TargetResolution::Unique {
+                event: "Activate".to_string(),
+                guard: None,
+            }
+        );
+        // The other source keeps its own single edge.
+        assert_eq!(
+            runtime.resolve_target("Inactive", "Active"),
+            TargetResolution::Unique {
+                event: "Reactivate".to_string(),
+                guard: None,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_target_unknown_target_lists_the_current_states_legal_targets() {
+        let runtime = fan_in_runtime();
+        assert_eq!(
+            runtime.resolve_target("Pending", "Bogus"),
+            TargetResolution::NoTransition {
+                legal: vec!["Active".to_string(), "Terminated".to_string()],
+            }
+        );
+        // A terminal state offers nothing — no dangling parenthetical.
+        assert_eq!(
+            runtime.resolve_target("Terminated", "Active"),
+            TargetResolution::NoTransition { legal: Vec::new() }
+        );
+        // An unknown CURRENT state is the same shape (no edges to offer).
+        assert_eq!(
+            runtime.resolve_target("Nope", "Active"),
+            TargetResolution::NoTransition { legal: Vec::new() }
+        );
+    }
+
+    #[test]
+    fn resolve_target_two_distinct_events_to_one_target_is_ambiguous_naming_them() {
+        let runtime = fan_in_runtime();
+        match runtime.resolve_target("Fork", "Active") {
+            TargetResolution::Ambiguous { edges } => {
+                let events: Vec<&str> = edges.iter().map(|e| e.event.as_str()).collect();
+                assert_eq!(events, vec!["GoLeft", "GoRight"]);
+                assert!(edges.iter().all(|e| e.from == "Fork" && e.to == "Active"));
+            }
+            other => panic!("expected an ambiguous fork, got {other:?}"),
+        }
+    }
+
+    /// The conditional guard variants of ONE event are not ambiguity: the
+    /// kernel's first-match order owns that choice when the event is sent.
+    #[test]
+    fn resolve_target_guard_variants_of_one_event_collapse() {
+        let runtime = fan_in_runtime();
+        assert_eq!(
+            runtime.resolve_target("Manual", "Active"),
+            TargetResolution::Unique {
+                event: "Approve".to_string(),
+                guard: Some("amount_positive".to_string()),
+            }
+        );
+    }
+
+    /// The read model and the write plane read ONE derivation.
+    #[test]
+    fn edges_from_is_the_read_models_edge_set() {
+        let runtime = fan_in_runtime();
+        for state in [
+            "Pending",
+            "Inactive",
+            "Fork",
+            "Manual",
+            "Active",
+            "Terminated",
+        ] {
+            assert_eq!(
+                runtime.edges_from(state),
+                runtime.read_model(state).available_transitions,
+                "state {state}"
+            );
+        }
     }
 }
