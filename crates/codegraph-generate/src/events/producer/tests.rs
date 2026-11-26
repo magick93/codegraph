@@ -373,7 +373,9 @@ fn r8_cross_contract_domain() {
 
 #[test]
 fn r9_no_entity_surface() {
-    let mut site = site(&["OrderPlaced"], EmissionArm::Patch);
+    // The real collect shape for an unbound op: no entity AND an
+    // unclassified arm.
+    let mut site = site(&["OrderPlaced"], EmissionArm::Unknown);
     site.entity = None;
     let report = run(event("OrderPlaced", &[("total", "i64")]), site);
     assert_eq!(

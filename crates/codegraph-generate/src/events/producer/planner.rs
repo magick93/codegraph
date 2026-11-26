@@ -307,8 +307,23 @@ pub fn plan(inputs: &ProducerInputs) -> ProducerReport {
                 continue;
             }
 
+            // R9 — the operation binds no entity at all (there is no
+            // `{Entity}Response` to match any payload field against).
+            if site.entity.is_none() {
+                if let Some(first) = event.fields.first() {
+                    report.refusals.push(diag(
+                        site,
+                        event_name,
+                        messages::r9(event_name, &site.service, &site.op, &first.name),
+                    ));
+                }
+                continue;
+            }
+
             // R4 — an executable arm v1 does not publish from.
             match &site.arm {
+                // The lowering could not be resolved (an existing validation
+                // error owns it) — never guess a producer diagnostic.
                 EmissionArm::Unknown => continue,
                 EmissionArm::Seam => {
                     report.refusals.push(diag(

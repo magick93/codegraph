@@ -30,6 +30,7 @@ application Orders {
             protected archive => OrderRepository.save emits OrderPlaced;
             notify => OrderRepository.findAll emits OrderPlaced;
             find => OrderRepository.findById emits OrderPlaced;
+            String orphan() emits OrderMystery;
         }
     }
 }

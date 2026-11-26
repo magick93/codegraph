@@ -191,6 +191,14 @@ async fn the_planner_produces_the_documented_sentences_end_to_end() {
         "missing R6 refusal; got: {bodies:#?}"
     );
 
+    // R9 — the op binds no entity at all (a declared op with no delegated
+    // target, capability class, or class-typed signature).
+    assert!(
+        bodies.iter().any(|body| body.contains("`OrderService.orphan`")
+            && body.contains("has no model source")),
+        "missing R9 unbound-op refusal; got: {bodies:#?}"
+    );
+
     // R4 — protected / abstract / read-only runtime sites.
     assert!(
         bodies
