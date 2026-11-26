@@ -122,7 +122,7 @@ cargo test -p codegraph --test evt_pipeline_tests --test evt_workers_tests \
 cargo test -p codegraph --test policy_rls_tests --test pherolang_fixture_sweep \
   --test graph_analytics_tests                               # 27 + 1 + all passed
 cargo test -p codegraph --test init_tests                    # 54 passed
-cargo clippy -p codegraph-generate -p codegraph --all-targets -- -D warnings  # clean
+cargo clippy --workspace --all-targets -- -D warnings -D clippy::too_many_lines  # clean
 cargo fmt --check                                            # clean
 ```
 
