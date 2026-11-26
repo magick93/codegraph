@@ -45,6 +45,7 @@ use codegraph_naming::{to_kebab_case, to_pascal_case};
 use crate::ux::plan::UxPlan;
 
 use super::super::context::{IfmlComponent, IfmlViewContainer};
+use super::super::page_heading::page_renders_heading;
 use super::super::route_generator::workflow_for_entity;
 use super::super::selectors::{ComponentSelectors, is_collection, is_details, is_form};
 use super::fixtures::{form_spec, url_pattern, view_route};
@@ -324,9 +325,11 @@ pub(crate) fn build_view_pom(
     if pom.heading.is_none()
         && pom.primary_root.is_none()
         && spec.is_some_and(|s| !s.personas.is_empty())
+        && page_renders_heading(vc, mappings)
     {
         // No testable root at all: persona assertions fall back to the
-        // view heading.
+        // view heading — only when the page actually renders one (issue
+        // #808; a heading-less page has nothing for them to assert).
         pom.heading = Some(vc.label.clone().unwrap_or_else(|| vc.name.clone()));
     }
     if pom.primary_root.is_none() && auth_enabled {

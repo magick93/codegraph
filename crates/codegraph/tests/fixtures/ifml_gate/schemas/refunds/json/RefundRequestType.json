@@ -35,6 +35,10 @@
       "$ref": "../../common/json/codelist/RefundReasonCodeList.json",
       "description": "Reason code for the refund"
     },
+    "channelCode": {
+      "$ref": "../../common/json/codelist/RefundChannelCodeList.json",
+      "description": "Channel the request arrived on (issue #835: `_code` is stripped from the DTO field)"
+    },
     "escalation": {
       "$ref": "../../common/json/codelist/RefundEscalationCodeList.json",
       "description": "Escalation state driven by the action plane (WS6)"

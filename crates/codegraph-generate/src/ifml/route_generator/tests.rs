@@ -3223,6 +3223,90 @@ fn multi_component_views_emit_one_view_level_heading() {
 }
 
 #[test]
+fn heading_moves_to_the_first_component_that_can_render_it() {
+    // Issue #808: a view leading with a details component (which renders no
+    // `<h1>`) used to hand the heading to that component anyway — the page
+    // then rendered NONE while the e2e plane asserted one. The heading now
+    // belongs to the first component whose markup can carry it.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut details = component_with_spec(None);
+    details.name = "info".to_string();
+    details.component_type = "details".to_string();
+    details.fields = vec!["name".to_string()];
+    let mut table = component_with_spec(Some(table_spec()));
+    table.name = "findings".to_string();
+    let mut vc = plain_vc("FindingsView");
+    vc.components = vec![details, table];
+    let ctx = futures::executor::block_on(build_page_context(
+        &MockEngine::new(),
+        &test_config(),
+        "v1",
+        &vc,
+        Some(&IfmlComponentMappings::default()),
+        &HashSet::new(),
+        None,
+        &ProjectConfig::default(),
+        "/",
+    ))
+    .expect("page ctx");
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert_eq!(
+        rendered.matches("<h1>FindingsView</h1>").count(),
+        1,
+        "exactly one view-level heading:\n{rendered}"
+    );
+    let details_at = rendered
+        .find(r#"<dl data-testid="info-details">"#)
+        .expect("details markup");
+    let heading_at = rendered.find("<h1>").expect("heading");
+    let table_at = rendered
+        .find(r#"<table data-testid="findings-table""#)
+        .expect("table markup");
+    assert!(
+        details_at < heading_at && heading_at < table_at,
+        "the heading renders on the table component, not the details one:\n{rendered}"
+    );
+}
+
+#[test]
+fn headingless_single_component_view_emits_no_heading() {
+    // Issue #808: a details/form/chart-only page renders no `<h1>` — and
+    // the heading flag must not claim one (the e2e plane then asserts the
+    // primary root only).
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut details = component_with_spec(None);
+    details.name = "info".to_string();
+    details.component_type = "details".to_string();
+    details.fields = vec!["name".to_string()];
+    let mut vc = plain_vc("FindingsView");
+    vc.components = vec![details];
+    let ctx = futures::executor::block_on(build_page_context(
+        &MockEngine::new(),
+        &test_config(),
+        "v1",
+        &vc,
+        Some(&IfmlComponentMappings::default()),
+        &HashSet::new(),
+        None,
+        &ProjectConfig::default(),
+        "/",
+    ))
+    .expect("page ctx");
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(
+        !rendered.contains("<h1>"),
+        "a details-only page renders no heading:\n{rendered}"
+    );
+    assert!(
+        ctx.groups
+            .iter()
+            .flat_map(|g| g.components.iter())
+            .all(|c| !c.show_heading),
+        "no component may claim the heading"
+    );
+}
+
+#[test]
 fn modal_view_with_mapping_renders_dialog_wrapper() {
     let tera = create_tera(Path::new(".")).expect("tera");
     let mut vc = form_view(true);

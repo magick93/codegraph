@@ -11,7 +11,7 @@ use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{EnumValue, PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
 
-use super::super::context::{IfmlViewContainer, ParameterDef};
+use super::super::context::{IfmlComponent, IfmlViewContainer, ParameterDef};
 use super::super::route_generator::RenderWorkflow;
 use super::fixtures::{
     binding_value_pattern, entry_inner, escape_regex, js_literal_inner, js_value_for_type,
@@ -1629,4 +1629,302 @@ fn collection_add_spec_drives_the_pom_method_with_the_parent_fixture() {
         !rendered.contains("getByTestId("),
         "spec bodies must not carry raw testids:\n{rendered}"
     );
+}
+
+// ── Page heading alignment (issue #808) ────────────────────────────────────
+//
+// The page templates render the view `<h1>` only from the mapped / timeline /
+// typed-table / list branches. The specs must assert a heading exactly when
+// the page renders one, and fall back to the primary root they already assert
+// otherwise.
+
+/// The guarded details+table shape (the consumer's `FindingsView`): a
+/// `details` component followed by a typed `table`, no view label.
+fn findings_shaped_view() -> IfmlViewContainer {
+    let check = IfmlComponent {
+        name: "check".to_string(),
+        component_type: "details".to_string(),
+        mode: None,
+        entity: Some("ComplianceCheck".to_string()),
+        fields: vec!["checkId".to_string()],
+        fields_with_types: Vec::new(),
+        filter: None,
+        properties: HashMap::new(),
+        events: Vec::new(),
+        parts: Vec::new(),
+        spec: None,
+    };
+    let table = IfmlComponent {
+        name: "findings".to_string(),
+        component_type: "table".to_string(),
+        mode: None,
+        entity: Some("ComplianceResult".to_string()),
+        fields: Vec::new(),
+        fields_with_types: Vec::new(),
+        filter: None,
+        properties: HashMap::new(),
+        events: Vec::new(),
+        parts: Vec::new(),
+        spec: Some(phero_ifml::ComponentSpec::Table(phero_ifml::TableSpec {
+            columns: Vec::new(),
+            pagination: true,
+        })),
+    };
+    IfmlViewContainer {
+        name: "FindingsView".to_string(),
+        label: None,
+        is_xor: false,
+        is_default: false,
+        is_landmark: false,
+        is_modal: false,
+        conditional_expression: None,
+        conditional_expr_json: None,
+        roles: Vec::new(),
+        requires: vec!["ReadResults".to_string()],
+        params: Vec::new(),
+        components: vec![check, table],
+        events: Vec::new(),
+        containers: Vec::new(),
+    }
+}
+
+fn heading_test_config() -> DomainConfig {
+    toml::from_str(
+        r#"
+[defaults]
+api_version = "v1"
+
+[domains.compliance]
+label = "Compliance"
+schema_dir = "compliance"
+postgres_schema = "compliance"
+entities = ["ComplianceCheckType"]
+"#,
+    )
+    .unwrap()
+}
+
+fn heading_test_generator() -> super::IfmlE2eTestGenerator {
+    super::IfmlE2eTestGenerator::new(std::path::Path::new("/tmp/codegraph-808-heading"), "svelte")
+}
+
+#[test]
+fn guarded_findings_shaped_view_asserts_the_heading_its_page_renders() {
+    // Issue #808: the route plane gives the details+table page its single
+    // `<h1>` on the TABLE (its first heading-capable component — pinned by
+    // `route_generator::tests::heading_moves_to_the_first_component_that_can_render_it`),
+    // so the persona spec asserts that heading and the POM exposes it beside
+    // the primary root.
+    use super::super::context::PolicyContext;
+    use super::pom::build_view_pom;
+    use super::pom_render::render_pom_page;
+
+    let vc = findings_shaped_view();
+    assert!(
+        super::super::page_heading::page_renders_heading(&vc, None),
+        "the table renders the page heading"
+    );
+    let policy = PolicyContext {
+        actors: vec![("Auditor".to_string(), vec!["ReadResults".to_string()])],
+        capabilities: vec!["ReadResults".to_string()],
+    };
+    let personas = heading_test_generator().build_persona_tests(
+        &policy,
+        &["Auditor".to_string()],
+        &vc,
+        "/compliancepanel",
+    );
+    assert_eq!(personas.len(), 1);
+    assert!(personas[0].permitted);
+    assert_eq!(
+        personas[0].primary_testid.as_deref(),
+        Some("findings-table")
+    );
+    assert!(
+        personas[0].assert_heading,
+        "the page renders the heading, so the persona asserts it"
+    );
+
+    let spec = ViewTestSpec {
+        view_name: vc.name.clone(),
+        label: vc.name.clone(),
+        route: "/findingsview".to_string(),
+        render: None,
+        click_throughs: Vec::new(),
+        validations: Vec::new(),
+        round_trips: Vec::new(),
+        personas,
+        media_fields: Vec::new(),
+    };
+    let rendered = render_spec(&spec, true, false);
+    assert!(
+        rendered.contains("await expect(ui.heading()).toBeVisible();"),
+        "the heading the page renders must be asserted:\n{rendered}"
+    );
+
+    let pom = build_view_pom(
+        &heading_test_config(),
+        None,
+        &vc,
+        Some(&spec),
+        None,
+        &HashMap::new(),
+        true,
+        &[],
+        Vec::new(),
+        &HashSet::new(),
+    );
+    let page = render_pom_page(&pom);
+    assert!(page.contains("heading(): Locator"), "{page}");
+    assert!(page.contains("primaryRoot(): Locator"), "{page}");
+}
+
+#[test]
+fn collection_without_a_rendered_heading_asserts_the_primary_root() {
+    // Issue #808: a `type: table` component with no typed spec renders NO
+    // markup at all (the table branch needs the resolved payload), so the
+    // page carries no `<h1>` — the spec must assert the primary root
+    // instead of a heading that can never be found.
+    let bare_table = IfmlComponent {
+        name: "grid".to_string(),
+        component_type: "table".to_string(),
+        mode: None,
+        entity: Some("ComplianceResult".to_string()),
+        fields: vec!["ruleCode".to_string()],
+        fields_with_types: Vec::new(),
+        filter: None,
+        properties: HashMap::new(),
+        events: Vec::new(),
+        parts: Vec::new(),
+        spec: None,
+    };
+    let vc = IfmlViewContainer {
+        name: "FindingsView".to_string(),
+        label: None,
+        is_xor: false,
+        is_default: false,
+        is_landmark: false,
+        is_modal: false,
+        conditional_expression: None,
+        conditional_expr_json: None,
+        roles: Vec::new(),
+        requires: Vec::new(),
+        params: Vec::new(),
+        components: vec![bare_table],
+        events: Vec::new(),
+        containers: Vec::new(),
+    };
+    assert!(!super::super::page_heading::page_renders_heading(&vc, None));
+
+    let render = heading_test_generator()
+        .build_render_test(&vc, None)
+        .expect("the collection still has a primary root");
+    assert_eq!(render.primary_testid, "grid-table");
+    assert!(
+        !render.assert_heading,
+        "no heading is rendered, so none is asserted"
+    );
+
+    let spec = ViewTestSpec {
+        view_name: vc.name.clone(),
+        label: vc.name.clone(),
+        route: "/findingsview".to_string(),
+        render: Some(render),
+        click_throughs: Vec::new(),
+        validations: Vec::new(),
+        round_trips: Vec::new(),
+        personas: Vec::new(),
+        media_fields: Vec::new(),
+    };
+    let rendered = render_spec(&spec, false, false);
+    assert!(
+        !rendered.contains("ui.heading()"),
+        "a heading-less page must not assert a heading:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("await expect(ui.primaryRoot()).toBeVisible();"),
+        "the primary root is the asserted surface:\n{rendered}"
+    );
+}
+
+#[test]
+fn pom_heading_fallback_requires_a_page_heading() {
+    // Issue #808: the POM's root-less heading fallback (persona-only
+    // payloads) must not invent a `heading()` locator for a page that
+    // renders no `<h1>`.
+    use super::super::context::PolicyContext;
+    use super::pom::build_view_pom;
+    use super::pom_render::render_pom_page;
+
+    let chart = IfmlComponent {
+        name: "plot".to_string(),
+        component_type: "chart".to_string(),
+        mode: None,
+        entity: Some("ComplianceResult".to_string()),
+        fields: Vec::new(),
+        fields_with_types: Vec::new(),
+        filter: None,
+        properties: HashMap::new(),
+        events: Vec::new(),
+        parts: Vec::new(),
+        spec: Some(phero_ifml::ComponentSpec::Chart(phero_ifml::ChartSpec {
+            kind: phero_ifml::ChartKind::Pie,
+            label_field: None,
+            value_fields: vec!["total".to_string()],
+            hierarchy_field: None,
+            label_fields: Vec::new(),
+            detail_fields: Vec::new(),
+            max_depth: None,
+            aggregate: None,
+        })),
+    };
+    let mut vc = findings_shaped_view();
+    vc.roles = vec!["Admin".to_string()];
+    vc.requires.clear();
+    vc.components = vec![chart];
+    assert!(!super::super::page_heading::page_renders_heading(&vc, None));
+
+    // Every persona is denied (none holds the view's role), so the POM has
+    // no permitted surface to derive a root from — the fallback is the only
+    // heading candidate.
+    let policy = PolicyContext {
+        actors: vec![("Intern".to_string(), Vec::new())],
+        capabilities: Vec::new(),
+    };
+    let personas = heading_test_generator().build_persona_tests(
+        &policy,
+        &["Intern".to_string()],
+        &vc,
+        "/compliancepanel",
+    );
+    assert!(personas.iter().all(|p| !p.permitted), "{personas:?}");
+    let spec = ViewTestSpec {
+        view_name: vc.name.clone(),
+        label: vc.name.clone(),
+        route: "/findingsview".to_string(),
+        render: None,
+        click_throughs: Vec::new(),
+        validations: Vec::new(),
+        round_trips: Vec::new(),
+        personas,
+        media_fields: Vec::new(),
+    };
+    let pom = build_view_pom(
+        &heading_test_config(),
+        None,
+        &vc,
+        Some(&spec),
+        None,
+        &HashMap::new(),
+        true,
+        &[],
+        Vec::new(),
+        &HashSet::new(),
+    );
+    let page = render_pom_page(&pom);
+    assert!(
+        !page.contains("heading(): Locator"),
+        "a heading-less page exposes no heading method:\n{page}"
+    );
+    assert!(!page.contains("primaryRoot(): Locator"), "{page}");
 }

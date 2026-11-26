@@ -6,6 +6,7 @@ pub mod e2e_test;
 pub mod expr_ts;
 pub mod navigation_generator;
 pub mod output_paths;
+pub(crate) mod page_heading;
 pub mod profiles;
 pub mod querier;
 pub mod route_generator;

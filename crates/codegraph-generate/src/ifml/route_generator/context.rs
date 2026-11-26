@@ -1621,23 +1621,17 @@ async fn page_component_groups(
             });
         }
     }
-    // P2: one view-level heading for multi-component views. The first
-    // top-level component renders it; later components drop their duplicate
-    // `<h1>` (which made `getByRole('heading')` strict-mode ambiguous).
-    let top_level_components = groups
-        .iter()
-        .flat_map(|group| group.components.iter())
-        .filter(|comp| !comp.in_container)
-        .count();
-    if top_level_components > 1 {
-        let mut heading_emitted = false;
-        for group in &mut groups {
-            for comp in &mut group.components {
-                comp.show_heading = !comp.in_container && !heading_emitted;
-                if comp.show_heading {
-                    heading_emitted = true;
-                }
-            }
+    // P2 (issue #808): exactly ONE view-level heading, on the first
+    // top-level component whose markup can actually carry it. The previous
+    // rule handed it to the first top-level component of ANY type, so a
+    // view leading with a details/form/chart rendered no `<h1>` at all
+    // while the e2e plane asserted one. A page with no heading-capable
+    // component (`page_heading::page_heading_owner` == None) renders none,
+    // and the e2e specs fall back to the primary root they already assert.
+    let owner = crate::ifml::page_heading::page_heading_owner(inputs.vc, inputs.mappings);
+    for group in &mut groups {
+        for comp in &mut group.components {
+            comp.show_heading = !comp.in_container && Some(comp.name.as_str()) == owner.as_deref();
         }
     }
     groups
@@ -2326,9 +2320,11 @@ pub(super) async fn page_component_context(
 
     let kind = kind_of(c);
     let slot_role = component_role(c);
-    let mapping = mappings
-        .and_then(|m| m.resolve_slot(&vc.name, &c.name, &c.component_type, &kind, slot_role))
-        .map(mapping_context);
+    // The mapped-component branch (and its `<h1>`) resolves through the
+    // SHARED page-heading predicate (issue #808), so the markup and the
+    // heading/assertion planes cannot disagree about what "mapped" means.
+    let mapping =
+        crate::ifml::page_heading::component_mapping(&vc.name, c, mappings).map(mapping_context);
     // Mapped components replace the fallback wholesale (issue #301): no
     // timeline layout, no row-actions menu — the mapped component owns its
     // presentation.

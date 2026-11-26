@@ -157,8 +157,19 @@ impl Fixture {
                 js_string(&dep.base_path),
                 dep_fixture.data_literal_with(Some(var))
             ));
+            // Issue #835: a dependency seed is a seed too — read the body
+            // once, assert `ok()` naming its endpoint, THEN parse. A silent
+            // 4xx here degrades the wired FK to "undefined" and the spec
+            // fails one level down on an unrelated screen.
             out.push_str(&format!(
-                "{indent}const {dep_id}_json = await {dep_id}_resp.json();\n"
+                "{indent}const {dep_id}_body = await {dep_id}_resp.text();\n"
+            ));
+            out.push_str(&format!(
+                "{indent}expect({dep_id}_resp.ok(), `seed POST ${{apiUrl('{}')}} answered ${{{dep_id}_resp.status()}}: ${{{dep_id}_body}}`).toBeTruthy();\n",
+                js_string(&dep.base_path)
+            ));
+            out.push_str(&format!(
+                "{indent}const {dep_id}_json = JSON.parse({dep_id}_body);\n"
             ));
             out.push_str(&format!(
                 "{indent}const {dep_id} = {dep_id}_json.data?.id ?? {dep_id}_json.id;\n"
@@ -182,10 +193,20 @@ impl Fixture {
     }
 
     /// Like [`Fixture::setup_js`], but binds the PARSED JSON body to `var`
-    /// (the round-trip/workflow specs read `created.data?.id`).
+    /// (the round-trip/workflow specs read `created.data?.id`). Issue #835:
+    /// the create is a seed — its body is read once and asserted `ok()`
+    /// naming the endpoint before parsing, so a rejected seed is a named
+    /// failure instead of an id reading `"undefined"`.
     pub(crate) fn setup_js_json(&self, var: &str, indent: &str) -> String {
         let mut out = self.setup_js(&format!("{var}_resp"), indent);
-        out.push_str(&format!("{indent}const {var} = await {var}_resp.json();\n"));
+        out.push_str(&format!(
+            "{indent}const {var}_body = await {var}_resp.text();\n"
+        ));
+        out.push_str(&format!(
+            "{indent}expect({var}_resp.ok(), `seed POST ${{apiUrl('{}')}} answered ${{{var}_resp.status()}}: ${{{var}_body}}`).toBeTruthy();\n",
+            js_string(&self.base_path)
+        ));
+        out.push_str(&format!("{indent}const {var} = JSON.parse({var}_body);\n"));
         out
     }
 
@@ -483,10 +504,83 @@ async fn codelist_first_value(db: &dyn GraphQuerier, prop: &PropertyNode) -> Opt
     None
 }
 
+/// Project fixture entry names from the DSL/model spelling onto the generated
+/// create/update DTO's Rust field names (codegraph#808).
+///
+/// The IFML e2e fixtures are built from the component's DSL `fields`/form
+/// fields — the MODEL spelling — while the create DTOs are
+/// `#[serde(deny_unknown_fields)]` over the projected Rust field names. Three
+/// ordinary shapes disagree, and an unprojected key 422s the seed POST (so
+/// `seededId` falls back to `"undefined"` and every seeded spec lands on the
+/// UI's 400 page):
+///
+/// - a codelist feature spelled `workerTypeCode` stores `rust_field_name =
+///   worker_type` (ingestion strips the `_code` suffix, JSON-path parity), so
+///   the DSL key `worker_type_code` is not a DTO field;
+/// - a scalar entity reference `vendor` becomes `vendor_id` (the `resolve_field`
+///   convention);
+/// - an array entity reference keeps its modeled name (a junction, no `_id`).
+///
+/// The rule, per entry: snake-case the entry name, find the schema property
+/// whose `name` OR `rust_field_name` snake-cases to the same value, and use
+/// [`resolve_field`]'s `rust_field_name` — the ONE projection rule the DTO
+/// plane itself uses, never a re-implementation. A name matching no property
+/// falls back to its snake-cased spelling (the render-time `wire_key` casing
+/// then applies on top; it is idempotent over an already-projected key).
+///
+/// Duplicates: the FIRST occurrence keeps its position in the list and a LATER
+/// duplicate replaces that value. Required-entry seeding appends after the DSL
+/// entries, so a DTO-exact required value wins over the DSL placeholder.
+pub(crate) async fn project_fixture_keys(
+    db: &dyn GraphQuerier,
+    entity: Option<&str>,
+    entries: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    let Some(entity) = entity else {
+        return entries;
+    };
+    if entries.is_empty() {
+        return entries;
+    }
+    let Some(schema) = schema_for_entity(db, entity).await else {
+        return entries;
+    };
+    let Ok(props) = db.get_properties(&schema.title).await else {
+        return entries;
+    };
+    if props.is_empty() {
+        return entries;
+    }
+    let mut out: Vec<(String, String)> = Vec::with_capacity(entries.len());
+    for (name, value) in entries {
+        let snake = codegraph_naming::to_snake_case(&name);
+        let key = props
+            .iter()
+            .find(|prop| {
+                codegraph_naming::to_snake_case(&prop.name) == snake
+                    || codegraph_naming::to_snake_case(&prop.rust_field_name) == snake
+            })
+            .map(|prop| resolve_field(prop).rust_field_name)
+            .unwrap_or(snake);
+        match out.iter_mut().find(|(existing, _)| existing == &key) {
+            Some((_, existing_value)) => *existing_value = value,
+            None => out.push((key, value)),
+        }
+    }
+    out
+}
+
 /// Merge the entity's **required** schema properties into a fixture entry
 /// list (P1). Component fields keep their existing values; required fields
 /// the component does not surface are appended with a type-valid literal so
 /// a typed create body does not 422 on a missing NOT NULL column.
+///
+/// The caller's entries arrive in the DSL/model spelling, so they are
+/// projected onto the DTO's Rust field names FIRST
+/// ([`project_fixture_keys`]) — the `present` set below is computed from the
+/// projected keys, so a projected entry also suppresses the required-property
+/// append (before codegraph#808 the body carried both `worker_type_code` and
+/// `worker_type`, and the DTO 422'd on the unknown key).
 ///
 /// Skipped:
 /// - `id` and entity references (a required FK is appended later, with its
@@ -501,6 +595,7 @@ pub(crate) async fn with_required_entries(
     entries: Vec<(String, String)>,
     casing: DtoKeyCasing,
 ) -> Vec<(String, String)> {
+    let entries = project_fixture_keys(db, entity, entries).await;
     let Some(entity) = entity else {
         return entries;
     };
@@ -1279,6 +1374,309 @@ entities = ["GroupType", "ChildType"]
         assert!(
             js.contains("'group_id': fixture_dep_0_id"),
             "the child body must reference the namespaced id:\n{js}"
+        );
+    }
+
+    // ── DSL → DTO key projection (codegraph#808) ─────────────────────────
+
+    /// A mox codelist feature: the DSL/model spelling keeps the `_code`
+    /// suffix, the stored `rust_field_name` does not (ingestion's
+    /// `strip_code_suffix`, JSON-path parity).
+    fn codelist_code_prop() -> codegraph_core::types::PropertyNode {
+        let mut prop = test_prop("workerTypeCode", true);
+        prop.pg_column_name = "worker_type_code".to_string();
+        prop.rust_field_name = "worker_type".to_string();
+        prop.ref_target = Some("codelist/WorkerTypeCodeList.json".to_string());
+        prop.classification_kind = Some(RefClassificationKind::CodelistReference);
+        prop
+    }
+
+    fn array_entity_ref_prop(name: &str) -> codegraph_core::types::PropertyNode {
+        let mut prop = test_prop(name, false);
+        prop.prop_type = "array".into();
+        prop.is_array = true;
+        prop.ref_target = Some("hr/json/position.schema.json".to_string());
+        prop.classification_kind = Some(RefClassificationKind::EntityReference);
+        prop
+    }
+
+    fn project_config() -> DomainConfig {
+        toml::from_str(
+            r#"
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["GroupType", "ChildType", "PositionType"]
+"#,
+        )
+        .unwrap()
+    }
+
+    fn projection_engine() -> codegraph_core::mock::MockEngine {
+        codegraph_core::mock::MockEngine::builder()
+            .with_schema(test_schema("ChildType", "child"))
+            .with_properties(
+                "ChildType",
+                vec![
+                    test_prop("title", true),
+                    codelist_code_prop(),
+                    entity_ref_prop("vendor"),
+                    array_entity_ref_prop("parties"),
+                ],
+            )
+            .build()
+    }
+
+    #[tokio::test]
+    async fn codelist_code_suffix_projects_to_the_rust_field_name() {
+        let engine = projection_engine();
+        let entries = project_fixture_keys(
+            &engine,
+            Some("ChildType"),
+            vec![("workerTypeCode".to_string(), "'casual'".to_string())],
+        )
+        .await;
+        assert_eq!(
+            entries,
+            vec![("worker_type".to_string(), "'casual'".to_string())],
+            "the codelist key must be the DTO's stripped Rust field name"
+        );
+    }
+
+    #[tokio::test]
+    async fn scalar_entity_reference_projects_to_the_id_suffix() {
+        let engine = projection_engine();
+        let entries = project_fixture_keys(
+            &engine,
+            Some("ChildType"),
+            vec![("vendor".to_string(), "'dep_0_id'".to_string())],
+        )
+        .await;
+        assert_eq!(
+            entries,
+            vec![("vendor_id".to_string(), "'dep_0_id'".to_string())],
+            "a scalar entity reference must project through resolve_field"
+        );
+    }
+
+    #[tokio::test]
+    async fn array_entity_reference_keeps_the_modeled_name() {
+        let engine = projection_engine();
+        let entries = project_fixture_keys(
+            &engine,
+            Some("ChildType"),
+            vec![("parties".to_string(), "[]".to_string())],
+        )
+        .await;
+        assert_eq!(
+            entries,
+            vec![("parties".to_string(), "[]".to_string())],
+            "a junction array reference keeps its modeled name (no `_id`)"
+        );
+    }
+
+    #[tokio::test]
+    async fn unmatched_field_names_fall_back_to_snake_case() {
+        let engine = projection_engine();
+        let entries = project_fixture_keys(
+            &engine,
+            Some("ChildType"),
+            vec![("approvalStatusCode".to_string(), "'draft'".to_string())],
+        )
+        .await;
+        assert_eq!(
+            entries,
+            vec![("approval_status_code".to_string(), "'draft'".to_string())],
+            "a field matching no property keeps its snake-cased spelling"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_entity_or_schema_leaves_entries_unchanged() {
+        let engine = projection_engine();
+        let entries = vec![("workerTypeCode".to_string(), "'casual'".to_string())];
+        assert_eq!(
+            project_fixture_keys(&engine, None, entries.clone()).await,
+            entries
+        );
+        assert_eq!(
+            project_fixture_keys(&engine, Some("NoSuchType"), entries.clone()).await,
+            entries
+        );
+    }
+
+    #[tokio::test]
+    async fn later_duplicate_replaces_the_value_and_keeps_the_first_position() {
+        let engine = projection_engine();
+        let entries = project_fixture_keys(
+            &engine,
+            Some("ChildType"),
+            vec![
+                ("title".to_string(), "'Test title'".to_string()),
+                ("vendor".to_string(), "'Test vendor'".to_string()),
+                ("vendor_id".to_string(), "dep_0_id".to_string()),
+            ],
+        )
+        .await;
+        assert_eq!(
+            entries,
+            vec![
+                ("title".to_string(), "'Test title'".to_string()),
+                ("vendor_id".to_string(), "dep_0_id".to_string()),
+            ],
+            "one projected key, first position, the later (seeded) value wins"
+        );
+    }
+
+    #[tokio::test]
+    async fn with_required_entries_projects_caller_keys_before_the_present_set() {
+        let engine = codegraph_core::mock::MockEngine::builder()
+            .with_schema(test_schema("ChildType", "child"))
+            .with_properties(
+                "ChildType",
+                vec![test_prop("title", true), codelist_code_prop()],
+            )
+            .build();
+        let entries = with_required_entries(
+            &engine,
+            &project_config(),
+            Some("ChildType"),
+            vec![("workerTypeCode".to_string(), "'casual'".to_string())],
+            DtoKeyCasing::Snake,
+        )
+        .await;
+        assert!(
+            entries
+                .iter()
+                .any(|(field, value)| field == "worker_type" && value == "'casual'"),
+            "the DSL value must survive under the projected key: {entries:?}"
+        );
+        assert!(
+            !entries.iter().any(|(field, _)| field == "worker_type_code"),
+            "the unknown DSL key must be gone: {entries:?}"
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|(field, _)| field == "worker_type")
+                .count(),
+            1,
+            "the required-property pass must not append a second key: {entries:?}"
+        );
+        assert!(
+            entries.iter().any(|(field, _)| field == "title"),
+            "the required-property append still runs: {entries:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn required_fk_seeding_yields_one_fk_key_with_the_seeded_value() {
+        let engine = codegraph_core::mock::MockEngine::builder()
+            .with_schema(test_schema("GroupType", "group"))
+            .with_properties("GroupType", vec![test_prop("name", true)])
+            .with_schema(test_schema("ChildType", "child"))
+            .with_properties(
+                "ChildType",
+                vec![test_prop("title", true), entity_ref_prop("group")],
+            )
+            .build();
+        let config = project_config();
+        let entries = with_required_entries(
+            &engine,
+            &config,
+            Some("ChildType"),
+            vec![("title".to_string(), "'Test title'".to_string())],
+            DtoKeyCasing::Snake,
+        )
+        .await;
+        let fixture = add_required_refs(
+            &engine,
+            &config,
+            "v1",
+            Some("ChildType"),
+            Fixture {
+                base_path: "/api/v1/hr/child".to_string(),
+                entries,
+                casing: DtoKeyCasing::Snake,
+                deps: Vec::new(),
+            },
+        )
+        .await;
+        let fk_entries: Vec<&(String, String)> = fixture
+            .entries
+            .iter()
+            .filter(|(field, _)| field == "group_id")
+            .collect();
+        assert_eq!(
+            fk_entries.len(),
+            1,
+            "the required FK must appear exactly once: {:?}",
+            fixture.entries
+        );
+        assert_eq!(fk_entries[0].1, "dep_0_id");
+        assert!(
+            !fixture.entries.iter().any(|(field, _)| field == "group"),
+            "no unprojected model-spelling key survives: {:?}",
+            fixture.entries
+        );
+    }
+
+    // ── seed bodies fail loudly (codegraph#835) ──────────────────────────
+
+    /// Every seed shape reads the body ONCE and asserts `ok()` naming the
+    /// endpoint before parsing — including the dependency seeds of the
+    /// headers/json helpers (a 4xx there used to degrade the wired FK to
+    /// "undefined" silently).
+    #[test]
+    fn every_seed_shape_asserts_ok_before_parsing() {
+        let dep = FixtureDep {
+            base_path: "/api/v1/hr/group".to_string(),
+            entries: vec![("name".to_string(), "'Test name'".to_string())],
+            casing: DtoKeyCasing::Snake,
+            id_var: "dep_0_id".to_string(),
+        };
+        let fixture = Fixture {
+            base_path: "/api/v1/hr/child".to_string(),
+            entries: vec![("group_id".to_string(), "dep_0_id".to_string())],
+            casing: DtoKeyCasing::Snake,
+            deps: vec![dep],
+        };
+
+        let json = fixture.setup_js_json("created", "");
+        assert!(
+            json.contains("const created_body = await created_resp.text();"),
+            "the create body must be read once:\n{json}"
+        );
+        assert!(
+            json.contains(
+                "expect(created_resp.ok(), `seed POST ${apiUrl('/api/v1/hr/child')} answered ${created_resp.status()}: ${created_body}`).toBeTruthy();"
+            ),
+            "the create must assert ok() naming its endpoint:\n{json}"
+        );
+        assert!(
+            json.contains("const created = JSON.parse(created_body);"),
+            "the id must bind from the asserted body:\n{json}"
+        );
+
+        let headed = fixture.setup_js_with_headers("seeded_resp", "", "seedHeaders", false);
+        assert!(
+            headed.contains(
+                "const seeded_resp_dep_0_id_body = await seeded_resp_dep_0_id_resp.text();"
+            ),
+            "the dependency body must be read once:\n{headed}"
+        );
+        assert!(
+            headed.contains(
+                "expect(seeded_resp_dep_0_id_resp.ok(), `seed POST ${apiUrl('/api/v1/hr/group')} answered ${seeded_resp_dep_0_id_resp.status()}: ${seeded_resp_dep_0_id_body}`).toBeTruthy();"
+            ),
+            "the dependency seed must assert ok() naming its endpoint:\n{headed}"
+        );
+        assert!(
+            headed.contains(
+                "const seeded_resp_dep_0_id_json = JSON.parse(seeded_resp_dep_0_id_body);"
+            ),
+            "the dependency id must bind from the asserted body:\n{headed}"
         );
     }
 }

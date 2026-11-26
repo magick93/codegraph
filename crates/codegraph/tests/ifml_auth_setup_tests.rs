@@ -483,6 +483,29 @@ async fn seeded_auth_specs_import_api_url_and_carry_seed_headers() {
         seeded.contains("headers: seedHeaders"),
         "the seed POST must send the headers (issue #808):\n{seeded}"
     );
+    // Issue #835: the seed must fail LOUDLY and NAMELY — the body is read
+    // once, asserted `ok()` naming the SAME endpoint the POST used (plus the
+    // status and the body), and only then parsed. A silent parse binds
+    // `seededId` to "undefined" and every persona test fails on an unrelated
+    // screen (the consumer's #808 diagnosis trap).
+    assert!(
+        seeded.contains("const seeded_resp_body = await seeded_resp.text();"),
+        "the seed body must be read ONCE into a variable (issue #835):\n{seeded}"
+    );
+    assert!(
+        seeded.contains("expect(seeded_resp.ok(), `seed POST ${apiUrl(")
+            && seeded.contains(")} answered ${seeded_resp.status()}: ${seeded_resp_body}`)"),
+        "the seed POST must assert ok() naming the endpoint, status and body (issue #835):\n{seeded}"
+    );
+    assert!(
+        seeded.contains("const seeded = JSON.parse(seeded_resp_body);")
+            && seeded.contains("seededId = String(seeded.data?.id ?? seeded.id);"),
+        "the id must bind from the ASSERTED body (issue #835):\n{seeded}"
+    );
+    assert!(
+        !seeded.contains(".json()"),
+        "the seed must not re-read the body through .json() (issue #835):\n{seeded}"
+    );
 
     // No seeding ⇒ no apiUrl/seedHeaders: the un-seeded surface is unchanged.
     let unseeded = read(&ui, "tests/ifml/request-list.auth.spec.ts");
@@ -510,6 +533,24 @@ async fn journey_specs_cover_workflow_handoff_and_shell_nav() {
     assert!(
         workflow.contains("Bearer") || workflow.contains("apiKey"),
         "the workflow journey's create step must authenticate via the persona API key:\n{workflow}"
+    );
+    // Issue #835: the journey's create is a seed too — asserted before the
+    // id is parsed, naming the SAME URL const the POST used.
+    assert!(
+        workflow.contains("const created_resp = await request.post(")
+            && workflow.contains("expect(created_resp.ok(), `seed POST ${"),
+        "the workflow journey's create must assert ok() before parsing (issue #835):\n{workflow}"
+    );
+    assert!(
+        workflow.contains("const created = JSON.parse(created_resp_body);"),
+        "the workflow journey's id must bind from the asserted body (issue #835):\n{workflow}"
+    );
+
+    // A param'd source view seeds a record for its walk — same loud shape.
+    let detail_walk = read(&ui, "tests/ifml/refund-request-detail.journey.spec.ts");
+    assert!(
+        detail_walk.contains("expect(seeded_resp.ok(), `seed POST ${apiUrl("),
+        "the view journey's open seed must assert ok() before parsing (issue #835):\n{detail_walk}"
     );
 
     let nav = read(&ui, "tests/ifml/shell-nav.journey.spec.ts");

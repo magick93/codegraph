@@ -3471,6 +3471,63 @@ guards are the recorded follow-up (the #663 three-verdict contract is the
 pattern; a mis-verdicting planner is worse than an omitted leg). Full
 record: `docs/tdd/752-hurl-fresh-row-machine-initial.tdd.md`.
 
+**The emitted e2e surface describes the emitted app (issue #835, the #808
+re-triage)**: the #808 header fix stuck (all 14 seeded consumer auth specs
+carry `seedHeaders`), but the 14 tests stayed red for two other reasons,
+both "the test asserts a shape the app does not have":
+
+- **Seed bodies use the model field spelling.** `fixture_entries()` yields
+  the `.ifml`/`.mox` names and the render-time helper applied CASING only,
+  while the generated `Create/Update{Entity}Request` DTOs are
+  `deny_unknown_fields` over **projected** Rust field names — a `…Code`
+  codelist strips `_code` (`channelCode` → `channel`), a scalar `refers`
+  appends `_id` (`vendor` → `vendor_id`), an array `refers` keeps the
+  modeled name. One body carried `approval_status` *and*
+  `approval_status_code`; a near-miss key 422'd and the spec then bound
+  `seededId = "undefined"`. ONE projection now runs at the head of
+  `with_required_entries` (every construction path funnels through it):
+  `fixtures.rs::project_fixture_keys` matches the snake-cased entry against
+  the schema property's `name`/`rust_field_name` and projects through
+  `codegraph_core::types::resolve_field` — the DTO plane's own rule, never
+  a second copy. Duplicates keep the first position and the later value
+  wins (the required-entry value beats a DSL spelling).
+- **`heading()` pointed at a page with no `<h1>`.** The page template emits
+  `<h1>` only in the mapped / timeline / typed-table / fallback-list
+  branches; `details`, `form` and `chart` render none — but the route
+  context handed the single `show_heading` slot to the FIRST top-level
+  component of ANY type. A `details`+`table` view therefore rendered no
+  heading while the render/persona specs asserted one. ONE predicate now
+  owns the decision (`ifml/page_heading.rs`: `component_mapping` — the
+  render context's own `resolve_slot` walk, so "mapped" cannot drift —
+  `component_renders_heading`, `page_heading_owner`,
+  `page_renders_heading`): the route context sets `show_heading` on the
+  owner only (exactly one `<h1>` per page, on the first component that can
+  carry it), and the e2e `assert_heading` legs (render, persona, journey
+  arrival, POM fallback) are gated on the same predicate — a heading-less
+  page asserts its primary root, which the specs already assert.
+- **A seed failure is named, never silent.** Every seeded parse reads the
+  body ONCE, asserts `ok()` naming the SAME URL expression the POST used
+  plus the status and the body, then parses (`auth.rs::
+  push_seed_body_assert`, `Fixture::setup_js_json`, and the
+  `setup_js_with_headers` dependency seeds — the last two used to parse
+  silently or assert only a bare message).
+
+Byte identity: both canaries (`ux_rules_pre_feature_ifml_tree`,
+`forms_pre_feature_ifml_tree`) hold with NO re-bless — the canary model is
+single-component (`list`, `details`), and a single `details` view already
+asserted no heading. The enumerated movement is confined to views whose
+first top-level component is not heading-capable while a later one is
+(they gain the `<h1>`), the specs of a heading-less collection primary
+(they assert `primaryRoot()` instead), and every seeded spec (the assert
+triple). Pins: `cargo test -p codegraph-generate --lib -- ifml::e2e_test`
+(projection KATs incl. the `_code`/scalar-ref/array-ref/dupe cases; the
+heading KATs; the seed-shape KAT), the route-context pins
+(details+table moves the `<h1>` to the table; details-only renders none),
+`ifml_auth_setup_tests` (11), and the nightly `ifml_codegen_gate` over
+`RefundFindings` (a no-label details+`list` view whose guarded id seed
+carries `channelCode` → the DTO's `channel`) + `GuardedRefundDetail`.
+Full record: `docs/tdd/835-ifml-e2e-app-contract.tdd.md`.
+
 ### Testing layers
 
 Two layers per the TDD discipline: (a) node-free PR-CI pins
