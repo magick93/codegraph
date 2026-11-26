@@ -10,13 +10,15 @@
 //!
 //! 1. R5 duplicate emission (a repeated name in one op's `emits`);
 //! 2. R4 `protected` / `child-bound` (no runtime site);
-//! 3. R8 cross-contract domain;
+//! 3. R9 the operation binds no entity at all;
 //! 4. R4 `abstract` (a 501 seam) / `create-shaped` / `delete` / `read-only`;
-//! 5. R9 no `{Entity}Response` surface at all;
-//! 6. R6 a `…Changed` fact the plain patch cannot write;
-//! 7. per payload field, in declaration order: record match (with the
+//! 5. R8 cross-contract domain;
+//! 6. R9 the bound entity has no resolvable `{Entity}Response` surface;
+//! 7. R6 a `…Changed` fact the plain patch cannot write;
+//! 8. per payload field, in declaration order: record match (with the
 //!    `{Entity}Id` surrogate arm) → context binding → R3 contained child →
 //!    R1 nearest; a matched record then R2 nullable, R7 type disagreement.
+//!    An unavailable context fact is R9; a context type mismatch is R10.
 //!
 //! `docs/events-producer.md` owns the sentences (see [`super::messages`]).
 
@@ -288,25 +290,6 @@ pub fn plan(inputs: &ProducerInputs) -> ProducerReport {
                 continue;
             }
 
-            // R8 — cross-contract domain (the event's inferred contract
-            // domain vs the op's module).
-            if let Some(contract_domain) = event.domain.as_deref()
-                && contract_domain != site.module_domain
-            {
-                report.refusals.push(diag(
-                    site,
-                    event_name,
-                    messages::r8(
-                        event_name,
-                        contract_domain,
-                        &site.service,
-                        &site.op,
-                        &site.module_domain,
-                    ),
-                ));
-                continue;
-            }
-
             // R9 — the operation binds no entity at all (there is no
             // `{Entity}Response` to match any payload field against).
             if site.entity.is_none() {
@@ -356,6 +339,25 @@ pub fn plan(inputs: &ProducerInputs) -> ProducerReport {
                 }
                 continue;
             };
+
+            // R8 — cross-contract domain (the event's inferred contract
+            // domain vs the op's module).
+            if let Some(contract_domain) = event.domain.as_deref()
+                && contract_domain != site.module_domain
+            {
+                report.refusals.push(diag(
+                    site,
+                    event_name,
+                    messages::r8(
+                        event_name,
+                        contract_domain,
+                        &site.service,
+                        &site.op,
+                        &site.module_domain,
+                    ),
+                ));
+                continue;
+            }
 
             // R6 — a `…Changed` fact on a plain patch that cannot write its
             // anchor (the anchor is excluded from the Update DTO).
