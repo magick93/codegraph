@@ -68,6 +68,9 @@ events producer: event `{Event}` (operation `{Service}.{op}`) payload field `{fi
 `.evt` payload fields carry no multiplicity in the current pin, so every
 payload field is required. "Declare the payload field optional" is the forward
 path an upstream multiplicity construct would unlock; v1 has no null policy.
+A nullable machine state field feeding `previousState`/`nextState` is R2 too:
+the state source is nullable, so the payload's required state field has no
+invented default.
 
 ### R3 — source lives in a contained child collection
 
@@ -78,15 +81,18 @@ events producer: event `{Event}` (operation `{Service}.{op}`) payload field `{fi
 ### R4 — no runtime site
 
 ```
-events producer: event `{Event}` is bound to operation `{Service}.{op}` which has no runtime site ({protected|child-bound|abstract|create-shaped|delete|read-only}) — the event cannot fire; bind it to an executing operation
+events producer: event `{Event}` is bound to operation `{Service}.{op}` which has no runtime site ({protected|child-bound|abstract|create-shaped|delete|read-only|statement-body}) — the event cannot fire; bind it to an executing operation
 ```
 
 `protected` is the #619 vocabulary (a valid visibility, but not a publisher);
 `child-bound` is a non-root child op; `abstract` is the 501 seam;
 `create-shaped` is the collection-level create op; `delete` is the delete arm;
-`read-only` is a read/projection arm. Slice (a) publishes on **transition and
-plain patch** arms only — every other executable arm is refused by name rather
-than silently skipping the emission.
+`read-only` is a read/projection arm; `statement-body` is an executable
+`ExecutionKind::Body` op. Slice (a) publishes on **transition and plain patch**
+arms only — every other executable arm is refused by name rather than silently
+skipping the emission. A statement body's saves are multiple
+`commands.update` calls, so threading one publish through them is a recorded
+follow-up; v1 refuses it instead of publishing per save.
 
 ### R5 — duplicate emission, both conditions can hold
 
@@ -199,6 +205,58 @@ events producer: event `{Event}` (operation `{Service}.{op}`) payload field `{fi
 `{shape}` and `{nullability}` are the R7 phrases. The vocabulary is CLOSED in
 v1: a spelling outside it is not a context binding (it falls through to R3/R1
 as an ordinary field name).
+
+### R11 — no post-write re-read
+
+```
+events producer: event `{Event}` (operation `{Service}.{op}`) publishes from `{Entity}`, which exposes no `read` operation — v1 builds the payload from an in-transaction re-read; add `read` to the class design or bind the emission to a record with one
+```
+
+The publish reads the updated row **inside the command's transaction** (before
+and after the write). An entity whose design exposes no `read` has no
+`find_by_id`, so there is nothing to construct the payload from. `read` is the
+same operation the route's record load already requires.
+
+### R12 — no persisted publishing channel
+
+```
+events producer: event `{Event}` is published on no persisted channel — the emission cannot fire; declare a channel that publishes it on a queue-backed target
+```
+
+An event is published on every DSL channel whose `publishes` list declares it
+and whose transport binds to pgmq. No such channel (no channel at all, an
+unbound/sqlite target, or trigger-only publications) means there is no publish
+function to call — v1 refuses rather than silently dropping the emission.
+
+R11 and R12 are checked AFTER the payload bindings (R1–R10): a payload
+name/shape error is the more actionable first blocker, so the channel/read
+wiring is fixed once the payload binds.
+
+## Publishing seam (slice b)
+
+With `events_producer` ON, every planned (operation, event) pair publishes
+from inside the command's transaction:
+
+- **Placement.** Between the repository write (and the `after_*_tx` hooks)
+  and `commit()`. A publish failure rolls the business write back; a
+  rolled-back save leaves no `pgmq` row. An `after_*_tx` hook abort still
+  happens before the publish.
+- **Re-read.** The command reads the row before the write (only when a
+  payload field uses `previousState`) and after it; the payload's record
+  fields, `nextState`, and `{Entity}Id` come from the post-write response,
+  `previousState` from the pre-write response. The reads run under the same
+  RLS session bundle and see the uncommitted write.
+- **Fanout.** One message per bound DSL channel that publishes the event, in
+  the event's declaration order. Any channel's send failing rolls back the
+  whole operation (all channels + the write).
+- **Envelope.** Producer events populate `entity_table`/`entity_id` (native;
+  CloudEvents extensions `entitytable`/`entityid`) and carry the inbound
+  `traceparent` when the request supplies one. The op clock (`occurredOn`) is
+  UTC at construction; the envelope `occurred_at` is UTC at publish.
+- **Arm rules.** A transition publishes after its edge (never on the
+  409/403 paths); a plain patch publishes only when a write happened (never
+  on the idempotent-read arm). Create/delete/read/statement-body arms do not
+  publish in v1 (R4).
 
 ## Documented decisions (no message)
 

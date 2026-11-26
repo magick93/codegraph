@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use codegraph::init::commands::{DoctorArgs, cmd_doctor};
 use codegraph_backend::{Backend, BackendConfig, create_backend};
+use codegraph_generate::db::dialect::DatabaseTarget;
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -107,10 +108,14 @@ async fn the_planner_produces_the_documented_sentences_end_to_end() {
     let config = codegraph_config::config::parse_domain_config(&config_path).unwrap();
     let engine = fixture_engine(&config).await;
 
-    let report =
-        codegraph_generate::events::producer::plan_for_graph(engine.querier(), &config, false)
-            .await
-            .expect("planner");
+    let report = codegraph_generate::events::producer::plan_for_graph(
+        engine.querier(),
+        &config,
+        false,
+        DatabaseTarget::Postgres,
+    )
+    .await
+    .expect("planner");
 
     // The one clean pair: OrderPlaced/place publishes record-compatible
     // fields; no W2 (a plain patch can write both fields through its Update
@@ -254,6 +259,7 @@ async fn flag_on_turns_the_refusals_into_hard_errors() {
         codegraph::validate::ValidationOptions {
             workers_topology: false,
             events_producer: true,
+            database_target: DatabaseTarget::Postgres,
         },
     )
     .await;
@@ -328,7 +334,8 @@ async fn doctor_prints_the_same_lines_as_warn_and_exits_zero() {
     fs::write(&profiles, PROFILE_TEMPLATE.replace("{flag}", "false")).unwrap();
 
     let args = doctor_args(&config_path, &profiles);
-    let lines = codegraph::doctor_events::producer_diagnostics(&args, &config);
+    let lines =
+        codegraph::doctor_events::producer_diagnostics(&args, &config, DatabaseTarget::Postgres);
     assert!(
         lines.iter().any(|line| line
             == "WARN events producer — event `OrderStatusCoded` (operation \

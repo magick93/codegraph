@@ -21,6 +21,7 @@
 pub mod collect;
 pub mod messages;
 pub mod planner;
+pub mod render;
 #[cfg(test)]
 mod tests;
 
@@ -46,7 +47,8 @@ pub async fn plan_for_graph(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
     workers_topology: bool,
+    database_target: crate::db::dialect::DatabaseTarget,
 ) -> Result<ProducerReport, String> {
-    let source = GraphProducerSource::new(db, config, workers_topology);
+    let source = GraphProducerSource::new(db, config, workers_topology, database_target);
     plan_with(&source).await
 }

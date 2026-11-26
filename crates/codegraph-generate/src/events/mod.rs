@@ -11,6 +11,7 @@
 
 pub mod docs;
 pub mod model;
+pub mod naming;
 pub mod placement;
 pub mod producer;
 

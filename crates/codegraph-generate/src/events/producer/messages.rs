@@ -187,6 +187,22 @@ pub fn r10(
     )
 }
 
+/// R11 — no post-write re-read (the entity exposes no `read`).
+#[must_use]
+pub fn r11(event: &str, service: &str, op: &str, entity: &str) -> String {
+    format!(
+        "event `{event}` (operation `{service}.{op}`) publishes from `{entity}`, which exposes no `read` operation — v1 builds the payload from an in-transaction re-read; add `read` to the class design or bind the emission to a record with one"
+    )
+}
+
+/// R12 — no persisted publishing channel.
+#[must_use]
+pub fn r12(event: &str) -> String {
+    format!(
+        "event `{event}` is published on no persisted channel — the emission cannot fire; declare a channel that publishes it on a queue-backed target"
+    )
+}
+
 /// W1 — surrogate identity binding.
 #[must_use]
 pub fn w1(entity: &str, alt: &str) -> String {

@@ -1991,7 +1991,15 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     // run path hard-errors on, as WARN lines, while the `events_producer`
     // flag is off. Diagnostic mode never fails; silent when no `.ddd` op
     // emits a declared `.evt` event.
-    soft_warnings += crate::doctor_events::report(args, domain_config.as_ref().ok(), &cross);
+    soft_warnings += crate::doctor_events::report(
+        args,
+        domain_config.as_ref().ok(),
+        &cross,
+        build_plan
+            .as_ref()
+            .map(|plan| plan.database_target())
+            .unwrap_or_default(),
+    );
 
     // The graph-analytics plane (issue #673): the upstream semantic graph
     // + the sweep analytics (separation-of-duty across merged policies,

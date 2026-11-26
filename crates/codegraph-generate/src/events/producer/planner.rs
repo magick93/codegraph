@@ -19,6 +19,10 @@
 //!    `{Entity}Id` surrogate arm) → context binding → R3 contained child →
 //!    R1 nearest; a matched record then R2 nullable, R7 type disagreement.
 //!    An unavailable context fact is R9; a context type mismatch is R10.
+//! 9. once every field binds, the publish-placement constraints: R12 (no
+//!    persisted channel) then R11 (no `read` for the in-transaction
+//!    re-read). A payload name/shape error is the more actionable FIRST
+//!    blocker, so these come last.
 //!
 //! `docs/events-producer.md` owns the sentences (see [`super::messages`]).
 
@@ -41,9 +45,25 @@ pub struct ProducerInputs {
     pub sites: Vec<EmissionSite>,
     /// The generated `{Entity}Response` surface, keyed by `(domain, title)`.
     pub entities: BTreeMap<(String, String), ProducerEntitySurface>,
+    /// Bound DSL channels per event (declaration order) — an event with no
+    /// entry is R12 (no persisted publishing channel).
+    pub publish_targets: BTreeMap<String, Vec<ProducerChannel>>,
     /// The configured class-name suffix (`Type`) — used for the `{Entity}Id`
     /// arm's entity-base spelling.
     pub type_suffix: String,
+}
+
+/// One bound DSL channel an event publishes on (slice b's fanout target).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProducerChannel {
+    /// The authored channel name.
+    pub name: String,
+    /// Its snake_case publish-fn suffix.
+    pub name_snake: String,
+    /// The per-channel event enum (`OrdersEvent`).
+    pub enum_name: String,
+    /// The pgmq queue name the channel binds.
+    pub queue: String,
 }
 
 /// One `emits`-bearing service operation.
@@ -103,6 +123,9 @@ pub struct ProducerEntitySurface {
     pub state_field: Option<String>,
     /// The machine field's generated DTO type.
     pub state_type: Option<String>,
+    /// Whether the entity's operation set exposes `read` (the in-transaction
+    /// re-read slice b needs; R11 when absent).
+    pub has_read: bool,
 }
 
 /// One top-level response field.
@@ -134,6 +157,15 @@ pub struct ProducerPlan {
     pub entity: String,
     pub arm: ProducerArm,
     pub bindings: Vec<ProducerBinding>,
+    /// The bound DSL channels this event publishes on (fanout targets).
+    pub publish: Vec<ProducerChannel>,
+    /// Whether any binding reads `previousState` (the command's pre-write
+    /// re-read gate).
+    pub needs_previous_state: bool,
+    /// The machine state field (snake) and its DTO type, when the entity has
+    /// one.
+    pub state_field: Option<String>,
+    pub state_dto_type: Option<String>,
 }
 
 /// The publishing arm a plan carries.
@@ -149,13 +181,22 @@ pub enum ProducerBinding {
     Record {
         payload_field: String,
         response_field: String,
+        /// The declared `.evt` payload type.
+        payload_type: String,
+        /// The source DTO type.
         rust_type: String,
         is_optional: bool,
+        is_codelist: bool,
     },
     Context {
         payload_field: String,
         fact: ContextFact,
+        /// The fact's supplied Rust type.
         rust_type: String,
+        /// The declared `.evt` payload type.
+        payload_type: String,
+        /// The machine state field the fact reads, for the state facts.
+        state_field: Option<String>,
     },
 }
 
@@ -389,6 +430,42 @@ pub fn plan(inputs: &ProducerInputs) -> ProducerReport {
             if let Some(bindings) =
                 bind_fields(inputs, site, event, surface, &mut report, &mut warned)
             {
+                // The publish-placement constraints (slice b) come AFTER the
+                // field bindings: a payload name/shape error is the more
+                // actionable first blocker, and the channel/read wiring is
+                // fixed once the payload compiles.
+                // R12 — no persisted publishing channel for this event.
+                let Some(publish) = inputs
+                    .publish_targets
+                    .get(event_name)
+                    .filter(|channels| !channels.is_empty())
+                    .cloned()
+                else {
+                    report
+                        .refusals
+                        .push(diag(site, event_name, messages::r12(event_name)));
+                    continue;
+                };
+
+                // R11 — the entity exposes no `read`, so the in-transaction
+                // post-write re-read cannot build the payload.
+                if !surface.has_read {
+                    report.refusals.push(diag(
+                        site,
+                        event_name,
+                        messages::r11(event_name, &site.service, &site.op, &surface.rust_type_name),
+                    ));
+                    continue;
+                }
+                let needs_previous_state = bindings.iter().any(|binding| {
+                    matches!(
+                        binding,
+                        ProducerBinding::Context {
+                            fact: ContextFact::PreviousState,
+                            ..
+                        }
+                    )
+                });
                 report.plans.push(ProducerPlan {
                     event: event.clone(),
                     service: site.service.clone(),
@@ -397,6 +474,10 @@ pub fn plan(inputs: &ProducerInputs) -> ProducerReport {
                     entity: surface.title.clone(),
                     arm,
                     bindings,
+                    publish,
+                    needs_previous_state,
+                    state_field: surface.state_field.clone(),
+                    state_dto_type: surface.state_type.clone(),
                 });
             }
         }
@@ -508,8 +589,10 @@ fn bind_fields(
             bindings.push(ProducerBinding::Record {
                 payload_field: payload.clone(),
                 response_field: record.name.clone(),
+                payload_type: field.rust_type.clone(),
                 rust_type: record.rust_type.clone(),
                 is_optional: record.is_optional,
+                is_codelist: record.is_codelist,
             });
             if !written.contains(&record.name) {
                 push_warning(
@@ -538,8 +621,10 @@ fn bind_fields(
             bindings.push(ProducerBinding::Record {
                 payload_field: payload.clone(),
                 response_field: "id".to_string(),
+                payload_type: field.rust_type.clone(),
                 rust_type: "uuid::Uuid".to_string(),
                 is_optional: false,
+                is_codelist: false,
             });
             if let Some(alt) = alt {
                 push_warning(
@@ -580,6 +665,29 @@ fn bind_fields(
                 ));
                 return None;
             };
+            // A nullable machine state field feeding a required state fact is
+            // R2 (the source is nullable; never invent a default).
+            if matches!(fact, ContextFact::PreviousState | ContextFact::NextState)
+                && let Some(state_field) = surface.state_field.as_deref()
+                && surface
+                    .fields
+                    .iter()
+                    .any(|field| field.name == state_field && field.is_optional)
+            {
+                report.refusals.push(diag(
+                    site,
+                    &event.name,
+                    messages::r2(
+                        &event.name,
+                        &site.service,
+                        &site.op,
+                        payload,
+                        &surface.rust_type_name,
+                        state_field,
+                    ),
+                ));
+                return None;
+            }
             let source = SurfaceField {
                 name: fact.display().to_string(),
                 rust_type: context_type.clone(),
@@ -609,6 +717,15 @@ fn bind_fields(
                 payload_field: payload.clone(),
                 fact,
                 rust_type: context_type,
+                payload_type: field.rust_type.clone(),
+                state_field: match fact {
+                    ContextFact::PreviousState | ContextFact::NextState => {
+                        surface.state_field.clone()
+                    }
+                    ContextFact::OccurredOn
+                    | ContextFact::CorrelationId
+                    | ContextFact::OrganizationId => None,
+                },
             });
             continue;
         }

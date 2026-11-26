@@ -10,8 +10,8 @@ use crate::events::model::{EventDefinition, EventFieldDef};
 
 use super::messages;
 use super::planner::{
-    self, EmissionArm, EmissionSite, ProducerArm, ProducerBinding, ProducerEntitySurface,
-    ProducerInputs, SurfaceChild, SurfaceField,
+    self, EmissionArm, EmissionSite, ProducerArm, ProducerBinding, ProducerChannel,
+    ProducerEntitySurface, ProducerInputs, SurfaceChild, SurfaceField,
 };
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
@@ -69,6 +69,7 @@ fn surface() -> ProducerEntitySurface {
         alt_identities: vec!["employee_number".to_string()],
         state_field: Some("status".to_string()),
         state_type: Some("OrderStatus".to_string()),
+        has_read: true,
     }
 }
 
@@ -125,13 +126,27 @@ fn site(emits: &[&str], arm: EmissionArm) -> EmissionSite {
     }
 }
 
+fn channel(name: &str) -> ProducerChannel {
+    ProducerChannel {
+        name: name.to_string(),
+        name_snake: codegraph_naming::to_snake_case(name),
+        enum_name: crate::events::naming::channel_enum_name(name),
+        queue: format!("events_{name}"),
+    }
+}
+
 fn inputs(events: Vec<EventDefinition>, sites: Vec<EmissionSite>) -> ProducerInputs {
     let mut entities = BTreeMap::new();
     entities.insert(("orders".to_string(), "WorkerType".to_string()), surface());
+    let mut publish_targets = BTreeMap::new();
+    for event in &events {
+        publish_targets.insert(event.name.clone(), vec![channel("orders")]);
+    }
     ProducerInputs {
         events,
         sites,
         entities,
+        publish_targets,
         type_suffix: "Type".to_string(),
     }
 }
@@ -394,6 +409,109 @@ fn r9_unavailable_context_fact() {
         site(&["OrderPlaced"], EmissionArm::Patch),
     );
     assert!(refusal(&report).contains("has no model source"));
+}
+
+#[test]
+fn r11_entity_without_read() {
+    let event = event("OrderPlaced", &[("total", "i64")]);
+    let site = site(&["OrderPlaced"], EmissionArm::Patch);
+    let mut input = inputs(vec![event], vec![site]);
+    input
+        .entities
+        .get_mut(&("orders".to_string(), "WorkerType".to_string()))
+        .unwrap()
+        .has_read = false;
+    let report = planner::plan(&input);
+    assert_eq!(
+        refusal(&report),
+        "event `OrderPlaced` (operation `WorkerService.place`) publishes from `WorkerType`, which \
+         exposes no `read` operation — v1 builds the payload from an in-transaction re-read; add \
+         `read` to the class design or bind the emission to a record with one"
+    );
+}
+
+#[test]
+fn r12_event_with_no_persisted_channel() {
+    let event = event("OrderPlaced", &[("total", "i64")]);
+    let site = site(&["OrderPlaced"], EmissionArm::Patch);
+    let mut input = inputs(vec![event], vec![site]);
+    input.publish_targets.clear();
+    let report = planner::plan(&input);
+    assert_eq!(
+        refusal(&report),
+        "event `OrderPlaced` is published on no persisted channel — the emission cannot fire; \
+         declare a channel that publishes it on a queue-backed target"
+    );
+}
+
+#[test]
+fn every_bound_channel_is_a_publish_target() {
+    let event = event("OrderPlaced", &[("total", "i64")]);
+    let site = site(&["OrderPlaced"], EmissionArm::Patch);
+    let mut input = inputs(vec![event], vec![site]);
+    input
+        .publish_targets
+        .get_mut("OrderPlaced")
+        .unwrap()
+        .push(channel("audit"));
+    let report = planner::plan(&input);
+    assert!(
+        report.refusals.is_empty(),
+        "unexpected refusal: {:?}",
+        report.refusals
+    );
+    let channels: Vec<&str> = report.plans[0]
+        .publish
+        .iter()
+        .map(|channel| channel.name.as_str())
+        .collect();
+    assert_eq!(channels, vec!["orders", "audit"]);
+}
+
+#[test]
+fn a_nullable_machine_state_is_r2() {
+    let mut input = inputs(
+        vec![event("OrderPlaced", &[("previousState", "OrderStatus")])],
+        vec![site(&["OrderPlaced"], EmissionArm::Transition(state()))],
+    );
+    let surface = input
+        .entities
+        .get_mut(&("orders".to_string(), "WorkerType".to_string()))
+        .unwrap();
+    for field in surface.fields.iter_mut() {
+        if field.name == "status" {
+            field.is_optional = true;
+        }
+    }
+    let report = planner::plan(&input);
+    assert_eq!(
+        refusal(&report),
+        "event `OrderPlaced` (operation `WorkerService.place`) payload field `previousState` is \
+         required but `WorkerTypeResponse.status` is nullable — declare the payload field optional \
+         or make the source feature required (v1 refuses to invent a null policy)"
+    );
+}
+
+#[test]
+fn the_plan_carries_its_transaction_facts() {
+    let report = run(
+        event(
+            "OrderPlaced",
+            &[("total", "i64"), ("previousState", "OrderStatus")],
+        ),
+        site(&["OrderPlaced"], EmissionArm::Transition(state())),
+    );
+    assert!(
+        report.refusals.is_empty(),
+        "unexpected refusal: {:?}",
+        report.refusals
+    );
+    let plan = &report.plans[0];
+    assert!(plan.needs_previous_state);
+    assert_eq!(plan.state_field.as_deref(), Some("status"));
+    assert_eq!(plan.state_dto_type.as_deref(), Some("OrderStatus"));
+    assert_eq!(plan.publish[0].name_snake, "orders");
+    assert_eq!(plan.publish[0].enum_name, "OrdersEvent");
 }
 
 #[test]
