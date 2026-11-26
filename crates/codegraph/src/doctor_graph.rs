@@ -125,6 +125,10 @@ pub struct UnionGather {
     pub deploys: Vec<GraphFile<DeployModel>>,
     /// `.ifml` interaction-flow artifacts.
     pub flows: Vec<GraphFile<IfmlModel>>,
+    /// `.mox` files the `.ddd` / `.evt` artifacts import. The doctor
+    /// events-producer check builds its scratch graph from these when
+    /// `--mox-files` is absent (issue #820 slice a).
+    pub mox_import_paths: std::collections::BTreeSet<PathBuf>,
 }
 
 impl UnionGather {
@@ -229,6 +233,11 @@ pub(crate) fn gather_cross_surface(
                 path.display().to_string(),
                 std::fs::read_to_string(path).unwrap_or_default(),
             );
+            for (mox_path, _) in &compiled.mox_sources {
+                gather
+                    .mox_import_paths
+                    .insert(PathBuf::from(mox_path.as_str()));
+            }
             let imports = compiled
                 .mox_sources
                 .iter()
@@ -252,6 +261,11 @@ pub(crate) fn gather_cross_surface(
                 path.display().to_string(),
                 std::fs::read_to_string(path).unwrap_or_default(),
             );
+            for (mox_path, _) in &compiled.mox_sources {
+                gather
+                    .mox_import_paths
+                    .insert(PathBuf::from(mox_path.as_str()));
+            }
             let imports = compiled
                 .mox_sources
                 .iter()

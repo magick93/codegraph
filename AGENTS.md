@@ -2270,6 +2270,60 @@ parameter's type from the bound value, so the server never has to guess.
   `dlq` verb's `pgmq.delete('{queue}', r.msg_id)` binds a `text` literal
   and a typed `bigint` row value, so it resolves without casts.
 
+### The events producer planner (issue #820 slice a)
+
+`.ddd` service-op `emits` clauses are lowered onto `.evt` payloads at
+generation time. Slice (a) is the **planner + refusal contract only**: no
+publishing, no new graph node/edge/property, `GRAPH_FORMAT_VERSION` untouched.
+The normative sentence catalogue is `docs/events-producer.md`; the plan is a
+pure derivation gated by the `events_producer` feature (strict bool, default
+OFF = zero diagnostics, byte-identical).
+
+- **Planner** (`codegraph-generate/src/events/producer/`): `planner.rs` is
+  pure over `ProducerInputs`; `messages.rs` owns one formatter per sentence
+  (run path `events producer: {body}`, doctor `WARN events producer — {body}`);
+  `collect.rs` owns every graph read behind the `ProducerSource` trait
+  (`GraphProducerSource` = production, `StaticProducerSource` = KATs / future
+  compiled source). `ProducerPlan` (event identity + service/op + entity +
+  arm + field bindings) is reused verbatim by the publishing slice.
+- **One naming rule**: the `{Entity}Response` surface comes from
+  `build_dto_context` (the DTO plane's own `resolve_dto_fields`). Matching is
+  exact snake equality (camel payload vs snake DTO binds); a `_code`-stripped
+  or edit-distance-only spelling is an R1 near miss with a deterministic
+  candidate (snake → `strip_code_suffix_safe` → prefix-normalised Levenshtein
+  ≤ 2, ties lexicographic). R9 = no `{Entity}Response` at all (unbound
+  op/missing schema) or an unavailable context fact.
+- **Context facts** (`§Context bindings`): `occurredOn`,
+  `previousState`/`fromState`, `nextState`/`toState` (transition arms only),
+  `correlationId`, `organizationId`; a record match wins with W3, a context
+  type disagreement is R10.
+- **Arms**: transition + plain patch publish; create-shaped / delete /
+  read-only / seam / protected / child-bound are R4 with the reason named.
+  W2 uses the op's OWN writes on a transition and the Update-DTO writable set
+  on a patch; R6 refuses a `…Changed` fact whose anchor the patch cannot
+  write.
+- **Validation**: `ValidationOptions { workers_topology, events_producer }` +
+  `run_with_options`; `check_event_producers` (`events_producer`, Error)
+  returns NOTHING when the flag is off. The driver threads the plan flag;
+  plan-less runs validate with it off.
+- **Doctor parity**: `codegraph doctor --ddd-files … --evt-files …` builds a
+  scratch in-memory Grafeo graph from the same sources (scoped worker thread +
+  current-thread runtime; doctor stays sync) and runs the SAME planner,
+  printing identical bodies as `WARN events producer — …`; presence-gated on
+  an `emits` → declared-event join; analysis failure is one INFO line. The
+  `ProducerSource` trait is the configurable seam (no CLI knob in this slice).
+- **Gates**: `cargo test -p codegraph-generate --lib -- events::producer` (31
+  sentence/decision KATs) + `cargo test -p codegraph --test
+  events_producer_tests` (6: end-to-end sentences, flag-on hard errors,
+  flag-off zero diagnostics + a successful plan-less run, doctor WARN + exit
+  0, flag-inert generation) + the standing canaries. Mutation teeth recorded
+  in `docs/tdd/820a-events-producer-planner.tdd.md` (drop the `_code`
+  projection → the nearest KAT fails; ignore the flag → the flag-off pins
+  fail).
+- **Deferred**: publishing (transaction seam, typed construction, rollback
+  live gate), the catalogue's published/refused marks, a doctor source CLI
+  knob.
+
 ## Deployment models as generator input (pherolang #49)
 
 pherolang `.deploy` deployment models compile — against their imported `.ddd`

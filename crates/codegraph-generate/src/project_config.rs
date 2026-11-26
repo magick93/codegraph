@@ -206,6 +206,13 @@ pub struct CodegenConfig {
     /// archiving doubles write volume, it must never silently turn on.
     #[serde(default)]
     pub event_archive: bool,
+    /// Events producer planner (issue #820 slice a): when true the
+    /// pre-generation validation lowers `.ddd` op `emits` onto `.evt`
+    /// payloads and hard-fails unmatchable bindings
+    /// (`docs/events-producer.md`). Default false = zero diagnostics,
+    /// byte-identical. Threaded from `BuildPlan.events_producer`.
+    #[serde(default)]
+    pub events_producer: bool,
     /// Post-generation structural gates (issue #468): when true the run
     /// scans the emitted tree and hard-fails on retired vocabulary
     /// (`-confirm-confirm`, raw POM compositions under `testid_module`).
@@ -235,6 +242,7 @@ impl Default for CodegenConfig {
             event_envelope: "native".into(),
             event_idempotency: false,
             event_archive: false,
+            events_producer: false,
             types_import_prefix: "codegraph_type_contracts".into(),
         }
     }
@@ -512,6 +520,7 @@ mod tests {
             ("event_envelope", serde_json::json!("native")),
             ("event_idempotency", serde_json::json!(false)),
             ("event_archive", serde_json::json!(false)),
+            ("events_producer", serde_json::json!(false)),
             ("public_operations_rls", serde_json::json!(false)),
             (
                 "types_import_prefix",

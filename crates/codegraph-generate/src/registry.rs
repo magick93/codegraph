@@ -804,6 +804,7 @@ mod charts_capability_audit {
             event_envelope: crate::events::EnvelopeVariant::Native,
             event_idempotency: false,
             event_archive: false,
+            events_producer: false,
             namespace_layout: false,
             ux_rules: false,
             ifml_e2e_auth: false,

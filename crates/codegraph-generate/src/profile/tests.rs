@@ -1034,4 +1034,24 @@ generators = ["ddl"]
             "expected event_archive type error, got: {msg}"
         );
     }
+
+    /// Issue #820 slice (a): `events_producer` is a strict bool, default
+    /// false (byte-identical), and an absent key stays off.
+    #[test]
+    fn build_plan_events_producer_is_a_strict_bool_defaulting_off() {
+        let plan = plan_with_features("").unwrap();
+        assert!(!plan.events_producer, "absent key must default off");
+
+        let plan = plan_with_features("events_producer = true").unwrap();
+        assert!(plan.events_producer);
+        let plan = plan_with_features("events_producer = false").unwrap();
+        assert!(!plan.events_producer);
+
+        let err = plan_with_features("events_producer = \"sure\"").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("events_producer") && msg.contains("boolean"),
+            "expected events_producer type error, got: {msg}"
+        );
+    }
 }

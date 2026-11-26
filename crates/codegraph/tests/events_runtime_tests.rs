@@ -509,6 +509,7 @@ async fn run_scenarios(target: &PgTarget) -> anyhow::Result<()> {
         event_envelope: codegraph::generate::events::EnvelopeVariant::Native,
         event_idempotency: true,
         event_archive: true,
+        events_producer: false,
         namespace_layout: false,
         ux_rules: false,
         expr_ir: false,

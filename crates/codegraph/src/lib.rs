@@ -1,6 +1,7 @@
 pub mod artifact;
 pub mod classify;
 pub mod doctor_dependencies;
+pub mod doctor_events;
 pub mod doctor_extras;
 pub mod doctor_graph;
 pub mod driver;

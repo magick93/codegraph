@@ -12,6 +12,7 @@
 pub mod docs;
 pub mod model;
 pub mod placement;
+pub mod producer;
 
 pub use model::{
     ChildTrigger, DeliveryGuarantee, DeliveryPolicy, DrainDelivery, EnvelopeVariant,

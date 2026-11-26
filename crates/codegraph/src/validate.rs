@@ -16,13 +16,23 @@ pub struct ValidationIssue {
     pub message: String,
 }
 
+/// The pre-generation validation options. `workers_topology` is the #663
+/// topology gate; `events_producer` is the #820 slice (a) flag — both are
+/// threaded from the build plan so a plan-less run (which validates with
+/// monolith + flag-off defaults) cannot silently skip a refusal.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ValidationOptions {
+    pub workers_topology: bool,
+    pub events_producer: bool,
+}
+
 pub struct ValidationPass;
 
 impl ValidationPass {
     /// The validation pass at the MONOLITH topology (the default; the 12
-    /// node-free test callers). See [`Self::run_with_topology`].
+    /// node-free test callers). See [`Self::run_with_options`].
     pub async fn run(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<ValidationIssue> {
-        Self::run_with_topology(db, config, false).await
+        Self::run_with_options(db, config, ValidationOptions::default()).await
     }
 
     /// The validation pass with the deployment topology threaded (issue
@@ -31,11 +41,33 @@ impl ValidationPass {
     /// or a workers + injected-guard run fails validation, collects the
     /// refusal non-fatally in the domain phase, and exits 0 with the
     /// modeled action surface silently missing.
+    ///
+    /// The events-producer flag stays OFF here (the historical signature);
+    /// the driver uses [`Self::run_with_options`].
     pub async fn run_with_topology(
         db: &dyn GraphQuerier,
         config: &DomainConfig,
         workers_topology: bool,
     ) -> Vec<ValidationIssue> {
+        Self::run_with_options(
+            db,
+            config,
+            ValidationOptions {
+                workers_topology,
+                events_producer: false,
+            },
+        )
+        .await
+    }
+
+    /// The full pre-generation pass (issue #820 slice a adds the
+    /// `events_producer` flag).
+    pub async fn run_with_options(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        options: ValidationOptions,
+    ) -> Vec<ValidationIssue> {
+        let workers_topology = options.workers_topology;
         // Run all independent validation checks concurrently.
         let (
             r1,
@@ -60,6 +92,7 @@ impl ValidationPass {
             r20,
             r21,
             r22,
+            r23,
         ) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
@@ -83,6 +116,7 @@ impl ValidationPass {
             Self::check_projection_boundaries(db, config),
             Self::check_machine_kernel(db, config),
             Self::check_machine_read_model(db, config),
+            Self::check_event_producers(db, config, options.events_producer, workers_topology),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -107,6 +141,50 @@ impl ValidationPass {
         issues.extend(r20);
         issues.extend(r21);
         issues.extend(r22);
+        issues.extend(r23);
+        issues
+    }
+
+    /// Events producer bindings (issue #820 slice a): when the profile
+    /// enables `events_producer`, every `.ddd` service-op `emits` binding
+    /// must lower onto its `.evt` payload. Refusals are HARD errors
+    /// (`docs/events-producer.md`); warnings are advisory. Flag OFF ⇒ this
+    /// check contributes NOTHING (byte-identical, and doctor is the
+    /// diagnostic surface).
+    async fn check_event_producers(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        events_producer: bool,
+        workers_topology: bool,
+    ) -> Vec<ValidationIssue> {
+        if !events_producer {
+            return Vec::new();
+        }
+        let Ok(report) =
+            codegraph_generate::events::producer::plan_for_graph(db, config, workers_topology)
+                .await
+        else {
+            // A graph/lowering failure is reported by its own check; never
+            // invent a producer diagnostic from it.
+            return Vec::new();
+        };
+        let mut issues = Vec::new();
+        for refusal in report.refusals {
+            issues.push(ValidationIssue {
+                severity: Severity::Error,
+                entity: "(events producer)".to_string(),
+                check: "events_producer",
+                message: refusal.sentence(),
+            });
+        }
+        for warning in report.warnings {
+            issues.push(ValidationIssue {
+                severity: Severity::Warning,
+                entity: "(events producer)".to_string(),
+                check: "events_producer",
+                message: warning.sentence(),
+            });
+        }
         issues
     }
 

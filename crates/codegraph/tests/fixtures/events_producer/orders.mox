@@ -1,0 +1,26 @@
+// Events-producer planner fixture (issue #820 slice a).
+//
+// One entity with a codelist status, a scalar FK-free surface, an optional
+// feature (R2), and a contained value-object collection (R3). The `.ddd`
+// design drives every refusal class the planner can reach without a
+// cross-domain contract (R8 is covered by the unit KATs).
+package nz.example.orders
+
+enum OrderStatus {
+    Draft as "D" = 0
+    Placed as "P" = 1
+    Cancelled as "C" = 2
+}
+
+class OrderLine {
+    int quantity
+    String sku
+}
+
+class OrderType {
+    String orderNumber
+    int total
+    OrderStatus status
+    String[0..1] note
+    contains OrderLine[] lines
+}
