@@ -286,6 +286,7 @@ async fn regenerate_fixture() -> Result<Vec<PathBuf>, String> {
             event_envelope: plan.event_envelope.as_str().to_string(),
             event_idempotency: plan.event_idempotency,
             event_archive: plan.event_archive,
+            events_producer: plan.events_producer,
             types_import_prefix: config.defaults.types_import_prefix.clone(),
         },
         ..Default::default()

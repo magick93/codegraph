@@ -1,0 +1,39 @@
+// Events-producer planner fixture (issue #820 slice a): the payload shapes
+// the refusal catalogue keys on.
+import "orders.mox"
+
+// Clean: every field matches the generated OrderTypeResponse by name.
+event OrderPlaced version "1.0.0" {
+    orderNumber: String;
+    total: int;
+}
+
+// R1: `statusCode` is one `_code` strip away from `status`.
+event OrderStatusCoded version "1.0.0" {
+    statusCode: OrderStatus;
+}
+
+// R1: no candidate within edit distance 2.
+event OrderMystery version "1.0.0" {
+    xyzzy: String;
+}
+
+// R2: `note` is nullable on the record, required on the payload.
+event OrderNoteRecorded version "1.0.0" {
+    note: String;
+}
+
+// R3: `quantity` lives only in the contained OrderLine collection.
+event OrderLineCounted version "1.0.0" {
+    quantity: int;
+}
+
+// R6: a change fact on a plain patch whose anchor (status) the workflow
+// config excludes from the Update DTO.
+event OrderStatusChanged version "1.0.0" {
+    status: OrderStatus;
+}
+
+channel orders {
+    publishes OrderPlaced;
+}

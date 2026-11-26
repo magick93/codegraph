@@ -3488,6 +3488,7 @@ async fn run_media_pipeline(
         event_envelope: codegraph_generate::events::EnvelopeVariant::Native,
         event_idempotency: false,
         event_archive: false,
+        events_producer: false,
         namespace_layout: false,
         ux_rules: false,
         expr_ir: false,

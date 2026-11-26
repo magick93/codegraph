@@ -386,6 +386,19 @@ pub(crate) struct TriggerTable {
     pub publication: TriggerPublication,
 }
 
+/// Declared events only — no channels, no subscription fold, and crucially no
+/// per-entity trigger enumeration. The events-producer planner (issue #820
+/// slice a) is the consumer: it needs the payload contracts and their inferred
+/// contract domain, not the transport plane.
+///
+/// Shares [`EventArchitecture::collect_events`] with the full architecture
+/// build, so a planner and the catalogue can never disagree about an event's
+/// payload or domain.
+pub async fn declared_events(db: &dyn GraphQuerier) -> Result<Vec<EventDefinition>> {
+    let models = db.get_evt_models().await?;
+    EventArchitecture::collect_events(db, &models).await
+}
+
 impl EventArchitecture {
     /// Build the architecture from the graph. Empty (and warning-free)
     /// when the graph carries no `.evt` models.

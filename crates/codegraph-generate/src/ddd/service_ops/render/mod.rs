@@ -158,6 +158,7 @@ mod tests {
                         state: None,
                         body_manages_state: None,
                         saves: false,
+                        assigned_fields: Vec::new(),
                         may_refuse: false,
                         responses: Vec::new(),
                     }),

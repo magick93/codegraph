@@ -188,6 +188,12 @@ pub struct BodyPlan {
     pub body_manages_state: Option<String>,
     /// `true` when the body persists through `self.save(..)`.
     pub saves: bool,
+    /// The aggregate fields the body assigns, cleaned of their local-root
+    /// prefix (`status` for `local.status`). Additive planner facts (the
+    /// events producer's W2/R6 write set, #820 slice a); empty for a body
+    /// that assigns nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assigned_fields: Vec<String>,
     /// `true` when any path may answer a declared 4xx — the hurl and e2e
     /// planners refuse to guess an expected status then.
     pub may_refuse: bool,
@@ -540,6 +546,16 @@ impl<'a> Lowerer<'a> {
                 .manages_state
                 .then(|| self.scope.state_field.unwrap_or_default().to_string()),
             saves: self.saves,
+            assigned_fields: self
+                .assigned_fields
+                .iter()
+                .map(|assigned| {
+                    assigned
+                        .rsplit_once('.')
+                        .map(|(_, field)| field.to_string())
+                        .unwrap_or_else(|| assigned.clone())
+                })
+                .collect(),
             may_refuse: self.may_refuse,
             responses,
         })

@@ -37,6 +37,12 @@ ifml_design_system = ""            # built-in IFML component pack ("" = none, e.
 # add "policy_rls" to an [api] generators list; emits 020000_policy_rls.sql
 # (Postgres only; sqlite is a no-op). Off = byte-identical output.
 rls_from_policy = false
+# Events producer planner (issue #820 slice a). When true the pre-generation
+# validation lowers `.ddd` service-op `emits` clauses onto `.evt` payloads and
+# HARD-fails every unmatchable binding (docs/events-producer.md). Default OFF
+# = zero diagnostics, byte-identical output; `codegraph doctor --ddd-files …
+# --evt-files …` prints the same lines as WARN while the flag is off.
+events_producer = false
 # Namespace-aware module layout (issue #268). When true, schemas that
 # carry a namespace (from mox `package`, rosetta `namespace`, or JSON
 # `$id`/`$namespace` inference) emit under namespace-derived module paths

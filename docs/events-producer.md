@@ -19,8 +19,10 @@ KATs in the same PR that lands the planner.
    prints the SAME lines as `WARN events producer — …` (severity WARN, never
    fails). A consumer aligns names here first, then flips the flag.
 
-Both modes print the identical sentence; only the severity differs. One
-formatter, one test.
+Both modes print the identical sentence body; only the surface prefix and the
+severity differ. One formatter, one test. The doctor line is
+`WARN events producer — <body>`; the hard-error line is
+`events producer: <body>` (the body starts at the artifact).
 
 ## The sentence
 
@@ -63,6 +65,10 @@ aligned against; the candidate is a literal DTO field name.
 events producer: event `{Event}` (operation `{Service}.{op}`) payload field `{field}` is required but `{Entity}Response.{candidate}` is nullable — declare the payload field optional or make the source feature required (v1 refuses to invent a null policy)
 ```
 
+`.evt` payload fields carry no multiplicity in the current pin, so every
+payload field is required. "Declare the payload field optional" is the forward
+path an upstream multiplicity construct would unlock; v1 has no null policy.
+
 ### R3 — source lives in a contained child collection
 
 ```
@@ -72,11 +78,15 @@ events producer: event `{Event}` (operation `{Service}.{op}`) payload field `{fi
 ### R4 — no runtime site
 
 ```
-events producer: event `{Event}` is bound to operation `{Service}.{op}` which has no runtime site ({protected|child-bound|abstract}) — the event cannot fire; bind it to an executing operation
+events producer: event `{Event}` is bound to operation `{Service}.{op}` which has no runtime site ({protected|child-bound|abstract|create-shaped|delete|read-only}) — the event cannot fire; bind it to an executing operation
 ```
 
 `protected` is the #619 vocabulary (a valid visibility, but not a publisher);
-`child-bound` is a non-root child op; `abstract` is the 501 seam.
+`child-bound` is a non-root child op; `abstract` is the 501 seam;
+`create-shaped` is the collection-level create op; `delete` is the delete arm;
+`read-only` is a read/projection arm. Slice (a) publishes on **transition and
+plain patch** arms only — every other executable arm is refused by name rather
+than silently skipping the emission.
 
 ### R5 — duplicate emission, both conditions can hold
 
@@ -100,7 +110,8 @@ on the event name.
 events producer: event `{Event}` (operation `{Service}.{op}`) payload field `{field}` is `{payload_type}` but `{Entity}Response.{candidate}` is `{dto_type}` — v1 does not coerce {shape|nullability}; align the model
 ```
 
-`{shape}` covers list-vs-scalar and record-vs-id; `{nullability}` covers the
+`{shape}` covers list-vs-scalar and record-vs-id (plus a plain scalar type
+mismatch, which prints `the value types`); `{nullability}` covers the
 `Option` split. The deliberately SUPPORTED conversions are not refusals: an
 identical type, `Uuid → String`, `i32 → i64`, and a codelist enum → the same
 enum or `String`.
@@ -117,7 +128,15 @@ events producer: event `{Event}` is declared by the contract of domain `{contrac
 events producer: event `{Event}` (operation `{Service}.{op}`) payload field `{field}` has no model source — v1 publishes record-compatible payloads only; add the feature (or a context binding) to the model
 ```
 
-## Warnings (never fail, printed once per entity/op)
+R9 fires when the planner has no `{Entity}Response` surface to match against at
+all: the operation binds no entity, the bound class resolves to no schema, or a
+context fact the payload names is unavailable on this arm (a `previousState` on
+a plain patch, or any transition fact on an entity with no machine). It is
+reported once per `(operation, event)` pair, naming the pair's first payload
+field. A field that *does* have a surface but matches nothing stays R1 (with
+the `nearest: (none within edit distance 2)` clause).
+
+## Warnings (never fail; each distinct line printed once per run)
 
 ### W1 — surrogate identity binding
 
@@ -132,7 +151,49 @@ events producer: payload field `{field}` binds `{Entity}Response.{candidate}`, w
 ```
 
 This is a correctness smell, not an error: the event still publishes the
-record's current value.
+record's current value. W2 is emitted per payload field (deduped across events
+on the same op). On a TRANSITION arm it counts the op's OWN writes (its
+parameters, body assignments, and the machine state — the client patch body is
+not the transition); on a plain patch it counts the Update DTO's writable
+fields (the client patch body can set those, so no warning).
+
+### W3 — record field shadows a context binding
+
+```
+events producer: event `{Event}` (operation `{Service}.{op}`) payload field `{field}` matches both `{Entity}Response.{candidate}` and the context binding `{context}` — bound to the record field; rename one side to disambiguate
+```
+
+A record match always wins; the warning makes the shadowing visible so a
+payload that meant the context fact can be renamed deliberately.
+
+## Context bindings (class B)
+
+v1 reserved context vocabulary. A payload field whose snake_case spelling
+matches one of these names binds to the context fact — but only when no
+`{Entity}Response` field matches (a record match wins, with W3).
+
+| Payload names | Fact | Rust type | Available on |
+|---|---|---|---|
+| `occurredOn`, `occurred_on` | the operation clock, UTC (`chrono::Utc::now()`) | `chrono::DateTime<chrono::Utc>` | every publishing arm |
+| `previousState`, `fromState`, `previous_state`, `from_state` | the transition's source state | the machine field's generated DTO type (a codelist enum, or `String`) | transition arms only |
+| `nextState`, `toState`, `next_state`, `to_state` | the transition's target state | the machine field's generated DTO type | transition arms only |
+| `correlationId`, `correlation_id` | the command's correlation id | `uuid::Uuid` | every publishing arm |
+| `organizationId`, `organization_id` | the session organization | `uuid::Uuid` | every publishing arm |
+
+An unavailable fact is R9 (no model source). A context-bound payload field's
+type follows the same supported-conversion table as R7 (identical,
+`Uuid → String`, `i32 → i64`, codelist enum → the same enum or `String`);
+anything else is R10:
+
+### R10 — context type disagreement
+
+```
+events producer: event `{Event}` (operation `{Service}.{op}`) payload field `{field}` is `{payload_type}` but the context binding `{context}` supplies `{context_type}` — v1 does not coerce {shape|nullability}; align the model
+```
+
+`{shape}` and `{nullability}` are the R7 phrases. The vocabulary is CLOSED in
+v1: a spelling outside it is not a context binding (it falls through to R3/R1
+as an ordinary field name).
 
 ## Documented decisions (no message)
 

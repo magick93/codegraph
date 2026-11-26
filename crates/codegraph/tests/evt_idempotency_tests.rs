@@ -140,6 +140,7 @@ async fn run_monolith(idempotency: bool) -> BTreeMap<String, String> {
         event_envelope: codegraph::generate::events::EnvelopeVariant::Native,
         event_idempotency: idempotency,
         event_archive: false,
+        events_producer: false,
         namespace_layout: false,
         ux_rules: false,
         expr_ir: false,

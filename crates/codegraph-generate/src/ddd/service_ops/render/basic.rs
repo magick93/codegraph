@@ -240,6 +240,7 @@ mod tests {
             state: None,
             body_manages_state: None,
             saves: true,
+            assigned_fields: Vec::new(),
             may_refuse: true,
             responses: Vec::new(),
         }

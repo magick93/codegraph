@@ -77,6 +77,12 @@ pub struct BuildPlan {
     /// verb. Default OFF — archiving doubles write volume, it must never
     /// silently turn on.
     pub event_archive: bool,
+    /// Events producer planner (issue #820 slice a): when true, the
+    /// pre-generation validation lowers `.ddd` op `emits` onto `.evt`
+    /// payloads and HARD-fails unmatchable bindings (the
+    /// `docs/events-producer.md` contract). Default OFF = zero
+    /// diagnostics, byte-identical output.
+    pub events_producer: bool,
     /// Namespace-aware module layout (issue #268): when true, schemas that
     /// carry a namespace emit under namespace-derived module paths
     /// (`cdm.base.datetime` → `cdm/base/datetime/...`) instead of the flat
@@ -299,6 +305,15 @@ impl BuildPlan {
             })?,
             None => false,
         };
+        // Events producer planner (issue #820 slice a; default false =
+        // byte-identical). Strict like the other booleans: a non-bool value
+        // is a parse error naming the key.
+        let events_producer = match profile.features.get("events_producer") {
+            Some(v) => v.as_bool().ok_or_else(|| {
+                Error::Config("feature \"events_producer\" must be a boolean".to_string())
+            })?,
+            None => false,
+        };
 
         // Topology × provider rule: the workers scaffold emits per-domain
         // Cloudflare Worker crates whose wasm32 slice cannot link SeaORM
@@ -457,6 +472,7 @@ impl BuildPlan {
             event_envelope,
             event_idempotency,
             event_archive,
+            events_producer,
             namespace_layout,
             ux_rules,
             expr_ir,
@@ -527,6 +543,7 @@ impl BuildPlan {
             event_envelope: EnvelopeVariant::default(),
             event_idempotency: false,
             event_archive: false,
+            events_producer: false,
             namespace_layout: false,
             ux_rules: false,
             expr_ir: false,

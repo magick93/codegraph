@@ -1,0 +1,35 @@
+// Events-producer planner fixture (issue #820 slice a).
+//
+// Every operation is a plain `save`/`findAll`/`findById` delegation, so the
+// planner's arm classification (patch / seam / read-only) is exercised
+// without a machine. `archive` is `protected` (R4), `notify` seams 501
+// (R4 abstract), `find` is a read arm (R4 read-only).
+import "orders.mox";
+
+application Orders {
+    base nz.example.orders
+
+    module orders {
+        entity OrderType scaffold repository OrderRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+
+        service OrderService {
+            inject OrderRepository;
+
+            place => OrderRepository.save emits OrderPlaced;
+            recordStatusCode => OrderRepository.save emits OrderStatusCoded;
+            recordMystery => OrderRepository.save emits OrderMystery;
+            recordNote => OrderRepository.save emits OrderNoteRecorded;
+            recordQuantity => OrderRepository.save emits OrderLineCounted;
+            duplicate => OrderRepository.save emits OrderPlaced, OrderPlaced;
+            changeStatus => OrderRepository.save emits OrderStatusChanged;
+            protected archive => OrderRepository.save emits OrderPlaced;
+            notify => OrderRepository.findAll emits OrderPlaced;
+            find => OrderRepository.findById emits OrderPlaced;
+        }
+    }
+}

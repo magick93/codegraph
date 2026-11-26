@@ -1987,6 +1987,21 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     // validation pass prints. Unbound protected ops are by design.
     soft_warnings += crate::doctor_graph::report_protected_op_dead_triggers(&cross);
 
+    // Events producer parity (issue #820 slice a): the SAME sentences the
+    // run path hard-errors on, as WARN lines, while the `events_producer`
+    // flag is off. Diagnostic mode never fails; a scratch-graph analysis
+    // failure is one INFO line. Silent when no `.ddd` op emits a declared
+    // `.evt` event.
+    let producer_lines =
+        crate::doctor_events::producer_lines(args, domain_config.as_ref().ok(), &cross);
+    for line in &producer_lines {
+        println!("{line}");
+    }
+    soft_warnings += producer_lines
+        .iter()
+        .filter(|line| line.starts_with("WARN "))
+        .count();
+
     // The graph-analytics plane (issue #673): the upstream semantic graph
     // + the sweep analytics (separation-of-duty across merged policies,
     // monotonicity, dead capabilities) over the SERIALIZED artifact, plus

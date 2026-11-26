@@ -716,6 +716,7 @@ fn resolve_run_profile(
                 event_envelope: plan.event_envelope.as_str().to_string(),
                 event_idempotency: plan.event_idempotency,
                 event_archive: plan.event_archive,
+                events_producer: plan.events_producer,
                 types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
             },
             deployment: DeploymentConfig {
@@ -1333,6 +1334,7 @@ async fn run_validation_gates(
         build_plan.is_some_and(|plan| {
             plan.deployment_topology == codegraph_generate::profile::DeploymentTopology::Workers
         }),
+        build_plan.is_some_and(|plan| plan.events_producer),
     )
     .await?;
 
@@ -1777,6 +1779,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         project_config.codegen.event_envelope = plan.event_envelope.as_str().to_string();
         project_config.codegen.event_idempotency = plan.event_idempotency;
         project_config.codegen.event_archive = plan.event_archive;
+        project_config.codegen.events_producer = plan.events_producer;
         project_config.integration.public_operations_rls = plan.public_operations_rls;
 
         println!(
@@ -1901,7 +1904,7 @@ pub async fn generate(
 
     // generate uses a pre-populated backend; schema base dir is unknown here.
     // Pass an empty path so UiCodelistGenerator skips gracefully.
-    run_validation(be.querier(), &config, false).await?;
+    run_validation(be.querier(), &config, false, false).await?;
     let ifml_component_mappings =
         load_ifml_component_mappings(ifml_components, ifml_design_system)?;
     // Issue #293: plan-less run (no BuildPlan) — a CLI ux-rules file still
@@ -2112,9 +2115,17 @@ async fn run_validation(
     querier: &dyn codegraph_core::traits::GraphQuerier,
     config: &codegraph_config::DomainConfig,
     workers_topology: bool,
+    events_producer: bool,
 ) -> Result<()> {
-    let issues =
-        crate::validate::ValidationPass::run_with_topology(querier, config, workers_topology).await;
+    let issues = crate::validate::ValidationPass::run_with_options(
+        querier,
+        config,
+        crate::validate::ValidationOptions {
+            workers_topology,
+            events_producer,
+        },
+    )
+    .await;
     let errors: Vec<_> = issues
         .iter()
         .filter(|i| matches!(i.severity, crate::validate::Severity::Error))
