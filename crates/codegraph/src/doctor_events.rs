@@ -229,3 +229,21 @@ pub(crate) fn report(
         .filter(|line| line.starts_with("WARN "))
         .count()
 }
+
+/// The doctor call-site wrapper: resolve the generation target from the
+/// loaded build plan and print the producer lines.
+pub(crate) fn report_for_run(
+    args: &crate::init::commands::DoctorArgs,
+    config: Option<&DomainConfig>,
+    cross: &UnionGather,
+    build_plan: Option<&crate::profile::BuildPlan>,
+) -> usize {
+    report(
+        args,
+        config,
+        cross,
+        build_plan
+            .map(|plan| plan.database_target())
+            .unwrap_or_default(),
+    )
+}

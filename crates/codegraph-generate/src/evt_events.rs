@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_naming::{escape_module_keyword, to_pascal_case, to_snake_case};
+use codegraph_naming::{escape_module_keyword, to_snake_case};
 use serde::Serialize;
 
 use crate::GenerationEntry;

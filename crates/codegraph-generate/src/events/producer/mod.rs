@@ -32,8 +32,62 @@ pub use planner::{
     SurfaceField,
 };
 
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
+
+/// The run's publishable plans grouped by entity — built once in the
+/// generation context and shared by the command/handler generators (issue
+/// #820 slice b). Refused pairs never appear here (validation fail-closed
+/// before generation).
+#[derive(Debug, Clone, Default)]
+pub struct ProducerPlanIndex {
+    by_entity: BTreeMap<(String, String), Vec<ProducerPlan>>,
+}
+
+impl ProducerPlanIndex {
+    #[must_use]
+    pub fn from_report(report: &ProducerReport) -> Self {
+        let mut by_entity: BTreeMap<(String, String), Vec<ProducerPlan>> = BTreeMap::new();
+        for plan in &report.plans {
+            by_entity
+                .entry((plan.domain.clone(), plan.entity.clone()))
+                .or_default()
+                .push(plan.clone());
+        }
+        Self { by_entity }
+    }
+
+    /// The plans for one entity (`domain`, schema title), declaration order.
+    #[must_use]
+    pub fn for_entity(&self, domain: &str, title: &str) -> &[ProducerPlan] {
+        self.by_entity
+            .get(&(domain.to_string(), title.to_string()))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_entity.is_empty()
+    }
+}
+
+/// Build the index for a generation run (the flag gates the work).
+pub async fn plan_index_for_run(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    workers_topology: bool,
+    database_target: crate::db::dialect::DatabaseTarget,
+) -> Option<Arc<ProducerPlanIndex>> {
+    let report = plan_for_graph(db, config, workers_topology, database_target)
+        .await
+        .ok()?;
+    let index = ProducerPlanIndex::from_report(&report);
+    (!index.is_empty()).then(|| Arc::new(index))
+}
 
 /// Run the planner over an arbitrary source. An error means the analysis
 /// could not run (never a guessed diagnostic).

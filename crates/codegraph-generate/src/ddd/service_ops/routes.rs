@@ -584,6 +584,7 @@ pub async fn routes_for_entity(
                     raise_responses,
                     render_facts: render_facts.clone(),
                     execution_block: String::new(),
+                    publish_arg: None,
                 };
                 // Issue #778: the pre-rendered execution body (seam/read/
                 // delete here; the remaining arms stay template-owned).
@@ -1927,6 +1928,7 @@ async fn child_op_routes(
                     raise_responses,
                     render_facts: render_facts.clone(),
                     execution_block: String::new(),
+                    publish_arg: None,
                 };
                 // Issue #778: the pre-rendered execution body (a child op
                 // whose lowering is a seam/read/delete renders here too).

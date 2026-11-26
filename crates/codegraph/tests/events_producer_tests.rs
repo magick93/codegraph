@@ -52,7 +52,10 @@ description = ""
 events_producer = {flag}
 
 [profiles.default.api]
-generators = ["ddl", "sea_orm_entity", "dto", "repository", "handler"]
+generators = [
+    "ddl", "sea_orm_entity", "dto", "domain_types_dto", "repository",
+    "command", "query", "handler", "router", "errors", "evt_events",
+]
 "#;
 
 fn write_config(dir: &Path) -> PathBuf {
@@ -356,16 +359,154 @@ async fn doctor_prints_the_same_lines_as_warn_and_exits_zero() {
 }
 
 #[tokio::test]
-async fn the_flag_is_inert_for_generated_output() {
+async fn flag_off_output_has_no_publishing_surface() {
     let dir = tempfile::tempdir().unwrap();
-    let config_path = write_config(dir.path());
+    let (config_path, mox, evt, ddd) = write_clean_project(dir.path());
+    let profiles = dir.path().join("profiles-off.toml");
+    fs::write(&profiles, PROFILE_TEMPLATE.replace("{flag}", "false")).unwrap();
+    let output = dir.path().join("out-off");
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &config_path,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: std::slice::from_ref(&mox),
+        rosetta_files: &[],
+        ddd_files: std::slice::from_ref(&ddd),
+        evt_files: std::slice::from_ref(&evt),
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("flag-off generation");
 
-    // A CLEAN model: only the matching `place` op emits, so flag-on
-    // validation passes.
-    fs::copy(fixture("orders.mox"), dir.path().join("orders.mox")).unwrap();
-    fs::copy(fixture("orders.evt"), dir.path().join("orders.evt")).unwrap();
+    let tree = collect_files(&output);
+    let all = tree.values().cloned().collect::<String>();
+    for symbol in [
+        "update_with_events",
+        "OrderOutgoingEvent",
+        "publish_orders_in_tx",
+        "extract_traceparent",
+        "entity_table: Some(",
+    ] {
+        assert!(
+            !all.contains(symbol),
+            "flag-off output must not carry `{symbol}`"
+        );
+    }
+    // The flag-off bytes are held to master by the standing canaries
+    // (`evt_pipeline_tests`, `evt_workers_tests`, `review_fixture_drift`).
+}
+
+#[tokio::test]
+async fn flag_on_generates_the_publishing_command_and_handler() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config_path, mox, evt, ddd) = write_clean_project(dir.path());
+    let profiles = dir.path().join("profiles.toml");
+    fs::write(&profiles, PROFILE_TEMPLATE.replace("{flag}", "true")).unwrap();
+    let output = dir.path().join("out-on");
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &config_path,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: std::slice::from_ref(&mox),
+        rosetta_files: &[],
+        ddd_files: std::slice::from_ref(&ddd),
+        evt_files: std::slice::from_ref(&evt),
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("flag-on generation");
+
+    let command = fs::read_to_string(output.join("src/domain/orders/order/command.rs")).unwrap();
+    assert!(
+        command.contains("pub enum OrderOutgoingEvent {"),
+        "missing enum: {command}"
+    );
+    assert!(
+        command.contains("pub async fn update_with_events("),
+        "missing seam: {command}"
+    );
+    assert!(
+        command.contains("crate::events::emit::publish_orders_in_tx("),
+        "missing publish: {command}"
+    );
+    assert!(
+        command.contains("entity_table: Some(\"order\")"),
+        "missing envelope identity: {command}"
+    );
+    assert!(
+        command.contains("let after = self"),
+        "missing post-write re-read: {command}"
+    );
+    assert!(
+        command.contains("order_number: after.order_number.clone()"),
+        "missing typed construction: {command}"
+    );
+
+    let handler = fs::read_to_string(output.join("src/api/orders/order_handler.rs")).unwrap();
+    assert!(
+        handler.contains("update_with_events("),
+        "handler must call the publishing seam: {handler}"
+    );
+    assert!(
+        handler
+            .contains("&[crate::domain::orders::order::command::OrderOutgoingEvent::OrderPlaced]"),
+        "missing outgoing variants: {handler}"
+    );
+    assert!(
+        handler.contains("extract_traceparent(&headers)"),
+        "missing traceparent capture: {handler}"
+    );
+    assert!(
+        handler.contains("fn extract_traceparent("),
+        "missing traceparent helper: {handler}"
+    );
+
+    let emit = fs::read_to_string(output.join("src/events/emit.rs")).unwrap();
+    assert!(emit.contains("pub async fn publish_orders_in_tx("));
+    assert!(emit.contains("db: &impl ConnectionTrait"));
+    assert!(emit.contains("pub entity_table: Option<&'static str>"));
+}
+
+/// A CLEAN model (only the matching `place` op emits) shared by the
+/// flag-inert and flag-on generation pins.
+fn write_clean_project(dir: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    let config_path = write_config(dir);
+    fs::copy(fixture("orders.mox"), dir.join("orders.mox")).unwrap();
+    fs::copy(fixture("orders.evt"), dir.join("orders.evt")).unwrap();
     fs::write(
-        dir.path().join("clean.ddd"),
+        dir.join("clean.ddd"),
         r#"import "orders.mox";
 
 application Orders {
@@ -387,49 +528,12 @@ application Orders {
 "#,
     )
     .unwrap();
-
-    let mox = dir.path().join("orders.mox");
-    let evt = dir.path().join("orders.evt");
-    let ddd = dir.path().join("clean.ddd");
-    let mut outputs: Vec<BTreeMap<String, String>> = Vec::new();
-    for (flag, name) in [("false", "off"), ("true", "on")] {
-        let profiles = dir.path().join(format!("profiles-{name}.toml"));
-        fs::write(&profiles, PROFILE_TEMPLATE.replace("{flag}", flag)).unwrap();
-        let output = dir.path().join(format!("out-{name}"));
-        codegraph::driver::run(codegraph::driver::RunArgs {
-            schemas: None,
-            classifier: None,
-            config_path: &config_path,
-            output: &output,
-            extension_points_path: None,
-            integration_manifests: &[],
-            profile_name: "default",
-            variant: None,
-            profiles_config_path: Some(profiles.clone()),
-            no_post_gen: true,
-            template_dir: &[],
-            ifml_files: &[],
-            openapi_files: &[],
-            mox_files: std::slice::from_ref(&mox),
-            rosetta_files: &[],
-            ddd_files: std::slice::from_ref(&ddd),
-            evt_files: std::slice::from_ref(&evt),
-            deploy_files: &[],
-            ifml_framework: &[],
-            ifml_components: None,
-            ifml_design_system: None,
-            codegraph_rev: None,
-            check: false,
-            ux_rules: None,
-        })
-        .await
-        .unwrap_or_else(|e| panic!("flag {flag} run failed: {e}"));
-        outputs.push(collect_files(&output));
-    }
-    assert_eq!(
-        outputs[0], outputs[1],
-        "events_producer must not move generated output"
-    );
+    (
+        config_path,
+        dir.join("orders.mox"),
+        dir.join("orders.evt"),
+        dir.join("clean.ddd"),
+    )
 }
 
 fn doctor_args(config: &Path, profiles: &Path) -> DoctorArgs {

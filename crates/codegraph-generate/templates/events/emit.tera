@@ -21,7 +21,11 @@ pub struct EventContext {
     pub tenant_id: Uuid,
     pub correlation_id: Uuid,
     pub traceparent: Option<String>,
-}
+{% if project.events_producer %}    /// The producing record's table and id (issue #820): populated by the
+    /// transactional producer, absent on trigger/DSL publications.
+    pub entity_table: Option<&'static str>,
+    pub entity_id: Option<Uuid>,
+{% endif %}}
 {% for channel in channels %}
 /// Events published on the `{{ channel.name }}` channel.
 #[derive(Debug, Clone)]
@@ -73,12 +77,27 @@ impl {{ channel.enum_name }} {
 /// `{{ channel.queue }}`). The envelope carries the declared event name as
 /// both `event` and `event_type` so webhook subscription matching and the
 /// typed consumer routing share one message shape.
-pub async fn publish_{{ channel.name_snake }}(
+{% if project.events_producer %}pub async fn publish_{{ channel.name_snake }}(
     client: &DbClient,
     event: {{ channel.enum_name }},
     ctx: &EventContext,
 ) -> Result<(), tokio_postgres::Error> {
-{% if project.event_envelope == "cloudevents" %}    // CloudEvents 1.0 structured envelope (issue #609): the declared event
+    publish_{{ channel.name_snake }}_in_tx(client, event, ctx).await
+}
+
+/// Transaction-capable publish (issue #820 slice b): the producer publishes
+/// inside the command's `DbTx` so a rolled-back write leaves no message.
+pub async fn publish_{{ channel.name_snake }}_in_tx(
+    client: &impl GenericClient,
+    event: {{ channel.enum_name }},
+    ctx: &EventContext,
+) -> Result<(), tokio_postgres::Error> {
+{% else %}pub async fn publish_{{ channel.name_snake }}(
+    client: &DbClient,
+    event: {{ channel.enum_name }},
+    ctx: &EventContext,
+) -> Result<(), tokio_postgres::Error> {
+{% endif %}{% if project.event_envelope == "cloudevents" %}    // CloudEvents 1.0 structured envelope (issue #609): the declared event
     // name is `type`, the payload rides `data`, and the native identity
     // keys survive as CE extension attributes. `id` is a publish-time
     // UUID — distinct from the pgmq msg_id the queue assigns.
@@ -96,7 +115,9 @@ pub async fn publish_{{ channel.name_snake }}(
         "correlationid": ctx.correlation_id.to_string(),
         "tenantid": ctx.tenant_id.to_string(),
         "traceparent": ctx.traceparent.as_deref(),
-    });
+{% if project.events_producer %}        "entitytable": ctx.entity_table,
+        "entityid": ctx.entity_id,
+{% endif %}    });
 {% else %}    let envelope = serde_json::json!({
         "event": event.event_name(),
         "version": event.event_version(),
@@ -104,9 +125,11 @@ pub async fn publish_{{ channel.name_snake }}(
         "payload": event.payload(),
         "event_type": event.event_name(),
         "domain": event.domain(),
-        "entity_table": serde_json::Value::Null,
+{% if project.events_producer %}        "entity_table": ctx.entity_table,
+        "entity_id": ctx.entity_id,
+{% else %}        "entity_table": serde_json::Value::Null,
         "entity_id": serde_json::Value::Null,
-        "tenant_id": ctx.tenant_id,
+{% endif %}        "tenant_id": ctx.tenant_id,
         "occurred_at": chrono::Utc::now().to_rfc3339(),
         "correlation_id": ctx.correlation_id,
         "traceparent": ctx.traceparent.as_deref(),
@@ -133,7 +156,11 @@ pub struct EventContext {
     pub tenant_id: Uuid,
     pub correlation_id: Uuid,
     pub traceparent: Option<String>,
-}
+{% if project.events_producer %}    /// The producing record's table and id (issue #820): populated by the
+    /// transactional producer, absent on trigger/DSL publications.
+    pub entity_table: Option<&'static str>,
+    pub entity_id: Option<Uuid>,
+{% endif %}}
 {% for channel in channels %}
 /// Events published on the `{{ channel.name }}` channel.
 #[derive(Debug, Clone)]
@@ -185,12 +212,28 @@ impl {{ channel.enum_name }} {
 /// `{{ channel.queue }}`). The envelope carries the declared event name as
 /// both `event` and `event_type` so webhook subscription matching and the
 /// typed consumer routing share one message shape.
-pub async fn publish_{{ channel.name_snake }}(
+{% if project.events_producer %}pub async fn publish_{{ channel.name_snake }}(
     db: &DatabaseConnection,
     event: {{ channel.enum_name }},
     ctx: &EventContext,
 ) -> Result<(), sea_orm::DbErr> {
-{% if project.event_envelope == "cloudevents" %}    // CloudEvents 1.0 structured envelope (issue #609): the declared event
+    publish_{{ channel.name_snake }}_in_tx(db, event, ctx).await
+}
+
+/// Transaction-capable publish (issue #820 slice b): the producer publishes
+/// inside the command's `DatabaseTransaction` so a rolled-back write leaves
+/// no message.
+pub async fn publish_{{ channel.name_snake }}_in_tx(
+    db: &impl ConnectionTrait,
+    event: {{ channel.enum_name }},
+    ctx: &EventContext,
+) -> Result<(), sea_orm::DbErr> {
+{% else %}pub async fn publish_{{ channel.name_snake }}(
+    db: &DatabaseConnection,
+    event: {{ channel.enum_name }},
+    ctx: &EventContext,
+) -> Result<(), sea_orm::DbErr> {
+{% endif %}{% if project.event_envelope == "cloudevents" %}    // CloudEvents 1.0 structured envelope (issue #609): the declared event
     // name is `type`, the payload rides `data`, and the native identity
     // keys survive as CE extension attributes. `id` is a publish-time
     // UUID — distinct from the pgmq msg_id the queue assigns.
@@ -208,7 +251,9 @@ pub async fn publish_{{ channel.name_snake }}(
         "correlationid": ctx.correlation_id.to_string(),
         "tenantid": ctx.tenant_id.to_string(),
         "traceparent": ctx.traceparent.as_deref(),
-    });
+{% if project.events_producer %}        "entitytable": ctx.entity_table,
+        "entityid": ctx.entity_id,
+{% endif %}    });
 {% else %}    let envelope = serde_json::json!({
         "event": event.event_name(),
         "version": event.event_version(),
@@ -216,9 +261,11 @@ pub async fn publish_{{ channel.name_snake }}(
         "payload": event.payload(),
         "event_type": event.event_name(),
         "domain": event.domain(),
-        "entity_table": serde_json::Value::Null,
+{% if project.events_producer %}        "entity_table": ctx.entity_table,
+        "entity_id": ctx.entity_id,
+{% else %}        "entity_table": serde_json::Value::Null,
         "entity_id": serde_json::Value::Null,
-        "tenant_id": ctx.tenant_id,
+{% endif %}        "tenant_id": ctx.tenant_id,
         "occurred_at": chrono::Utc::now().to_rfc3339(),
         "correlation_id": ctx.correlation_id,
         "traceparent": ctx.traceparent.as_deref(),

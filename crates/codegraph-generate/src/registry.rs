@@ -71,7 +71,8 @@ pub(crate) fn build_entity_generators(
         Box::new(
             ddd::command::CommandGenerator::new(base("command"))
                 .with_parent_candidates(parent_candidates.to_vec())
-                .with_extension_points(push_covered.clone()),
+                .with_extension_points(push_covered.clone())
+                .with_producer_plans(ctx.producer_plans().cloned()),
         ) as Box<dyn EntityGenerator>,
         Box::new(
             ddd::query::QueryGenerator::new(base("query"))
@@ -90,7 +91,10 @@ pub(crate) fn build_entity_generators(
                 // targets live in the `rules` generator's module, so the
                 // flag rides the plan. Plan-less runs never emit the
                 // rules module — guards stay off.
-                .with_rules_guards(ctx.build_plan.is_some_and(|bp| bp.has_domain_gen("rules"))),
+                .with_rules_guards(ctx.build_plan.is_some_and(|bp| bp.has_domain_gen("rules")))
+                // Producer publishing (issue #820 slice b): the handler
+                // passes the events to the command's transactional seam.
+                .with_producer_plans(ctx.producer_plans().cloned()),
         ) as Box<dyn EntityGenerator>,
         Box::new(
             api::workflow_action::WorkflowActionGenerator::new(base("workflow_action"))

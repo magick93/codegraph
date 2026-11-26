@@ -78,6 +78,10 @@ pub(crate) struct GeneratorContext<'a> {
     /// here so entity-type pre-registration follows the SAME title-claim
     /// precedence the generators emit against (issue #746 F1).
     pub(crate) generation_order: Vec<GenerationEntry>,
+    /// This run's publishable producer plans (issue #820 slice b), computed
+    /// once when `events_producer` is on and shared by the command + handler
+    /// generators. `None` ⇒ no publishing output.
+    pub(crate) producer_plans: Option<std::sync::Arc<crate::events::producer::ProducerPlanIndex>>,
 }
 
 impl GeneratorContext<'_> {
@@ -94,6 +98,13 @@ impl GeneratorContext<'_> {
     /// This run's type registry (issue #746).
     pub(crate) fn type_registry(&self) -> &TypeRegistryHandle {
         &self.type_registry
+    }
+
+    /// This run's producer plans (issue #820 slice b), when publishing is on.
+    pub(crate) fn producer_plans(
+        &self,
+    ) -> Option<&std::sync::Arc<crate::events::producer::ProducerPlanIndex>> {
+        self.producer_plans.as_ref()
     }
 
     /// This run's deterministic generation order.
@@ -227,6 +238,21 @@ pub(crate) async fn build_generator_context<'a>(
 
     let capability_registry = crate::profile::CapabilityRegistry::new();
 
+    // Events producer plans (issue #820 slice b): computed ONCE here when the
+    // profile enables publishing; validation has already fail-closed on any
+    // refusal, so this only carries the successful plans.
+    let producer_plans = if project.codegen.events_producer {
+        crate::events::producer::plan_index_for_run(
+            &cached_db,
+            config,
+            workers_topology,
+            project.database.database_target,
+        )
+        .await
+    } else {
+        None
+    };
+
     Ok(GeneratorContext {
         cached_db,
         config,
@@ -255,6 +281,7 @@ pub(crate) async fn build_generator_context<'a>(
         capability_registry,
         type_registry,
         generation_order,
+        producer_plans,
     })
 }
 

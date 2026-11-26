@@ -507,6 +507,11 @@ pub struct ServiceOpRoute {
     /// verbatim once wired.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub execution_block: String,
+    /// The handler's outgoing-event argument (`&[Enum::Variant, …]`) for a
+    /// publishing op (issue #820 slice b). Generation-time only — the
+    /// pre-rendered `execution_block` consumes it; never serialized.
+    #[serde(skip)]
+    pub publish_arg: Option<String>,
 }
 
 /// The compact injected-scope guard facts the hurl contract's planner

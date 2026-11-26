@@ -282,9 +282,12 @@ pub fn render_publish_block(
             "                        let payload = crate::events::contracts::{payload_type} {{\n"
         ));
         for binding in &plan.bindings {
+            // The contracts struct projects each field through
+            // `to_snake_case` (the ONE naming rule, #835); the binding keeps
+            // the authored spelling for diagnostics/matching.
             out.push_str(&format!(
                 "                            {}: {},\n",
-                binding_payload_field(binding),
+                codegraph_naming::to_snake_case(binding_payload_field(binding)),
                 payload_expr(binding, &ctx)
             ));
         }
@@ -545,7 +548,7 @@ mod tests {
         assert!(rendered.contains("find_by_id(&tx, id)"));
         assert!(rendered.contains("let payload = crate::events::contracts::OrderPlacedPayload {"));
         assert!(rendered.contains("name: after.name.clone(),"));
-        assert!(rendered.contains("nextStateField: after.status.clone(),"));
+        assert!(rendered.contains("next_state_field: after.status.clone(),"));
         assert!(rendered.contains(
             "crate::events::emit::publish_orders_in_tx(\n                            &tx,\n                            crate::events::emit::OrdersEvent::OrderPlaced(payload.clone()),"
         ));

@@ -1653,6 +1653,7 @@ entities = ["TaskType"]
             create_invariant_block: String::new(),
             render_facts: Default::default(),
             execution_block: String::new(),
+            publish_arg: None,
         };
         let legs = actions::child_action_legs(
             &route,
@@ -1705,6 +1706,7 @@ entities = ["TaskType"]
             create_invariant_block: String::new(),
             render_facts: Default::default(),
             execution_block: String::new(),
+            publish_arg: None,
         };
         let legs = actions::state_aware_legs(
             &[route],
@@ -1761,6 +1763,7 @@ entities = ["TaskType"]
             create_invariant_block: String::new(),
             render_facts: Default::default(),
             execution_block: String::new(),
+            publish_arg: None,
         };
         let legs = actions::child_action_legs(
             &route,
