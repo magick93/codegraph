@@ -12,7 +12,8 @@ pub mod types;
 
 pub use error::WorkflowError;
 pub use machine_runtime::{
-    GuardDecision, MachineGuards, MachineRuntime, canonical_json, fnv1a_64_hex,
+    GuardDecision, MachineGuards, MachineRuntime, MachineTransitionEdge, TargetResolution,
+    canonical_json, fnv1a_64_hex,
 };
 pub use service::WorkflowService;
 pub use tx::{GenericWorkflowService, WfParam, WfRow, WfValue, WorkflowClient, WorkflowTx};

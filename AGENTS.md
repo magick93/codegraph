@@ -1090,10 +1090,11 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   equality, then the capability-sharing heuristic (a protected internal
   op carrying the trigger — `preparePayRun` → `calculate`/`Calculate`
   advances Draft → Calculating; a protected op with no trigger match is
-  a plain update). Self transitions are legal no-ops; body-driven ops
-  (`changeStatus`) select a target from the DTO body against the
-  machine's full transition whitelist and an empty body is an idempotent
-  read; workflow-managed/immutable state fields fail closed instead of
+  a plain update). Self transitions are legal no-ops; a body-driven op
+  (`changeStatus`) resolves the DTO body's target against the CURRENT
+  state's out-edges (issue #831 — `MachineRuntime::resolve_target`; see
+  the section below) and an empty body is an idempotent read;
+  workflow-managed/immutable state fields fail closed instead of
   silently no-oping. Cross-entity (child/aggregate) delegation
   (`addTimecardItem`, `punch`, `ingestHours`, assignment/deployment) is
   a 501 seam naming the target repository/class — never a silent parent
@@ -1594,6 +1595,65 @@ own-record field".
   non-initial state on a non-transition route can still pin 200 while
   the handler 403s — the pre-#663 own-record surface, unchanged by #663
   (the injected planner reasons only about injected conjuncts).
+
+### The body-driven selector resolves from the CURRENT state (issue #831)
+
+A body-driven op (the machine field moves through the Update DTO, no
+`transition` binding, no op-name/capability trigger match) used to collect
+the machine's edges MACHINE-WIDE and then ask whether the current state
+offered exactly one legal target — so any state with two out-edges refused
+a target that was unique FROM THAT STATE (`Pending -> Active` beside
+`Pending -> Terminated` answered `409 "no unambiguous transition from the
+current state (legal targets: Active, Terminated)"`, and the consumer's
+`changeStatus` could not activate a Pending worker at all; the same class
+hits every `Inactive → Active` reactivation codelist).
+
+- **The kernel answers the real question**:
+  `MachineRuntime::resolve_target(current, target) ->
+  TargetResolution` (`codegraph-workflow`) restricts the edges to the
+  CURRENT state FIRST, then matches the requested target. Three outcomes,
+  each exhaustive: `Unique { event, guard }` (one distinct event reaches
+  it — the conditional guard variants of that event collapse; the kernel's
+  first-match order owns that choice), `NoTransition { legal }` (the
+  state's OWN distinct targets, declaration order, empty at a terminal
+  state), and `Ambiguous { edges }` (≥2 DISTINCT events to one target from
+  the current state — the request named no trigger, so the refusal names
+  the competing edges). `edges_from(current)` is the ONE derivation behind
+  both the read model (`available_transitions`) and `resolve_target`, so
+  the UI's offered set and the write plane's legality check cannot drift.
+- **The rendered arm** (`ddd/service_ops/render/update.rs::
+  push_whitelist_arm`) is a `match runtime.resolve_target(...)`; no
+  candidate list is baked (`ServiceOpState.all` is a planner-only fact now
+  and its content changes nothing in the handler). Wire messages: the
+  `NoTransition` arm keeps the `…: no transition from the current state`
+  contract plus ` (legal targets: …)` when the state offers any; the
+  `Ambiguous` arm keeps the `no unambiguous transition from the current
+  state` prefix and appends ` — competing edges: `event`[ (guarded by
+  `guard`)], …`.
+- **The named-transition arm is untouched** — it filters the op's DECLARED
+  targets, which is the right universe for an op that names its edge (the
+  consumer's `activate_worker`, `transition … .Activate`).
+- **Fixtures/gates**: the payroll fixture machine gained the consumer's
+  shape (`Cancelled` is a fan-in target from Draft and Calculating; `Draft`
+  offers two targets; `Cancelled -> Draft` by two distinct events is a real
+  ambiguity). In-crate KATs on the kernel (`resolve_target_*`,
+  `edges_from_is_the_read_models_edge_set`) + the node-free
+  `body_driven_selector_resolves_against_the_current_state` (the emitted
+  `archive`/`declines` arms carry `resolve_target` and NO
+  `let legal: Vec<&str> = [` / `match legal.as_slice()`), the
+  re-blessed `handler_matrix.sha256` (exactly ONE permutation,
+  `root_service_ops`, +6 lines), and the live `service_ops_hurl_gate`
+  probe legs: Draft → `{pay_run_status: Calculating}` 200 (the pre-#831
+  409), `{pay_run_status: Draft}` from Calculating 409 naming
+  `Approved, Cancelled`, `{pay_run_status: Cancelled}` 200 (the fan-in
+  target), and `{pay_run_status: Draft}` from Cancelled 409 naming
+  `Reinstate`/`Reopen`.
+- **Recorded**: the machine kernel does not EVALUATE guards on this arm
+  (unchanged — the save/update plane checks edge existence; guards are the
+  workflow engine's decision path), and the IFML action planner posts an
+  empty body for a body-driven op (an idempotent 200), so the selector's
+  live proof is the hurl contract/probe rather than a generated action
+  spec.
 
 ### Aggregate child operations (issue #661)
 

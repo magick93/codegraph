@@ -99,7 +99,10 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
         .unwrap();
     let mut states = surface.machine_states_for("PayRunType");
     states.sort();
-    assert_eq!(states, vec!["Approved", "Calculating", "Draft", "Reversed"]);
+    assert_eq!(
+        states,
+        vec!["Approved", "Calculating", "Cancelled", "Draft", "Reversed"]
+    );
 
     // A mox enum in a non-`common` package still emits its GLOBAL codelist
     // table into `common` (FK resolution routes every codelist there) — the
@@ -2886,4 +2889,65 @@ async fn machine_transitions_route_through_the_kernel_and_the_match_arms_are_gon
     // final replay proves the wrong-state edge again.
     assert_eq!(status_after(&actions, "/actions/reverse"), Some(409));
     assert_eq!(status_after(&actions, "/actions/notify"), Some(501));
+}
+
+/// Issue #831: a body-driven op resolves the REQUESTED target against the
+/// CURRENT state's out-edges through the kernel (`resolve_target`), not
+/// against the machine-wide candidate list. The fixture carries the
+/// consumer's shape — `Cancelled` is a fan-in target (Draft and Calculating
+/// both reach it) and `Draft` offers TWO targets — which the pre-#831
+/// selector mis-read as "no unambiguous transition from the current state".
+/// A genuine ambiguity (`Cancelled -> Draft` by two distinct events) is the
+/// kernel's own case, pinned in `codegraph-workflow`'s KATs and driven live
+/// by the hurl gate.
+#[tokio::test]
+async fn body_driven_selector_resolves_against_the_current_state() {
+    let fixture = write_fixture_in("service_ops_body_driven_fixture", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    let handler_dir = out.path().join("src/api/payroll");
+    let handler = read(&handler_dir.join("pay_run_handler.rs"));
+
+    // The body-driven arms (`archive`, `declines`) ask the kernel for the
+    // current-state resolution.
+    assert!(
+        handler.contains("runtime.resolve_target(&current_state, target)"),
+        "the body-driven arm resolves through the kernel:\n{handler}"
+    );
+    for op in ["service_op_archive", "service_op_declines"] {
+        let start = handler
+            .find(&format!("pub async fn {op}"))
+            .unwrap_or_else(|| panic!("{op} must be emitted:\n{handler}"));
+        let tail = &handler[start..];
+        let end = tail[1..]
+            .find("\npub async fn ")
+            .map(|i| i + 1)
+            .unwrap_or(tail.len());
+        let arm = &tail[..end];
+        assert!(
+            arm.contains("runtime.resolve_target(&current_state, target)"),
+            "{op} must carry the current-state resolution:\n{arm}"
+        );
+        assert!(
+            !arm.contains("let legal: Vec<&str> = [") && !arm.contains("match legal.as_slice()"),
+            "{op} must not carry the machine-wide candidate list (the #831 defect):\n{arm}"
+        );
+    }
+
+    // The generated contract still drives a body-driven op with its declared
+    // parameters (`{}` here) — the idempotent 200 leg.
+    let actions = read(&actions_file(out.path(), "_pay_run_actions.hurl"));
+    assert_eq!(status_after(&actions, "/actions/archive"), Some(200));
 }

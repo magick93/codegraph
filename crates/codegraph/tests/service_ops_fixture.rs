@@ -61,6 +61,7 @@ enum PayRunStatus {
     Calculating = 1
     Approved = 2
     Reversed = 3
+    Cancelled = 4
 }
 
 enum DeclineReason {
@@ -107,11 +108,23 @@ application Payroll {
             save;
             delete;
         }
+        /// Issue #831, the consumer's shape: `Cancelled` is a FAN-IN target
+        /// (Draft and Calculating both reach it), and `Draft` has two
+        /// out-edges — which the pre-#831 selector mis-read as "no
+        /// unambiguous transition from the current state" because it counted
+        /// the state's legal targets instead of the requested target's
+        /// edges. `Cancelled -> Draft` by two DISTINCT events is a REAL
+        /// ambiguity (the body names no trigger), so the live gate can pin
+        /// the 409 that names the competing edges.
         machine payRunStatus: PayRunStatus {
             initial Draft;
             Draft -> Calculating via Submit;
+            Draft -> Cancelled via Abandon;
             Calculating -> Approved via Approve;
+            Calculating -> Cancelled via Abandon;
             Approved -> Reversed via Reverse;
+            Cancelled -> Draft via Reinstate;
+            Cancelled -> Draft via Reopen;
             terminal Reversed;
         }
         service PayRunService {

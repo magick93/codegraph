@@ -342,20 +342,28 @@ fn extract_action_base(actions: &str) -> Result<(String, String), String> {
 /// file's row alone (the emitted contract creates its own fixture row from
 /// the same body).
 fn stamp_probe_row(create_body: &str) -> Result<String, String> {
+    stamp_probe_row_with(create_body, "ws1-gate-pay-run")
+}
+
+/// Stamp a probe create body with a DISTINCT fixture marker, so two seeded
+/// rows in one gate are distinguishable over psql (issue #831's body-driven
+/// row rides the same contract as the wrong-state row).
+fn stamp_probe_row_with(create_body: &str, marker: &str) -> Result<String, String> {
     const SEED: &str = "contract-pay_run";
-    const MARKER: &str = "ws1-gate-pay-run";
     if !create_body.contains(SEED) {
         return Err(format!(
             "the emitted create body carries no `{SEED}` fixture value to stamp \
              with the probe marker: {create_body}"
         ));
     }
-    Ok(create_body.replace(SEED, MARKER))
+    Ok(create_body.replace(SEED, marker))
 }
 
 /// The hand-authored wrong-state probe: own row, driving the machine past
 /// its first transition and pinning BOTH denial classes the plane can
-/// answer with. Leg plan (single row):
+/// answer with, plus a SECOND row for the issue #831 body-driven selector
+/// (a state with two out-edges, an unreachable target, a fan-in target,
+/// and a genuine two-event ambiguity). Leg plan (single row):
 /// create 201 → submit 200 (Draft→Calculating) → submit replay **403**
 /// (the op-level `when (payRunStatus == Draft)` transition guard is
 /// business semantics — it applies to EVERY session, API keys included;
@@ -442,20 +450,92 @@ GET @ITEM_BASE@/00000000-0000-0000-0000-0000000000f0
 Authorization: Bearer {{api_key}}
 
 HTTP 404
+
+# ── issue #831: the body-driven selector reads the CURRENT state ──────
+# A second row starts at Draft, which offers TWO targets (Calculating,
+# Cancelled) and is therefore the consumer's failing shape. The body-driven
+# `archive` op names no transition: the request's target must be resolved
+# against the current state's out-edges, never the machine-wide whitelist.
+POST @CREATE_URL@
+Authorization: Bearer {{api_key}}
+@CREATE_BODY_831@
+
+HTTP 201
+[Captures]
+BODY_DRIVEN_ID: jsonpath "$.data.id"
+
+# pre-#831 this answered 409 ("no unambiguous transition from the current
+# state (legal targets: Calculating, Cancelled)") because the selector
+# counted the state's legal targets instead of the requested target's
+# edges. `Calculating` is unique FROM Draft → 200, and the row moves.
+POST @ITEM_BASE@/{{BODY_DRIVEN_ID}}/actions/archive
+Authorization: Bearer {{api_key}}
+{
+  "pay_run_status": "Calculating"
+}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data.pay_run_status" == "Calculating"
+
+# Unreachable from the current state: the refusal names the CURRENT state's
+# own legal targets (declaration order), never a machine-wide list.
+POST @ITEM_BASE@/{{BODY_DRIVEN_ID}}/actions/archive
+Authorization: Bearer {{api_key}}
+{
+  "pay_run_status": "Draft"
+}
+
+HTTP 409
+[Asserts]
+jsonpath "$.error.code" == "CONFLICT"
+jsonpath "$.error.message" contains "no transition from the current state"
+jsonpath "$.error.message" contains "legal targets: Approved, Cancelled"
+
+# A FAN-IN target (Draft and Calculating both reach `Cancelled`) is still
+# reachable when the current state offers it — the shape #831 refused.
+POST @ITEM_BASE@/{{BODY_DRIVEN_ID}}/actions/archive
+Authorization: Bearer {{api_key}}
+{
+  "pay_run_status": "Cancelled"
+}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data.pay_run_status" == "Cancelled"
+
+# A REAL ambiguity: from Cancelled, `Draft` is reached by two distinct
+# events (Reinstate, Reopen). The body names no trigger, so the refusal
+# NAMES the competing edges — it never silently picks one.
+POST @ITEM_BASE@/{{BODY_DRIVEN_ID}}/actions/archive
+Authorization: Bearer {{api_key}}
+{
+  "pay_run_status": "Draft"
+}
+
+HTTP 409
+[Asserts]
+jsonpath "$.error.code" == "CONFLICT"
+jsonpath "$.error.message" contains "no unambiguous transition from the current state"
+jsonpath "$.error.message" contains "Reinstate"
+jsonpath "$.error.message" contains "Reopen"
 "#;
 
+#[allow(clippy::too_many_arguments)]
 fn wrong_state_probe(
     create_url: &str,
     item_base: &str,
     capture: &str,
     capture_name: &str,
     create_body: &str,
+    create_body_831: &str,
 ) -> String {
     WRONG_STATE_TEMPLATE
         .replace("@CREATE_URL@", create_url)
         .replace("@ITEM_BASE@", item_base)
         .replace("@CAPTURE@", capture)
         .replace("@CAPTURE_NAME@", capture_name)
+        .replace("@CREATE_BODY_831@", create_body_831)
         .replace("@CREATE_BODY@", create_body)
 }
 
@@ -595,14 +675,33 @@ fn wrong_state_probe_pins_the_live_legs() {
         "{{pay_run_id}}",
         "pay_run_id",
         "{\n  \"pay_run_id\": \"ws1-gate-pay-run\"\n}",
+        "{\n  \"pay_run_id\": \"ws1-gate-body-driven\"\n}",
     );
-    assert_eq!(probe.matches("HTTP 201").count(), 1, "{probe}");
-    assert_eq!(probe.matches("HTTP 200").count(), 3, "{probe}");
+    // Two seeded rows (the wrong-state row and the #831 body-driven row).
+    assert_eq!(probe.matches("HTTP 201").count(), 2, "{probe}");
+    // submit, approve, applyPayRun + the two #831 200 legs.
+    assert_eq!(probe.matches("HTTP 200").count(), 5, "{probe}");
     assert_eq!(probe.matches("HTTP 403").count(), 1, "{probe}");
-    // The machine guard's 409 plus the bodied op's declared Conflict.
-    assert_eq!(probe.matches("HTTP 409").count(), 2, "{probe}");
+    // The machine guard's 409, the bodied op's declared Conflict, and the
+    // two #831 refusals (unreachable target, genuine two-event ambiguity).
+    assert_eq!(probe.matches("HTTP 409").count(), 4, "{probe}");
     assert_eq!(probe.matches("HTTP 501").count(), 1, "{probe}");
     assert_eq!(probe.matches("HTTP 404").count(), 1, "{probe}");
+    // Issue #831: the body-driven legs move the row through the current
+    // state's own edges, and both refusals name their reason.
+    assert!(
+        probe.contains("BODY_DRIVEN_ID: jsonpath \"$.data.id\""),
+        "{probe}"
+    );
+    assert!(
+        probe.contains("legal targets: Approved, Cancelled"),
+        "the unreachable-target refusal names the current state's targets: {probe}"
+    );
+    assert!(
+        probe.contains("jsonpath \"$.error.message\" contains \"Reinstate\"")
+            && probe.contains("jsonpath \"$.error.message\" contains \"Reopen\""),
+        "the ambiguity refusal names the competing edges: {probe}"
+    );
     // The FIRST submit leg pins 200; the replay pins the grant-`when` 403
     // (the op-level transition guard applies to every session).
     let wired = probe
@@ -742,6 +841,7 @@ async fn service_ops_contract_serves_over_http() {
         let (item_base, capture) =
             extract_action_base(&actions).map_err(|e| format!("action base: {e}"))?;
         let probe_body = stamp_probe_row(&create_body)?;
+        let probe_body_831 = stamp_probe_row_with(&create_body, "ws1-gate-body-driven")?;
         let capture_name = capture
             .trim_start_matches("{{")
             .trim_end_matches("}}")
@@ -752,6 +852,7 @@ async fn service_ops_contract_serves_over_http() {
             &capture,
             &capture_name,
             &probe_body,
+            &probe_body_831,
         );
         let probe_path = gate_root().join("wrong_state_probe.hurl");
         fs::write(&probe_path, probe).map_err(|e| format!("write probe file: {e}"))?;
@@ -776,6 +877,27 @@ async fn service_ops_contract_serves_over_http() {
              denials in between must have left it untouched)"
         );
         println!("gate: probe row state over psql = {}", status.trim());
+        // Issue #831: the body-driven row walks the CURRENT state's edges
+        // (Draft → Calculating), lands on the fan-in target (Cancelled), and
+        // the two refusals leave it untouched at Cancelled.
+        let body_driven_status = codegraph_ops::db::psql_query(
+            &scratch,
+            "SELECT pay_run_status FROM payroll.pay_run \
+             WHERE pay_run_id = 'ws1-gate-body-driven';",
+        )
+        .await
+        .map_err(|e| format!("body-driven status query failed: {e}"))?;
+        assert_eq!(
+            body_driven_status.trim(),
+            "Cancelled",
+            "the body-driven row must end at Cancelled over real HTTP \
+             (Draft → archive 'Calculating' 200 → unreachable 'Draft' 409 → \
+             fan-in 'Cancelled' 200 → ambiguous 'Draft' 409)"
+        );
+        println!(
+            "gate: body-driven row state over psql = {}",
+            body_driven_status.trim()
+        );
         let total = codegraph_ops::db::psql_query(
             &scratch,
             "SELECT total FROM payroll.pay_run \

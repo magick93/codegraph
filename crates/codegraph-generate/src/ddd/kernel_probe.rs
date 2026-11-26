@@ -2,6 +2,12 @@
 //! every machine-transition lowering — the `save`/`update` arm and the
 //! statement-body arm — so the two planes cannot drift.
 //!
+//! These fragments serve ops that NAME their edge (the op's declared
+//! targets). A body-driven op — no binding, no trigger match — resolves the
+//! REQUESTED target against the current state's out-edges instead
+//! (`MachineRuntime::resolve_target`, issue #831), so it never bakes a
+//! candidate list.
+//!
 //! One execution path for machine transitions in a generated app: the
 //! handler loads the entity's registry machine
 //! (`{domain_types}::machines::machine_json`), builds the fail-closed
@@ -57,10 +63,12 @@ pub fn runtime_construction(domain_types_crate: &str, machine_id: &str, indent: 
     )
 }
 
-/// The `let legal: Vec<&str> = …collect();` probe: every candidate target
-/// (baked from the lowering's pair list — deduped, declaration order) is
-/// probed from the record's current state through the kernel's
-/// target-addressed lookup. `indent` is the first line's leading
+/// The `let legal: Vec<&str> = …collect();` probe for a NAMED-transition op:
+/// every candidate target (baked from the op's declared pair list — deduped,
+/// declaration order) is probed from the record's current state through the
+/// kernel's target-addressed lookup. A body-driven op uses
+/// `MachineRuntime::resolve_target` instead (issue #831) — the candidate
+/// universe there is the current state's own edges, never the machine's. `indent` is the first line's leading
 /// whitespace; continuation lines get the same indent (Rust does not
 /// care, the contract pins the shape).
 #[must_use]
