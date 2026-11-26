@@ -8,7 +8,7 @@ use super::context::{RenderChart, RenderForm, RenderMapping, RenderTable};
 
 /// The layout kind used for mapping resolution: the typed spec kind when a
 /// spec is present, else the component type.
-pub(super) fn kind_of(c: &IfmlComponent) -> String {
+pub(crate) fn kind_of(c: &IfmlComponent) -> String {
     match c.spec {
         Some(ComponentSpec::Table(_)) => "table".to_string(),
         Some(ComponentSpec::Form(_)) => "form".to_string(),
@@ -21,7 +21,7 @@ pub(super) fn kind_of(c: &IfmlComponent) -> String {
 /// are displays, dropdown/radio/checkbox component types are selection
 /// fields. Forms keep `None` — the editing context is carried by their
 /// per-input roles.
-pub(super) fn component_role(c: &IfmlComponent) -> Option<SemanticRole> {
+pub(crate) fn component_role(c: &IfmlComponent) -> Option<SemanticRole> {
     if is_form_component(c) {
         return None;
     }

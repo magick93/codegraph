@@ -23,7 +23,7 @@ mod hydration;
 mod load;
 mod remote;
 mod render;
-mod roles;
+pub(crate) mod roles;
 #[cfg(test)]
 mod tests;
 mod ux;

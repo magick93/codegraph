@@ -93,12 +93,36 @@ view "GuardedRefundDetail" {
     component "guarded_info" {
         type: details;
         data: RefundRequest;
-        fields: [title, requesterEmail, amount, urgent, submittedAt, status, reason, escalation];
+        fields: [title, requesterEmail, amount, urgent, submittedAt, status, reason, channelCode, escalation];
 
         on escalate -> action("Escalate");
         on approve -> action("Approve");
     }
 }
+
+// Issue #835: a no-label view whose FIRST component is `details` and whose
+// second is a collection — the collection owns the view-level `<h1>` (the
+// route fix), and the guarded id route seeds a `…Code` codelist feature whose
+// DTO field is the stripped name (`channelCode` -> `channel`). Pre-fix the
+// seed posted `channel_code` and 422'd (deny_unknown_fields), and the page
+// rendered no heading while the spec asserted one.
+view "RefundFindings" {
+    params { id: Uuid };
+    requires: [ApproveRefund];
+
+    component "info" {
+        type: details;
+        data: RefundRequest;
+        fields: [title, channelCode, amount];
+    }
+
+    component "history" {
+        type: list;
+        data: RefundRequest;
+        fields: [title, submittedAt, channelCode];
+    }
+}
+
 
 action "Inspect" {
     target: RefundRequest;

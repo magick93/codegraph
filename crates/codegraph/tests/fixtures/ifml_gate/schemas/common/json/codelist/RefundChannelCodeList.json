@@ -1,0 +1,7 @@
+{
+  "$id": "codelist/RefundChannelCodeList.json",
+  "title": "RefundChannelCodeList",
+  "description": "How the refund request reached the operator (issue #835: a codelist feature whose DTO field drops the `_code` suffix)",
+  "type": "string",
+  "enum": ["Email", "Phone", "Web"]
+}

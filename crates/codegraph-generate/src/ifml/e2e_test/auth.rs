@@ -393,6 +393,43 @@ pub(crate) fn build_auth_spec(
     })
 }
 
+/// Render the "read the seed body ONCE, assert `ok()` naming the endpoint,
+/// THEN parse it" triple (issue #835, the #808 re-triage).
+///
+/// Every seeded spec posts a fixture through the API and captures its id for
+/// the route under test. Parsing that response silently is a diagnosis trap:
+/// a 422 (a near-miss DTO key), a 401/403 (the wrong persona's key) or a 500
+/// binds the id to the string `"undefined"`, and every downstream assertion
+/// then fails on an unrelated screen. Reading the body exactly once lets the
+/// assertion report the endpoint, the status and the body — the same
+/// response, no second request.
+///
+/// `url_expr` must be the SAME expression the POST used (the `apiUrl('…')`
+/// call for fixture seeds, the `{ENTITY}_API` const for the workflow
+/// journey), never a second spelling of the route.
+fn push_seed_body_assert(
+    s: &mut String,
+    resp_var: &str,
+    parsed_var: &str,
+    url_expr: &str,
+    indent: &str,
+) {
+    let body_var = format!("{resp_var}_body");
+    s.push_str(&format!(
+        "{indent}const {body_var} = await {resp_var}.text();\n"
+    ));
+    s.push_str(&format!("{indent}expect({resp_var}.ok(), `seed POST ${{"));
+    s.push_str(url_expr);
+    s.push_str("} answered ${");
+    s.push_str(resp_var);
+    s.push_str(".status()}: ${");
+    s.push_str(&body_var);
+    s.push_str("}`).toBeTruthy();\n");
+    s.push_str(&format!(
+        "{indent}const {parsed_var} = JSON.parse({body_var});\n"
+    ));
+}
+
 /// Render a view's `{view}.auth.spec.ts`: the unauthenticated/garbage-key
 /// behavior, the persona allow/deny tests through the `asPersona` fixtures,
 /// and the per-capability gating titles. `personas_import` is the module
@@ -472,7 +509,17 @@ pub(crate) fn render_auth_spec(spec: &AuthTestSpec, personas_import: &str) -> St
         s.push_str(
             "\tconst seedHeaders = seedKey ? { Authorization: `Bearer ${seedKey}` } : undefined;\n",
         );
-        s.push_str(&seed.setup_js_with_headers("seeded", "\t", "seedHeaders", true));
+        s.push_str(&seed.setup_js_with_headers("seeded_resp", "\t", "seedHeaders", false));
+        // Issue #835: the seed must fail loudly and NAMELY. A silently-parsed
+        // failure binds `seededId` to "undefined" and every persona test then
+        // fails on an unrelated screen.
+        push_seed_body_assert(
+            &mut s,
+            "seeded_resp",
+            "seeded",
+            &format!("apiUrl('{}')", js_string(&seed.base_path)),
+            "\t",
+        );
         s.push_str("\tseededId = String(seeded.data?.id ?? seeded.id);\n");
         s.push_str("});\n\n");
     }
@@ -867,13 +914,18 @@ pub(crate) fn render_workflow_journey(journey: &WorkflowJourney, personas_import
         "\t\tconst creatorKey = apiKeyFor({creator});\n",
         creator = journey.creator
     ));
-    s.push_str("\t\tconst created = await (\n");
-    s.push_str(&format!("\t\t\tawait request.post({api_const}, {{\n"));
+    // Issue #835: the journey's create is a seed too — read its body once and
+    // assert `ok()` naming the endpoint before parsing, so a 422/401/403 is a
+    // named failure instead of an id reading "undefined".
+    s.push_str(&format!(
+        "\t\tconst created_resp = await request.post({api_const}, {{\n"
+    ));
     s.push_str(
-        "\t\t\t\theaders: creatorKey ? { Authorization: `Bearer ${creatorKey}` } : undefined,\n",
+        "\t\t\theaders: creatorKey ? { Authorization: `Bearer ${creatorKey}` } : undefined,\n",
     );
-    s.push_str(&format!("\t\t\t\tdata: {data_const},\n"));
-    s.push_str("\t\t\t})\n\t\t).json();\n");
+    s.push_str(&format!("\t\t\tdata: {data_const},\n"));
+    s.push_str("\t\t});\n");
+    push_seed_body_assert(&mut s, "created_resp", "created", &api_const, "\t\t");
     s.push_str(&format!(
         "\t\tconst {var_name} = String(created.data?.id ?? created.id);\n",
         var_name = var
@@ -1073,7 +1125,16 @@ pub(crate) fn render_view_journey(journey: &ViewJourney, personas_import: &str) 
 
         // The open seed (param'd source views) captures its id for open().
         if let (Some(param), Some(seed)) = (&journey.open_param, &journey.open_seed) {
-            s.push_str(&seed.setup_js_with_headers("seeded", "\t\t", "seedHeaders", true));
+            s.push_str(&seed.setup_js_with_headers("seeded_resp", "\t\t", "seedHeaders", false));
+            // Issue #835: assert the seed before parsing — a silent 4xx here
+            // binds the id to "undefined" and the walk fails on the wrong page.
+            push_seed_body_assert(
+                &mut s,
+                "seeded_resp",
+                "seeded",
+                &format!("apiUrl('{}')", js_string(&seed.base_path)),
+                "\t\t",
+            );
             s.push_str("\t\t\tconst seededId = String(seeded.data?.id ?? seeded.id);\n");
             s.push_str(&format!("\t\t\tlet ui = new {source_class}(page);\n"));
             s.push_str(&format!("\t\t\tawait ui.open({{ {param}: seededId }});\n"));
@@ -1148,4 +1209,78 @@ pub(crate) fn view_journey_file_names(journeys: &[ViewJourney]) -> Vec<String> {
         .iter()
         .map(|j| format!("{}.journey.spec.ts", to_kebab_case(&j.view_name)))
         .collect()
+}
+
+#[cfg(test)]
+mod seed_assert_tests {
+    //! Issue #835: an emitted seed POST must be asserted BEFORE its body is
+    //! parsed — a 422 (a near-miss DTO key), a 401/403 or a 500 must fail
+    //! NAMING the endpoint, the status and the body, never bind `seededId`
+    //! to "undefined" and fail on an unrelated screen. The renderer pin lives
+    //! here rather than in `e2e_test::tests` to keep that file under the
+    //! #751 two-thousand-line budget.
+
+    use super::*;
+    use crate::project_config::DtoKeyCasing;
+
+    #[test]
+    fn seeded_auth_spec_asserts_the_seed_post_before_parsing() {
+        let spec = AuthTestSpec {
+            view_name: "RefundRequestDetail".to_string(),
+            label: "Refund Request Detail".to_string(),
+            denial_presentation: true,
+            required_capabilities: Vec::new(),
+            gate: None,
+            personas: vec![PersonaTest {
+                actor: "Admin".to_string(),
+                permitted: true,
+                route: "/refundrequestdetail".to_string(),
+                label: "Refund Request Detail".to_string(),
+                assert_heading: true,
+                primary_testid: None,
+                denial_target: "/refundrequestlist".to_string(),
+                capabilities: None,
+                control_testid: None,
+                control_component: None,
+            }],
+            open_param: Some("id".to_string()),
+            open_seed: Some(Fixture {
+                casing: DtoKeyCasing::default(),
+                base_path: "/api/v1/billing/refund_request".to_string(),
+                entries: vec![("title".to_string(), "'Refund'".to_string())],
+                deps: Vec::new(),
+            }),
+        };
+        let rendered = render_auth_spec(&spec, "../e2e/personas");
+
+        // The POST binds the response; the body is read ONCE into a variable.
+        assert!(
+            rendered.contains(
+                "const seeded_resp = await request.post(apiUrl('/api/v1/billing/refund_request'), { headers: seedHeaders,"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("const seeded_resp_body = await seeded_resp.text();"),
+            "{rendered}"
+        );
+        // The assertion names the SAME url expression the POST used, plus the
+        // status and the response body.
+        assert!(
+            rendered.contains(
+                "expect(seeded_resp.ok(), `seed POST ${apiUrl('/api/v1/billing/refund_request')} answered ${seeded_resp.status()}: ${seeded_resp_body}`).toBeTruthy();"
+            ),
+            "{rendered}"
+        );
+        // The parsed body feeds the id — one read, no `.json()` re-read.
+        assert!(
+            rendered.contains("const seeded = JSON.parse(seeded_resp_body);"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("seededId = String(seeded.data?.id ?? seeded.id);"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains(".json()"), "{rendered}");
+    }
 }

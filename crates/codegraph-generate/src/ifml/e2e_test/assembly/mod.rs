@@ -24,6 +24,7 @@ use super::super::context::{
     IfmlAction, IfmlComponent, IfmlModel, IfmlViewContainer, NavigationEdge, PolicyContext,
 };
 use super::super::control_core;
+use super::super::page_heading::page_renders_heading;
 use super::super::route_generator::{
     RenderWorkflow, mapped_container_testid, modal_wrapper_active, modal_wrapper_testid, shell_nav,
     workflow_for_entity,
@@ -138,11 +139,15 @@ impl IfmlE2eTestGenerator {
             .find(|c| c.name == _component)
             .map(is_collection)
             .unwrap_or(false);
+        // Issue #808: assert the heading only when the page RENDERS one.
+        // A view whose components are all details/form/chart renders no
+        // `<h1>` — the primary root (asserted right after) is its surface.
+        let assert_heading = is_collection && page_renders_heading(vc, self.mappings.as_ref());
         Some(RenderTest {
             label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
             route: view_route(&vc.name),
             primary_testid: root,
-            assert_heading: is_collection,
+            assert_heading,
             nav_testid,
             container_testid: mapped_container_testid(&vc.name, vc.is_xor, self.mappings.as_ref()),
         })
@@ -511,8 +516,14 @@ impl IfmlE2eTestGenerator {
                     .find(|c| c.name == component)
                     .map(is_collection)
                     .unwrap_or(false);
-                (is_collection, Some(root))
+                // Issue #808: only assert a heading the page renders.
+                (
+                    is_collection && page_renders_heading(vc, self.mappings.as_ref()),
+                    Some(root),
+                )
             }
+            // No testable root at all: the heading is the only surface a
+            // permitted persona can assert (the POM's root-less fallback).
             None => (true, None),
         };
         // The page markup gates the submit control behind the same guard
@@ -1108,7 +1119,10 @@ fn target_of<'m>(model: &'m IfmlModel, name: &str) -> Option<&'m IfmlViewContain
 }
 
 /// Whether the view's primary component is a collection — the render-spec
-/// heading convention for arrival assertions.
+/// heading convention for arrival assertions — AND the page actually
+/// renders the heading (issue #808). A collection is one of the
+/// heading-capable components, so the two agree; the predicate keeps the
+/// contract explicit.
 fn view_primary_is_collection(
     model: &IfmlModel,
     name: &str,
@@ -1120,11 +1134,13 @@ fn view_primary_is_collection(
     let Some((component, _)) = primary_component(vc, mappings) else {
         return false;
     };
-    vc.components
-        .iter()
-        .find(|c| c.name == component)
-        .map(is_collection)
-        .unwrap_or(false)
+    page_renders_heading(vc, mappings)
+        && vc
+            .components
+            .iter()
+            .find(|c| c.name == component)
+            .map(is_collection)
+            .unwrap_or(false)
 }
 
 /// A view's components including those nested in its containers (their
