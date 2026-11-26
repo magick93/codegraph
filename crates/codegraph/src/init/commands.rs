@@ -1989,18 +1989,9 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
 
     // Events producer parity (issue #820 slice a): the SAME sentences the
     // run path hard-errors on, as WARN lines, while the `events_producer`
-    // flag is off. Diagnostic mode never fails; a scratch-graph analysis
-    // failure is one INFO line. Silent when no `.ddd` op emits a declared
-    // `.evt` event.
-    let producer_lines =
-        crate::doctor_events::producer_lines(args, domain_config.as_ref().ok(), &cross);
-    for line in &producer_lines {
-        println!("{line}");
-    }
-    soft_warnings += producer_lines
-        .iter()
-        .filter(|line| line.starts_with("WARN "))
-        .count();
+    // flag is off. Diagnostic mode never fails; silent when no `.ddd` op
+    // emits a declared `.evt` event.
+    soft_warnings += crate::doctor_events::report(args, domain_config.as_ref().ok(), &cross);
 
     // The graph-analytics plane (issue #673): the upstream semantic graph
     // + the sweep analytics (separation-of-duty across merged policies,

@@ -203,3 +203,21 @@ pub fn producer_diagnostics(
         crate::doctor_graph::gather_cross_surface(&args.ddd_files, &args.evt_files, &[], &[]);
     producer_lines(args, Some(config), &cross)
 }
+
+/// Print the producer lines and return how many are WARNs (the doctor
+/// soft-warning count). Kept here so `cmd_doctor` stays under the function
+/// line budget (issue #751).
+pub(crate) fn report(
+    args: &crate::init::commands::DoctorArgs,
+    config: Option<&DomainConfig>,
+    cross: &UnionGather,
+) -> usize {
+    let lines = producer_lines(args, config, cross);
+    for line in &lines {
+        println!("{line}");
+    }
+    lines
+        .iter()
+        .filter(|line| line.starts_with("WARN "))
+        .count()
+}
