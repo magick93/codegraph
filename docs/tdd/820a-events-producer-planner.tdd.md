@@ -43,6 +43,10 @@ WARN so a consumer can align names first.
 - **R9** = no `{Entity}Response` surface at all (op unbound / schema missing)
   or an unavailable context fact; reported once per pair naming its first
   payload field. Otherwise an unmatched field is R1 (incl. the none clause).
+- **R8** uses the event's inferred contract domain (`EventDefinition.domain`:
+  the first payload field whose type resolves to a schema) against the op's
+  module — the only contract-domain signal in the current pin; an
+  all-primitive event never refuses.
 - **Context facts** (`§Context bindings`): `occurredOn`, `previousState` /
   `fromState`, `nextState` / `toState` (transition arms only),
   `correlationId`, `organizationId`. A record match always wins, with W3; a

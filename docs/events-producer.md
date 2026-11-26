@@ -122,6 +122,11 @@ enum or `String`.
 events producer: event `{Event}` is declared by the contract of domain `{contract_domain}` but bound to operation `{Service}.{op}` of domain `{domain}` — cross-domain emission is not lowered in v1
 ```
 
+v1 derives the contract domain from the event's payload: the domain of the
+first field whose type resolves to a schema (`EventDefinition.domain`). An
+all-primitive event has none and never refuses R8. A future upstream
+contract-domain declaration replaces this inference.
+
 ### R9 — no model source at all
 
 ```
