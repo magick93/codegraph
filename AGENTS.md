@@ -81,14 +81,28 @@ byte-identity between equivalent JSON Schema and `.mox` models.
 `docs/mox-simplification-ledger.md` is the deletion roadmap for the
 JSON-Schema inference machinery.
 
-**Identity mapping (the `id` modifier, issue #522)**: counted per class
-over its bridged (stored) feature set. Exactly **one** `id` feature ⇒
-surrogate identity — its declared datatype is overridden to Uuid so every
-layer agrees on the identity type. **Multiple** `id` features ⇒ composite
+**Identity mapping (the `id` modifier, issues #522 + #821)**: counted per
+class over its bridged (stored) feature set. Exactly **one** `id` feature ⇒
+the feature keeps its OWN column with its declared datatype forced to
+`UUID` (every layer agrees on Uuid for it). It is NOT the primary key: the
+generated surrogate `id UUID` column stays the primary key AND the target
+of every FK, and nothing enforces uniqueness on the feature (no UNIQUE, no
+link to `id`). So `class Worker { id readonly Identifier workerId }` yields
+`worker.worker_id UUID` (the business id) on the root table while every
+child table's `worker_id` is `REFERENCES worker(id)` (the surrogate) —
+name-based binding (event payloads, `?include=`, hand-written handlers)
+must not read `{entity}_id` as the business id. When the feature's column
+equals the class's derived parent-FK column
+(`codegraph_naming::child_parent_fk_column(<table>)`), the run-path
+validation pass WARNs (`sole_identity_fk_collision`, Warning severity,
+naming the class/feature/column and the rename fix, e.g. `workerNumber`);
+generated output is unchanged. Doctor parity is a recorded follow-up
+(doctor holds no graph). UNIQUE on the feature, or unifying it with the
+primary key, stays open on #821. **Multiple** `id` features ⇒ composite
 natural key (the Sculptor convention) — every part keeps its declared
 mapping (String→TEXT, wraps-String→TEXT, `format "uuid"`→UUID, dates→DATE,
 …) and the generated surrogate `id UUID` column stays the storage key
-(natural-key parts are plain columns; no UNIQUE). Gates:
+(natural-key parts are plain columns; no UNIQUE; never warns). Gates:
 `cargo test -p codegraph --test mox_identity_tests`.
 
 **Explicit table names (the `table` annotation, issue #668)**: `class X

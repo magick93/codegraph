@@ -466,7 +466,8 @@ impl<'a> MoxBridge<'a> {
                 continue;
             }
             // Identity mapping rule (issue #522): a class with exactly one `id`
-            // feature treats it as the surrogate identity (forced Uuid below);
+            // feature keeps it as its own column forced to Uuid (below) — the
+            // generated surrogate `id` stays the PK/FK target (issue #821);
             // multiple `id` features are a composite natural key whose parts
             // keep their declared type mappings. Counted over the same stored
             // feature set the loop below ingests (derived/container features
