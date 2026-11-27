@@ -1,0 +1,63 @@
+# Generation profile for the kanban-lexorank example — mirrors the init
+# scaffold's default profile (templates/project/profiles.tera) as plain TOML.
+
+[profiles.default.meta]
+name = "default"
+version = "0.1.0"
+description = "Default generation profile for the kanban example"
+app_name = "kanban"
+generator_name = "kanban-graph"
+api_title = "Kanban API"
+domain_types_crate = "kanban_domain_types"
+domain_types_base = "crates/domain-types"
+
+[profiles.default.features]
+database_target = "postgres"
+persistence_provider = "sea_orm"
+deployment_topology = "monolith"
+ops_backend = false
+grpc_backend = false
+ifml_backend = false
+entity_remote_functions = true
+entity_form = true
+has_admin_cli = true
+# UX rules plane: turns on the ?sort=/?order= allow-list surface the
+# recipe's ordered reads rely on (rank infers the sortable Text dimension).
+ux_rules = true
+
+[profiles.default.api]
+generators = [
+    # Entity
+    "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
+    "query", "event", "handler", "workflow_action", "media_route", "test",
+    "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
+    # Domain
+    "router", "links", "errors", "mox_ops",
+    # hurl API contract tests
+    "hurl_contract",
+    # Global
+    "openapi", "scaffold", "basejump_setup", "pgmq_setup",
+    "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "report_views",
+    "webhook_dispatch", "webhook_endpoint_api",
+]
+output = "generated/"
+scripts.post_gen = []
+
+[profiles.default.ui]
+generators = [
+    # Entity
+    "ui_page", "ui_form", "ui_store", "ui_e2e_test",
+    "playwright-entity", "ui_descriptor", "ui-shell",
+    # Domain
+    "ui-domain-layout",
+    # Global
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
+]
+output = "generated/"
+scripts.post_gen = []
+
+[profiles.default.cli]
+generators = ["cli_command", "cli_domain", "cli_scaffold"]
+output = "generated/"
+scripts.post_gen = []

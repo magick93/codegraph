@@ -1,0 +1,26 @@
+# Domain configuration for the kanban-lexorank example.
+# See docs/lexorank-kanban.md for the full recipe.
+
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.board]
+label = "Board"
+schema_dir = "board"
+postgres_schema = "board"
+
+[domains.board.entities.BoardType]
+
+[domains.board.entities.BoardListType]
+# Ad-hoc filtering: GET /api/v1/board/lists?filter[board_id]=…
+filter_fields = ["board_id"]
+
+[domains.board.entities.CardType]
+# Cards nest under their list: GET /api/v1/board/lists/{list_id}/cards —
+# the parent id is injected into every list/read call server-side.
+parent = "BoardListType"
+parent_ref = "list"
+role = "child"
+# Ad-hoc filtering on the (rarely used) root card list:
+# GET /api/v1/board/cards?filter[list_id]=…
+filter_fields = ["list_id"]
