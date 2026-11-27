@@ -490,9 +490,11 @@ pub struct EvtEventsGenerator {
     /// `src/event_handlers/handlers.rs` on every run, so the implementation
     /// survives a clean clone/regenerate.
     event_handlers_source: Option<PathBuf>,
-    /// This run's events-producer report (issue #820 slice c). `Some` only
-    /// under the `events_producer` flag with at least one planned publish —
-    /// the catalogue's runtime-publication marks are rendered from it.
+    /// This run's events-producer report (issue #820 slice c). `Some` whenever
+    /// the `events_producer` flag is ON and the planner succeeded — including
+    /// a zero-plan run, where the catalogue still marks every declared event
+    /// `not emitted`. `None` only when the flag is OFF (or the analysis could
+    /// not run), and then no marks render.
     producer_report: Option<std::sync::Arc<crate::events::producer::ProducerReport>>,
 }
 

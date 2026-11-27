@@ -39,7 +39,13 @@ publishes it at runtime — and on which queue.
    `ProducerPlanIndex` from it. Both ride `GeneratorContext`; the events
    generator takes the report through `with_producer_report` (registry-wired).
    No second run, no graph nodes/edges/properties, no `GRAPH_FORMAT_VERSION`
-   bump.
+   bump. The report is `Some` whenever the flag is ON and the planner
+   SUCCEEDED — **including the zero-plan case** — so a flag-ON run with no
+   `emits` still marks every declared event unbound; only a flag-OFF (or
+   failed-analysis) run renders no marks. The publishing plane keeps its
+   pre-existing gate: the derived index is filtered to non-empty, so a
+   zero-plan report still yields `None` `producer_plans` and byte-identical
+   command/handler output.
 
 ## Implementation map
 
@@ -51,7 +57,7 @@ publishes it at runtime — and on which queue.
 | The projector | `codegraph-generate/src/events/docs.rs::runtime_publication_mark` |
 | Threading | `catalogue_markdown(…, Option<&ProducerReport>)`, `document_artifacts(…, report)` |
 | Corpus fixture | `crates/codegraph/tests/fixtures/events_producer_corpus/{corpus.mox,corpus.ddd,corpus.evt}` |
-| Corpus gate + shipped-default pin | `crates/codegraph/tests/events_producer_corpus_tests.rs` |
+| Corpus gate + zero-plan gate + shipped-default pin | `crates/codegraph/tests/events_producer_corpus_tests.rs` |
 | Live gate assertion | `crates/codegraph/tests/events_producer_live_gate.rs` (step 1b) |
 | Pure projection KATs | `events::docs::producer_mark_tests` |
 
@@ -76,7 +82,7 @@ publishes it at runtime — and on which queue.
 ```
 cargo test -p codegraph-generate --lib -- events::producer evt_events      91 passed
 cargo test -p codegraph --test events_producer_tests                        7 passed
-cargo test -p codegraph --test events_producer_corpus_tests                 5 passed
+cargo test -p codegraph --test events_producer_corpus_tests                 6 passed
 cargo test -p codegraph --test evt_pipeline_tests                           5 passed
 cargo test -p codegraph --test evt_workers_tests                            2 passed
 cargo test -p codegraph --test evt_golden_tests                             2 passed
@@ -159,3 +165,41 @@ untouched (`ux_rules_byte_identity_tests`, `forms_byte_identity_tests`,
 Inside a flag-ON tree the delta is enumerated by the corpus leg: stripping the
 `Runtime publication:` lines (and the blank line each introduced) from the
 flag-ON `docs/events.md` reproduces the flag-OFF document byte-for-byte.
+
+## Review round: zero-plan runs (commit after review)
+
+`report_for_run` originally returned `None` when `report.plans` was empty, so a
+flag-ON run where NO operation declares an `emits` rendered no marks at all —
+inconsistent with the rule (published + unbound for every declared event) and
+untested (the corpus always had plans). Fixed:
+
+1. `report_for_run` returns `Some` whenever the planner succeeds; the flag gate
+   stays in `build_generator_context`.
+2. The publishing plane keeps its pre-existing gate — `producer_plans` is the
+   derived index filtered to non-empty — so no consumer sees a new `Some`.
+3. `events_producer_corpus_tests::zero_plan_flag_on_run_marks_every_declared_event_unbound`
+   stages the SAME model and contracts with no-`emits` designs and asserts, over
+   that one input: flag ON ⇒ every catalogue section carries the unbound mark
+   (exactly one per declared event) and nothing claims to publish; flag OFF ⇒
+   no `Runtime publication:` line at all; the stripped flag-ON catalogue equals
+   the flag-OFF one; and every `command.rs` is byte-identical to the flag-OFF
+   run with no `update_with_events(`, proving the empty-index gate.
+
+Teeth: restore `(!report.plans.is_empty()).then(…)` in `report_for_run` (the
+rejected behaviour) → the new test goes red:
+
+```
+thread 'zero_plan_flag_on_run_marks_every_declared_event_unbound' panicked at
+events_producer_corpus_tests.rs:575:
+declared event `ShipmentBooked` must carry the unbound mark over a zero-plan
+flag-ON run:
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured
+```
+
+Restored → `test result: ok. 6 passed`. The clean-subset leg stays green in
+both cases (it has plans), which is exactly why the zero-plan case needed its
+own pin.
+
+Note: `producer_plans` was already `Option` and stays `None` for an empty
+index, so no command/handler bytes moved in either direction — the corpus leg's
+command-file equality assertion is the standing proof.

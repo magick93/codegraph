@@ -178,9 +178,10 @@ pub fn event_schemas(arch: &EventArchitecture, variant: EnvelopeVariant) -> Vec<
 /// catalogue projections join in #610/#616). Empty architecture ⇒ empty.
 ///
 /// `producer_report` is the run's events-producer planner output (issue #820
-/// slice c): `Some` only when the `events_producer` flag is ON and the run
-/// planned at least one publish, so the catalogue's runtime-publication marks
-/// are absent (byte-identical) on every flag-OFF run.
+/// slice c): `Some` whenever the `events_producer` flag is ON and the planner
+/// succeeded (even with zero plans — a declared event then still marks
+/// `not emitted`), and `None` only when the flag is OFF or the analysis could
+/// not run. Absent ⇒ no marks, byte-identical.
 pub fn document_artifacts(
     arch: &EventArchitecture,
     variant: EnvelopeVariant,

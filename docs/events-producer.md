@@ -301,10 +301,14 @@ flag-ON run hard-fails on every R*/W* finding before any file is written
 refused binding — the mark above would be dead text. Those sentences stay on
 the validation and `codegraph doctor` surfaces (see above).
 
-The marks are gated on the flag exactly like the publishing seam: flag OFF ⇒ no
-planner report reaches the catalogue ⇒ `docs/events.md` is byte-identical to
-the pre-slice-(c) document. The projector takes the report as `Option`, so the
-projection is pure and unit-testable without an engine.
+The marks are gated on the flag: flag OFF ⇒ no planner report reaches the
+catalogue ⇒ `docs/events.md` is byte-identical to the pre-slice-(c) document.
+The gate is the flag alone — a flag-ON run that plans NO publishes still marks
+every declared event `not emitted`, so "nothing publishes" is distinguishable
+from "the feature is off". (The publishing seam additionally skips an empty
+plan index; that gate is the command plane's, not the catalogue's.) The
+projector takes the report as `Option`, so the projection is pure and
+unit-testable without an engine.
 
 ## Sequencing with pherolang (EV2 / EV3)
 

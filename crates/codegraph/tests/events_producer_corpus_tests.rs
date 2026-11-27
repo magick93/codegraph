@@ -117,6 +117,41 @@ application Corpus {
 }
 "#;
 
+/// The ZERO-PLAN designs: the same model and contracts, but no operation
+/// declares an `emits` clause at all (the services are gone, the entities and
+/// the machine stay). A flag-ON run over this shape plans nothing — and must
+/// still mark every declared event `not emitted`, which is what tells a reader
+/// the difference between "nothing publishes" and "this slice is off".
+const NO_EMITS_DDD: &str = r#"import "corpus.mox";
+
+application Corpus {
+    base nz.example.corpus
+
+    module corpus {
+        entity ShipmentType scaffold repository ShipmentRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+
+        entity JobType scaffold repository JobRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+
+        machine jobState: JobState {
+            initial Queued;
+            Queued -> Running via Start;
+            Running -> Done via Finish;
+            terminal Done;
+        }
+    }
+}
+"#;
+
 /// Every class-C shape's documented sentence, verbatim from
 /// `docs/events-producer.md` (declaration order: the planner walks the
 /// service operations in authored order and the payload fields in
@@ -155,6 +190,11 @@ const DOCUMENTED_REFUSALS: &[&str] = &[
      the model",
 ];
 
+/// The catalogue's unbound mark — rendered for a declared event no operation
+/// binds. Shared so the clean-subset leg and the zero-plan leg cannot drift.
+const UNBOUND_MARK: &str =
+    "Runtime publication: not emitted — no modeled service operation declares this event";
+
 /// The refused `(event, op)` pairs — no plan may exist for any of them (no
 /// partially bound payload, no silently skipped emission).
 const REFUSED_PAIRS: &[(&str, &str)] = &[
@@ -187,15 +227,24 @@ fn write_profiles(dir: &Path, flag: bool) -> PathBuf {
     path
 }
 
-/// Copy the model + contracts into `dir` and write the CLEAN designs beside
+/// Copy the model + contracts into `dir` and write the given designs beside
 /// them (pherolang imports resolve relative to the declaring file).
-fn stage_clean_project(dir: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+fn stage_project(
+    dir: &Path,
+    designs: &str,
+    file_name: &str,
+) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     let config = write_config(dir);
     fs::copy(fixture("corpus.mox"), dir.join("corpus.mox")).unwrap();
     fs::copy(fixture("corpus.evt"), dir.join("corpus.evt")).unwrap();
-    let ddd = dir.join("clean.ddd");
-    fs::write(&ddd, CLEAN_DDD).unwrap();
+    let ddd = dir.join(file_name);
+    fs::write(&ddd, designs).unwrap();
     (config, dir.join("corpus.mox"), dir.join("corpus.evt"), ddd)
+}
+
+/// The CLEAN A/B designs (see `CLEAN_DDD`).
+fn stage_clean_project(dir: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    stage_project(dir, CLEAN_DDD, "clean.ddd")
 }
 
 async fn fixture_engine(config: &codegraph_config::DomainConfig) -> Backend {
@@ -448,8 +497,7 @@ async fn clean_subset_publishes_and_the_catalogue_carries_the_exact_marks() {
             "catalogue missing the mark `{mark}`:\n{catalogue}"
         );
     }
-    let unbound = "Runtime publication: not emitted — no modeled service operation declares \
-                   this event";
+    let unbound = UNBOUND_MARK;
     assert_eq!(
         catalogue
             .matches("Runtime publication: published at runtime")
@@ -496,6 +544,87 @@ async fn clean_subset_publishes_and_the_catalogue_carries_the_exact_marks() {
         !off_shipment.contains("update_with_events("),
         "flag-off emits the plain command: {off_shipment}"
     );
+}
+
+/// A flag-ON run that plans NOTHING still marks every declared event as
+/// unbound — the zero-plan shape must never be conflated with the flag being
+/// off (which renders no marks at all). Both halves are asserted over the SAME
+/// input: the same model and contracts, designs carrying no `emits` clause.
+#[tokio::test]
+async fn zero_plan_flag_on_run_marks_every_declared_event_unbound() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config_path, mox, evt, ddd) = stage_project(dir.path(), NO_EMITS_DDD, "no-emits.ddd");
+    let profiles_on = write_profiles(dir.path(), true);
+    let profiles_off = write_profiles(dir.path(), false);
+
+    let on = dir.path().join("no-emits-on");
+    run_generation(&config_path, &on, profiles_on, &mox, &evt, &ddd).await;
+    let on_files = collect_files(&on);
+    let on_catalogue = on_files
+        .get("docs/events.md")
+        .expect("the flag-ON run emits docs/events.md");
+
+    // Every declared event's section carries the unbound mark, and NOTHING
+    // claims to publish (the planner planned zero pairs).
+    let sections: Vec<&str> = on_catalogue.split("\n## `").skip(1).collect();
+    assert!(
+        !sections.is_empty(),
+        "the catalogue must list the declared events:\n{on_catalogue}"
+    );
+    for section in &sections {
+        let name = section.split('`').next().unwrap_or("<unnamed>");
+        assert!(
+            section.contains(UNBOUND_MARK),
+            "declared event `{name}` must carry the unbound mark over a zero-plan              flag-ON run:\n{section}"
+        );
+    }
+    assert_eq!(
+        on_catalogue.matches(UNBOUND_MARK).count(),
+        sections.len(),
+        "exactly one unbound mark per declared event:\n{on_catalogue}"
+    );
+    assert!(
+        !on_catalogue.contains("Runtime publication: published at runtime"),
+        "a zero-plan run publishes nothing, so no event may claim runtime          publication:\n{on_catalogue}"
+    );
+
+    // The flag-OFF half over the SAME input: no marks at all.
+    let off = dir.path().join("no-emits-off");
+    run_generation(&config_path, &off, profiles_off, &mox, &evt, &ddd).await;
+    let off_files = collect_files(&off);
+    let off_catalogue = off_files
+        .get("docs/events.md")
+        .expect("the flag-OFF run emits the catalogue too");
+    assert!(
+        !off_catalogue.contains("Runtime publication:"),
+        "flag-off output must carry no marks, not even the unbound line:\n{off_catalogue}"
+    );
+    assert_eq!(
+        strip_marks(on_catalogue),
+        *off_catalogue,
+        "the flags differ by the mark lines ONLY (byte-identity for the rest)"
+    );
+
+    // The publishing plane keeps its pre-existing gate: an EMPTY index is
+    // `None`, so the command plane stays byte-identical to the flag-OFF run
+    // (the catalogue is the only consumer of a zero-plan report).
+    let mut commands = 0;
+    for (path, content) in &on_files {
+        if !path.ends_with("/command.rs") {
+            continue;
+        }
+        commands += 1;
+        assert!(
+            !content.contains("update_with_events("),
+            "a zero-plan run must not gain the publishing seam: {path}\n{content}"
+        );
+        assert_eq!(
+            Some(content),
+            off_files.get(path),
+            "the flag must not move the command plane when nothing publishes: {path}"
+        );
+    }
+    assert!(commands > 0, "the corpus generates command files");
 }
 
 /// Drop every mark line (and the blank line it introduced) — the enumerated

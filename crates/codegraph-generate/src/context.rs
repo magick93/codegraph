@@ -265,11 +265,18 @@ pub(crate) async fn build_generator_context<'a>(
     } else {
         None
     };
-    let producer_plans = producer_report.as_ref().map(|report| {
-        std::sync::Arc::new(crate::events::producer::ProducerPlanIndex::from_report(
-            report,
-        ))
-    });
+    // The publishing plane's pre-existing gate: an EMPTY index is `None`, so
+    // command/handler output stays byte-identical. (The catalogue reads the
+    // report instead — a zero-plan flag-ON run still marks every declared
+    // event `not emitted`.)
+    let producer_plans = producer_report
+        .as_ref()
+        .map(|report| {
+            std::sync::Arc::new(crate::events::producer::ProducerPlanIndex::from_report(
+                report,
+            ))
+        })
+        .filter(|index| !index.is_empty());
 
     Ok(GeneratorContext {
         cached_db,

@@ -2395,13 +2395,20 @@ declared event's runtime publication. Flag OFF (the shipped default) keeps the
 catalogue byte-identical — the marks render only when the run's producer
 report is present, so no shipped profile moves and no canary re-blesses.
 
-- **ONE planner run, two consumers**: `build_generator_context` now builds a
-  `ProducerReport` (`producer::report_for_run`, `None` when the flag is off or
-  no plan exists — the exact pre-slice gate) and derives the slice-(b)
-  `ProducerPlanIndex` from it, storing both on `GeneratorContext`. The events
+- **ONE planner run, two consumers**: `build_generator_context` builds a
+  `ProducerReport` (`producer::report_for_run` — `Some` whenever the flag is ON
+  and the planner succeeded, INCLUDING the zero-plan case) and derives the
+  slice-(b) `ProducerPlanIndex` from it, storing both on `GeneratorContext`.
+  The publishing plane keeps its pre-existing gate: the derived index is
+  filtered to non-empty, so a zero-plan report still yields `None`
+  `producer_plans` and byte-identical command/handler output. The events
   generator gets the report via `EvtEventsGenerator::with_producer_report`
   (registry-wired, the `.with_event_handlers` precedent). No second planner
-  run, no graph data, no `GRAPH_FORMAT_VERSION` move.
+  run, no graph data, no `GRAPH_FORMAT_VERSION` move. **Zero-plan consistency**:
+  a flag-ON run where no operation declares an `emits` still marks every
+  declared event `not emitted` — the flag being on and "nothing publishes" are
+  distinguishable, and only a flag-OFF (or failed-analysis) run renders no
+  marks.
 - **Pure projection** (`events/docs.rs::runtime_publication_mark`, threaded as
   `catalogue_markdown(…, producer_report: Option<&ProducerReport>)` and
   `document_artifacts(…, producer_report)`): one line, its own paragraph,
@@ -2429,14 +2436,17 @@ report is present, so no shipped profile moves and no canary re-blesses.
   R3 contained-child-only source, R7 `String` payload vs `i32` column, R9
   `previousState` on a machine-less patch, and R4 no-runtime-site (a
   `protected` op + a `findAll` seam) so "no partial publish" is evidenced.
-- **Gates**: `cargo test -p codegraph --test events_producer_corpus_tests` (5:
+- **Gates**: `cargo test -p codegraph --test events_producer_corpus_tests` (6:
   the exact documented sentences in declaration order over the FULL corpus +
   no plan for any refused pair + flag-ON hard errors / flag-OFF silence + a
   plan-less flag-OFF run succeeding; then generation over a CLEAN A/B subset
   asserting `publish_*_in_tx(` per class and the EXACT catalogue lines —
   single/multi-op, `arm:`/`arms:`, `queue:`/`queues:`, and the unbound line —
   plus the enumerated flag-ON → flag-OFF delta: stripping the mark lines
-  reproduces the flag-OFF catalogue byte-for-byte) + the shipped-default pin
+  reproduces the flag-OFF catalogue byte-for-byte; a ZERO-PLAN flag-ON run
+  marks every declared event unbound with no published line while the flag-OFF
+  run over the SAME no-`emits` designs carries no mark and the command plane
+  stays byte-identical) + the shipped-default pin
   (`shipped_profiles_keep_the_producer_flag_off` — the repo's in-test profiles
   never read `profiles.toml`, so this is the only pin on the product default,
   and it is what mutation proof 2 bites) + the in-crate
