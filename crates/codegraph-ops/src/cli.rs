@@ -84,7 +84,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     skip_generate: bool,
 
-    /// Build in release mode.
+    /// Build in release mode. Steers BOTH builds: the generated app AND the
+    /// graph-binary regeneration (`cargo run --release -p <graph> -- run`,
+    /// issue #307) — debug regeneration is dramatically slower on large
+    /// models. e2e/workers regeneration is always release.
     #[arg(long, global = true)]
     release: bool,
 

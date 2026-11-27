@@ -193,7 +193,7 @@ fn retry_decision_respects_budget() {
 #[test]
 fn regenerate_args_pass_the_manifest_profile() {
     let cfg = config_for(manifest_with(Some("default"), "sea_orm"));
-    let args = regenerate_args(&cfg, "hr-graph");
+    let args = regenerate_args(&cfg, "hr-graph", false);
     let profile_pos = args
         .iter()
         .position(|a| a == "--profile")
@@ -209,8 +209,43 @@ fn regenerate_args_pass_the_manifest_profile() {
 #[test]
 fn regenerate_args_omit_profile_when_unset() {
     let cfg = config_for(manifest_with(None, "sea_orm"));
-    let args = regenerate_args(&cfg, "hr-graph");
+    let args = regenerate_args(&cfg, "hr-graph", false);
     assert!(!args.contains(&"--profile".to_string()));
+}
+
+/// Issue #307: `--release` must reach the graph-binary regen argv — the
+/// documented flag only steered the generated-app build, so every suite paid
+/// the debug-regen cost (~15x on rosetta ingestion) unless the caller
+/// hand-ran a release regen with `--skip-generate`.
+#[test]
+fn regenerate_args_carry_release_when_requested() {
+    let cfg = config_for(manifest_with(None, "sea_orm"));
+    let args = regenerate_args(&cfg, "hr-graph", true);
+    assert_eq!(
+        args.first().map(String::as_str),
+        Some("run"),
+        "argv must still start at the cargo subcommand"
+    );
+    assert_eq!(
+        args.get(1).map(String::as_str),
+        Some("--release"),
+        "--release must ride the `cargo` position (before -p), got {args:?}"
+    );
+    assert_eq!(
+        args.get(2).map(String::as_str),
+        Some("-p"),
+        "-p must immediately follow --release, got {args:?}"
+    );
+}
+
+#[test]
+fn regenerate_args_omit_release_by_default() {
+    let cfg = config_for(manifest_with(None, "sea_orm"));
+    let args = regenerate_args(&cfg, "hr-graph", false);
+    assert!(
+        !args.contains(&"--release".to_string()),
+        "debug regen must not carry --release, got {args:?}"
+    );
 }
 
 #[test]

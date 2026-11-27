@@ -5385,7 +5385,9 @@ as transient), `clean --deep`, `smoke` flags below. `e2e`/`ui` pass trailing
 args through to Playwright (`testkit e2e -- --last-failed`).
 
 Global flags: `--config FILE` (manifest path), `--keep`, `--skip-build`,
-`--skip-generate`, `--release`, `--verbose` (unmutes quiet stages —
+`--skip-generate`, `--release` (steers BOTH builds — the generated app AND
+the graph-binary regen `cargo run --release -p <graph> -- run`, #307; e2e/
+workers regen is always release), `--verbose` (unmutes quiet stages —
 dependency installs, browser downloads — and echoes each stage's full
 captured output; failure tails print regardless), `--metrics FILE` (stage
 timings; TSV or JSON via `--metrics-format tsv|json`, default tsv),

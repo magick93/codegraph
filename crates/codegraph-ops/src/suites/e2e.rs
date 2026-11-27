@@ -237,13 +237,10 @@ async fn e2e_generate(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         };
         crate::ext::run_hooks(config, "pre_generate", HookPolicy::PerHook).await?;
         output::info(format!("Building {binary} (release)..."));
-        run_blocking(
-            "build",
-            "cargo",
-            &["build", "-p", &binary, "--release"],
-            &config.workspace_root,
-        )
-        .map_err(|e| OpsError::TestFailure(format!("graph binary build failed: {e}")))?;
+        let build_args = graph_build_args(&binary);
+        let build_arg_refs: Vec<&str> = build_args.iter().map(String::as_str).collect();
+        run_blocking("build", "cargo", &build_arg_refs, &config.workspace_root)
+            .map_err(|e| OpsError::TestFailure(format!("graph binary build failed: {e}")))?;
         let gen_bin = config
             .workspace_root
             .join("target")
@@ -795,6 +792,19 @@ fn generation_binary(config: &OpsConfig) -> Option<String> {
     }
 }
 
+/// The graph-binary build argv. e2e regeneration ALWAYS builds and runs the
+/// release graph binary (issue #307: the sigil/rosetta ingestion pipeline is
+/// dramatically slower unoptimized, and every suite run pays the regen) —
+/// the profile is inherent, not flag-steered. Pure so the shape is pinned.
+fn graph_build_args(binary: &str) -> Vec<String> {
+    vec![
+        "build".to_string(),
+        "-p".to_string(),
+        binary.to_string(),
+        "--release".to_string(),
+    ]
+}
+
 /// Build the graph-binary `run ...` argument vector.
 ///
 /// mox mode (non-empty `mox_files`): `run --mox-files <file>...` in manifest
@@ -1128,6 +1138,23 @@ mod tests {
         assert!(!args.contains(&"--config".to_string()));
         assert!(args.contains(&"--output".to_string()));
         assert!(args.contains(&"/tmp/repo/generated-app".to_string()));
+    }
+
+    /// Issue #307: e2e regeneration must always build the graph binary in the
+    /// release profile — the pipeline is dramatically slower unoptimized and
+    /// every suite run pays the regen.
+    #[test]
+    fn graph_build_args_always_release() {
+        let args = graph_build_args("hr-graph");
+        assert_eq!(
+            args,
+            vec![
+                "build".to_string(),
+                "-p".to_string(),
+                "hr-graph".to_string(),
+                "--release".to_string()
+            ]
+        );
     }
 
     #[test]
