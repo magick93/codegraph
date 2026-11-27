@@ -761,19 +761,18 @@ async fn run_boot_and_tests(
                     continue;
                 }
                 let mut cmd = Command::new("hurl");
-                cmd.arg("--test")
-                    .arg("--variable")
-                    .arg(format!("base_url=http://127.0.0.1:{gateway_port}"))
-                    .arg("--variable")
-                    .arg(format!("api_key={api_key}"));
-                // Issue #828: the scope-denial (P0403 → 403) and
-                // cross-tenant (404) contracts run here too — they need the
-                // same two extra keys the monolith api suite provisions.
-                if let Some(key) = &api_key_b {
-                    cmd.arg("--variable").arg(format!("api_key_b={key}"));
-                }
-                if let Some(key) = &api_key_limited {
-                    cmd.arg("--variable").arg(format!("api_key_limited={key}"));
+                cmd.arg("--test");
+                // Issues #828 + #846: the scope-denial (P0403 → 403) and
+                // cross-tenant (404) contracts run here too, so the variable
+                // set is shared with the monolith api suite's vocabulary
+                // (`api_key`/`api_key_a`/`api_key_b`/`api_key_limited`).
+                for variable in gateway_hurl_variables(
+                    &format!("http://127.0.0.1:{gateway_port}"),
+                    &api_key,
+                    api_key_b.as_deref(),
+                    api_key_limited.as_deref(),
+                ) {
+                    cmd.arg("--variable").arg(variable);
                 }
                 cmd.arg(&f);
                 let (ok, requests, output_text) = match cmd.output() {
@@ -1048,6 +1047,38 @@ fn print_log_tail(log_path: &Path, n: usize) {
         }
         output::warn("--- end ---");
     }
+}
+
+/// The `--variable` set every gateway hurl contract runs with.
+///
+/// Issue #846: the generated cross-tenant contract spells ORG A's key
+/// `{{api_key_a}}` (`hurl_contract/mod.rs`'s `key_a_header`), and the monolith
+/// api suite passes that alias beside `api_key` for exactly this reason
+/// (`suites/api/mod.rs`, "Alias matching the cross-tenant file vocabulary
+/// (`api_key_a`), so the same hurl file works in the main loop and in the
+/// RLS-isolation stage"). Without the alias hurl fails at PARSE time — "you
+/// must set the variable api_key_a" — before a single request runs, so the
+/// contract silently stops covering the cross-tenant 404 it exists to prove.
+/// One builder, so the two suites carry the same vocabulary.
+pub(crate) fn gateway_hurl_variables(
+    api_url: &str,
+    api_key: &str,
+    api_key_b: Option<&str>,
+    api_key_limited: Option<&str>,
+) -> Vec<String> {
+    let mut variables = vec![
+        format!("base_url={api_url}"),
+        format!("api_key={api_key}"),
+        // Org A's key under the cross-tenant contract's spelling (issue #846).
+        format!("api_key_a={api_key}"),
+    ];
+    if let Some(key) = api_key_b {
+        variables.push(format!("api_key_b={key}"));
+    }
+    if let Some(key) = api_key_limited {
+        variables.push(format!("api_key_limited={key}"));
+    }
+    variables
 }
 
 #[cfg(test)]
@@ -1358,5 +1389,63 @@ mod tests {
         // schemas-only → no hint (legacy behavior).
         let cfg = workers_config(workers_manifest());
         assert!(missing_model_source_hint(&cfg).is_none());
+    }
+
+    #[test]
+    fn gateway_hurl_variables_carry_the_cross_tenant_key_alias() {
+        // Issue #846: `04_cross_tenant_404.hurl` creates org A's row with
+        // `{{api_key_a}}`. Without the alias hurl rejects the WHOLE file at
+        // parse time ("you must set the variable api_key_a"), so no request
+        // runs and the cross-tenant 404 the contract exists to prove silently
+        // stops being exercised.
+        let vars = gateway_hurl_variables("http://127.0.0.1:8787", "org-a-key", None, None);
+        assert_eq!(
+            vars,
+            vec![
+                "base_url=http://127.0.0.1:8787".to_string(),
+                "api_key=org-a-key".to_string(),
+                "api_key_a=org-a-key".to_string(),
+            ],
+            "the gateway variable set must carry `api_key_a` beside `api_key`"
+        );
+    }
+
+    #[test]
+    fn gateway_hurl_variables_add_the_optional_keys_only_when_provisioned() {
+        let bare = gateway_hurl_variables("http://gw", "a", None, None);
+        assert!(
+            !bare.iter().any(|v| v.starts_with("api_key_b=")),
+            "api_key_b must not be fabricated: {bare:?}"
+        );
+        assert!(
+            !bare.iter().any(|v| v.starts_with("api_key_limited=")),
+            "api_key_limited must not be fabricated: {bare:?}"
+        );
+
+        let full = gateway_hurl_variables("http://gw", "a", Some("b"), Some("ro"));
+        assert!(full.contains(&"api_key_b=b".to_string()), "{full:?}");
+        assert!(full.contains(&"api_key_limited=ro".to_string()), "{full:?}");
+        // The cross-tenant alias survives the optional additions.
+        assert!(full.contains(&"api_key_a=a".to_string()), "{full:?}");
+    }
+
+    #[test]
+    fn both_suites_pass_the_cross_tenant_alias() {
+        // Drift pin (issue #846): the workers suite and the monolith api suite
+        // feed the SAME generated contracts, so both must carry `api_key_a`.
+        // The monolith half is asserted over its source — its alias sits in a
+        // header-derived block this module cannot call (`auth_header`).
+        let monolith = include_str!("api/mod.rs");
+        assert!(
+            monolith.contains("api_key_a={key}"),
+            "the monolith api suite must keep aliasing api_key_a for the \
+             cross-tenant contract (suites/api/mod.rs)"
+        );
+        assert!(
+            gateway_hurl_variables("http://gw", "a", None, None)
+                .iter()
+                .any(|v| v == "api_key_a=a"),
+            "the workers suite must pass api_key_a too"
+        );
     }
 }
