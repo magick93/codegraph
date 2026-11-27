@@ -16,10 +16,10 @@ enum {{ enum.name }} {
 {% endfor %}
 
 {% for msg in messages %}
-{% if msg.description %}/// {{ msg.description }}{% endif %}
+{% if msg.description %}/// {{ msg.description | rust_doc(prefix="/// ") }}{% endif %}
 message {{ msg.name }} {
   {% for field in msg.fields %}
-  {% if field.description %}  // {{ field.description }}{% endif %}
+  {% if field.description %}  // {{ field.description | rust_doc(prefix="    // ") }}{% endif %}
   {% if field.is_repeated %}repeated {% elif field.is_optional %}optional {% endif %}{{ field.proto_type }} {{ field.name }} = {{ field.field_number }};
   {% endfor %}
 }

@@ -1373,7 +1373,7 @@ pub fn tempdir() -> TempDir {
 /// Resolution order:
 /// 1. `cargo_target_tmpdir` — Cargo sets `CARGO_TARGET_TMPDIR` for
 ///    integration tests to `<target-dir>/tmp` (the workspace root `target/`,
-///    NOT the tracked `crates/codegraph/target/` — issue #683a);
+///    NOT the per-crate `crates/codegraph/target/` — issue #683a);
 /// 2. `<manifest>/../../target/gate-tmp` — the workspace target dir derived
 ///    from `CARGO_MANIFEST_DIR`, for any runner that does not set it.
 ///
@@ -1661,8 +1661,9 @@ mod gate_temp_root_tests {
         );
     }
 
-    /// Issue #683a: `crates/codegraph/target/**` is TRACKED in git — nothing
-    /// the gate writes may land there, on either resolution path.
+    /// Issue #683a: `crates/codegraph/target/` is a per-crate dir, not the
+    /// workspace target (it was once TRACKED in git) — nothing the gate
+    /// writes may land there, on either resolution path.
     #[test]
     fn resolved_roots_never_land_in_the_tracked_crate_target_dir() {
         let cargo_tmpdir = workspace_root().join("target").join("tmp");
@@ -1673,7 +1674,7 @@ mod gate_temp_root_tests {
         ] {
             assert!(
                 !resolved.starts_with(&tracked),
-                "{} must never resolve under the TRACKED crate target dir {} (issue #683a)",
+                "{} must never resolve under the per-crate target dir {} (issue #683a)",
                 resolved.display(),
                 tracked.display()
             );

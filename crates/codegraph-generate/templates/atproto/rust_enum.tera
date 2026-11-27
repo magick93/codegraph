@@ -1,4 +1,4 @@
-/// {{ description | default(value=enum_name) }}
+/// {{ description | default(value=enum_name) | rust_doc(prefix="/// ") }}
 ///
 /// Generated from AT Protocol lexicon codelist.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

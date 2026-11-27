@@ -706,7 +706,7 @@ fn emit_functions_module(
     for function in manual {
         wln!(code);
         if let Some(definition) = &function.node.definition {
-            wln!(code, "    /// {definition}");
+            code.push_doc_lines("    /// ", definition);
         }
         let args = function
             .args
@@ -807,7 +807,7 @@ fn emit_manual_stub(
         for function in manual {
             wln!(code);
             if let Some(definition) = &function.node.definition {
-                wln!(code, "    /// {definition}");
+                code.push_doc_lines("    /// ", definition);
             }
             let args = function
                 .args
@@ -880,7 +880,7 @@ fn emit_external_surface(
     for function in external {
         wln!(code);
         if let Some(definition) = &function.node.definition {
-            wln!(code, "    /// {definition}");
+            code.push_doc_lines("    /// ", definition);
         }
         wln!(
             code,
@@ -904,7 +904,7 @@ fn emit_external_surface(
     for function in external {
         wln!(code);
         if let Some(definition) = &function.node.definition {
-            wln!(code, "/// {definition}");
+            code.push_doc_lines("/// ", definition);
         }
         wln!(
             code,
@@ -922,7 +922,7 @@ fn emit_external_surface(
         wln!(code, "}}");
         wln!(code);
         if let Some(definition) = &function.node.definition {
-            wln!(code, "/// {definition}");
+            code.push_doc_lines("/// ", definition);
         }
         wln!(
             code,
@@ -985,7 +985,7 @@ fn emit_external_hook(code: &mut CodeWriter, external: &[FunctionSurface]) {
     for function in external {
         wln!(code);
         if let Some(definition) = &function.node.definition {
-            wln!(code, "    /// {definition}");
+            code.push_doc_lines("    /// ", definition);
         }
         wln!(
             code,
@@ -1067,7 +1067,7 @@ fn emit_function(
 ) {
     wln!(code);
     if let Some(definition) = &function.node.definition {
-        wln!(code, "/// {definition}");
+        code.push_doc_lines("/// ", definition);
     }
     for transform in &function.node.transform_annotations {
         match &transform.reference {
@@ -1561,7 +1561,7 @@ fn emit_function_endpoint(
 
     wln!(code);
     if let Some(definition) = &function.node.definition {
-        wln!(code, "/// {definition}");
+        code.push_doc_lines("/// ", definition);
     }
     wln!(
         code,
@@ -1575,7 +1575,7 @@ fn emit_function_endpoint(
     wln!(code, "}}");
     wln!(code);
     if let Some(definition) = &function.node.definition {
-        wln!(code, "/// {definition}");
+        code.push_doc_lines("/// ", definition);
     }
     wln!(
         code,
@@ -1589,7 +1589,7 @@ fn emit_function_endpoint(
     wln!(code, "}}");
     wln!(code);
     if let Some(definition) = &function.node.definition {
-        wln!(code, "/// {definition}");
+        code.push_doc_lines("/// ", definition);
     }
     wln!(code, "#[utoipa::path(");
     wln!(code, "    post,");

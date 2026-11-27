@@ -5216,6 +5216,7 @@ the re-embed before trusting a mutation result:
 | `strip_pg_quotes` | Removes double-quote characters from PostgreSQL identifiers |
 | `quote_pg` | Double-quotes a PostgreSQL identifier if it is a reserved word |
 | `js_template_literal` | Escapes prose (backslash, backtick, `${`) for interpolation into a JS/TS template literal (issue #560) |
+| `rust_doc` | Keeps multi-line prose inside a line comment: `/// {{ x | rust_doc(prefix="/// ") }}` writes `prefix` before every continuation line (single-line values unchanged; issue #604). Rust generators use `CodeWriter::push_doc_lines` for the same rule |
 
 ### Example: overriding SQLite templates
 

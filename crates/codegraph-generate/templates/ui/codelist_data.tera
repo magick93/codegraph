@@ -1,5 +1,5 @@
 // Generated from HR Open Standards — {{ title }}
-// {{ description }}
+// {{ description | rust_doc(prefix="// ") }}
 import type { CodelistData } from '@crewbase/common';
 
 export const {{ title }}: CodelistData = {

@@ -35,7 +35,7 @@ use crate::{{ import.domain }}::{{ import.module }}::dto_response::{{ import.nam
 pub struct {{ boundary.name }} {
 {%- for field in boundary.fields %}
 {%- if field.derived %}
-    /// Computed: `{{ field.expression }}` (read-only).
+    /// Computed: `{{ field.expression | rust_doc(prefix="    /// ") }}` (read-only).
 {%- endif %}
 {%- if field.optional %}
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -10,7 +10,7 @@ use cosmos_domain_types::identifiers::Did;
 use rsky_syntax::nsid::Nsid;
 use cosmos_domain_types::identifiers::RecordKey;
 {%- endif %}
-/// {{ description | default(value=struct_name) }}
+/// {{ description | default(value=struct_name) | rust_doc(prefix="/// ") }}
 ///
 /// Generated from AT Protocol lexicon: {{ nsid }}
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -22,7 +22,7 @@ pub struct {{ struct_name }} {
 {%- endif %}
 {%- for field in fields %}
 {%- if field.doc %}
-    /// {{ field.doc }}
+    /// {{ field.doc | rust_doc(prefix="    /// ") }}
 {%- endif %}
 {%- if field.serde_attr %}
     {{ field.serde_attr }}

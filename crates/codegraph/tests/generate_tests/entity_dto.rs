@@ -144,6 +144,7 @@ async fn test_domain_types_codelist_generates_enum_not_string_alias() {
     let generator = DomainTypesCodelistGenerator::new_with_base(tmp_dir.clone());
 
     let mut tera = tera::Tera::default();
+    codegraph_generate::template_engine::register_filters(&mut tera);
     tera.add_raw_template(
         "codelist/enum.tera",
         include_str!("../../../codegraph-generate/templates/codelist/enum.tera"),

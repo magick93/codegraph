@@ -802,7 +802,7 @@ pub fn emit_sql_trait_block(code: &mut CodeWriter, plans: &[&SqlFnPlan]) {
     for plan in plans {
         wln!(code);
         if let Some(definition) = &plan.definition {
-            wln!(code, "    /// {definition}");
+            code.push_doc_lines("    /// ", definition);
         }
         let args = plan
             .params

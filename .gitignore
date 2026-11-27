@@ -10,8 +10,8 @@
 crates/review/generated-candidate/target/
 crates/review/generated-candidate/Cargo.lock
 
-# Per-crate build/output dirs. `crates/codegraph/target/` currently holds
-# pre-existing tracked files (the #683(a) debt, out of scope here), but any
-# NEW generated file under it must never be swept into a commit by
-# `git add -A` — machine_read_model_tests writes target/machine-read-model/.
+# Per-crate build/output dirs — never committed (issue #683: the stale
+# `crates/codegraph/target/events-runtime-harness` tree was untracked).
+# Gates write here at runtime, e.g. machine_read_model_tests writes
+# crates/codegraph/target/machine-read-model/.
 crates/*/target/

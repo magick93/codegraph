@@ -640,10 +640,9 @@ fn emit_invariants(code: &mut CodeWriter, surface: &InvariantSurface) {
         );
         wln!(code, "/// detail).");
         wln!(code, "///");
-        wln!(
-            code,
-            "/// Authored expression: `{expression}`",
-            expression = plan.expression,
+        code.push_doc_lines(
+            "/// ",
+            &format!("Authored expression: `{}`", plan.expression),
         );
         wln!(
             code,
@@ -660,7 +659,7 @@ fn emit_invariants(code: &mut CodeWriter, surface: &InvariantSurface) {
 fn emit_rule(code: &mut CodeWriter, rule: &RuleSurface) {
     wln!(code);
     if let Some(definition) = &rule.node.definition {
-        wln!(code, "/// {definition}");
+        code.push_doc_lines("/// ", definition);
     }
     if let Some(input) = &rule.input_type {
         wln!(code, "///");

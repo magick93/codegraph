@@ -775,7 +775,7 @@ fn emit_operation(
     };
     wln!(code);
     if let Some(description) = &op.description {
-        wln!(code, "    /// {description}");
+        code.push_doc_lines("    /// ", description);
     }
     wln!(
         code,
@@ -943,6 +943,45 @@ mod tests {
             )
             .unwrap(),
             "pub fn has_short_id(&self, res: &Resource) -> bool"
+        );
+    }
+
+    /// Issue #604: a multi-line op description emits one `///` line per
+    /// source line — a bare continuation line breaks the generated crate.
+    #[test]
+    fn multi_line_op_description_prefixes_every_line() {
+        let mut op = op_with("string", "int");
+        op.description = Some("Account-user mapping hook.\nValidation runs at runtime.".into());
+        let surface = ClassSurface {
+            title: "Library".into(),
+            entity_name: "Library".into(),
+            module: "library".into(),
+            dto_module: "library".into(),
+            ops: vec![],
+            fields: vec![],
+            child_structs: vec![],
+            codelist_names: vec![],
+            structured_imports: vec![],
+            bindings: HashMap::new(),
+        };
+        let (classes, codelists, project) = (empty_classes(), empty_codelists(), test_project());
+        let mut code = CodeWriter::new();
+        let mut failures = Vec::new();
+        emit_operation(
+            &mut code,
+            &surface,
+            &op,
+            &ArenaIndex::new(),
+            &sig_ctx(&classes, &codelists, &project),
+            &mut failures,
+        );
+        assert!(failures.is_empty(), "{failures:?}");
+        let out = code.into_string();
+        assert!(
+            out.contains(
+                "    /// Account-user mapping hook.\n    /// Validation runs at runtime.\n"
+            ),
+            "every description line must carry `///`:\n{out}"
         );
     }
 
