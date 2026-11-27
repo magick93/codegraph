@@ -3782,6 +3782,40 @@ heading KATs; the seed-shape KAT), the route-context pins
 carries `channelCode` → the DTO's `channel`) + `GuardedRefundDetail`.
 Full record: `docs/tdd/835-ifml-e2e-app-contract.tdd.md`.
 
+**The seed body IS the create DTO's body (issue #806 residual, #809)**:
+#836 fixed the field SPELLING; the next bump showed the body can still be
+wrong in four ways, and all four 422 the seed (`missing field` /
+`unknown field`) or FK-fail it. `ifml/e2e_test/body.rs::plan_seed` derives
+the body from `ddd::dto::build_dto_context` (the DTO plane's OWN create
+surface — never a second copy), projecting the DSL entries onto it:
+required members are sampled (identity / natural-key parts included — a
+composite `id` key's parts have no serde default, the entity-plane #479
+rule), a composite wrapper expands to its collapsed columns
+(`amount_cents`/`amount_currency`), keys the DTO does not declare are
+dropped, and every reference is dep-seeded rather than posted as a literal
+— the DTO's own kind, or the name-convention shape (`vendor_id` with no
+`$ref`/edge) resolved by ONE shared resolver (`src/fk_convention.rs`, also
+read by the entity plane's `testData()` deps and by the hurl contract's FK
+preamble, which previously scaffolded a literal uuid). A required reference
+that cannot be seeded (no API surface / no create / a cycle) is a
+`SeedGap`: the spec that would open the record is omitted, one
+`warning: ifml e2e: seed gap — …` prints, and the gap lands in
+`tests/ifml/omitted-specs.md` — never a seed the plane knows will 4xx. The
+prop-driven passes stay as the fallback (no schema/domain) and were patched
+where reachable (`with_required_entries` now skips only the surrogate
+`id`; `plan_required_refs_inner` consults the convention resolver). #809's
+detach class is the same picture from the other side: the IFML
+skeleton now emits an if-absent root `+layout.svelte` (and the shell
+layouts carry it) that sets `body.hydrated`, and the POM action method
+soft-waits for it (10 s) before clicking, so a click never lands in a DOM
+the framework is replacing. Gates: `cargo test -p codegraph-generate --lib
+-- ifml::e2e_test` (9 body KATs + the POM wait pin), `--test
+ifml_auth_setup_tests` (12, incl. the composite-key + convention-FK seed
+end to end), the in-crate `fk_convention` + hurl convention pins,
+`ifml::skeleton::tests` (root layout marker), and the standing canaries
+(re-blessed for exactly `+svelte/src/routes/+layout.svelte`). Full
+record: `docs/tdd/806-ifml-seed-body-projection.tdd.md`.
+
 ### Testing layers
 
 Two layers per the TDD discipline: (a) node-free PR-CI pins

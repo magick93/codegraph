@@ -210,17 +210,13 @@ impl IfmlE2eTestGenerator {
             target_view: edge.target_container.clone(),
             row_testid,
             fixture: self
-                .attach_required_refs(
+                .seed_fixture(
                     db,
                     config,
                     api_version,
                     component.entity.as_deref(),
-                    Fixture {
-                        casing: self.dto_casing,
-                        base_path: api.base_path.clone(),
-                        entries: self.typed_fixture_entries(db, config, component).await,
-                        deps: Vec::new(),
-                    },
+                    api.base_path.clone(),
+                    self.typed_fixture_entries(db, config, component).await,
                 )
                 .await,
             target_pattern,
@@ -248,29 +244,47 @@ impl IfmlE2eTestGenerator {
             .as_deref()
             .and_then(|entity| workflow_for_entity(config, entity))
             .map(|w| w.status_field);
-        let entries = super::fixtures::strip_workflow_status(entries, status.as_deref());
-        super::fixtures::with_required_entries(
-            db,
-            config,
-            c.entity.as_deref(),
-            entries,
-            self.dto_casing,
-        )
-        .await
+        // Required members + the reference closure are the seed projection's
+        // job (`seed_fixture`, issue #806) — this helper only supplies the
+        // component's DSL values in the model spelling.
+        super::fixtures::strip_workflow_status(entries, status.as_deref())
     }
 
-    /// Attach the required-FK parent seeds to a fixture (P1): parents are
-    /// created through their own API before the child and their id is wired
-    /// into the child body.
-    async fn attach_required_refs(
+    /// Build a seed fixture through the ONE projection (issue #806): the
+    /// create body comes from the DTO plane's own create surface, required
+    /// references are dep-seeded, and required fields that cannot be seeded
+    /// are recorded as [`SeedGap`]s (run-path WARN + `omitted-specs.md`).
+    /// A family whose fixture carries a gap omits its spec — the plane never
+    /// emits a seed it knows will 4xx.
+    async fn seed_fixture(
         &self,
         db: &dyn GraphQuerier,
         config: &DomainConfig,
         api_version: &str,
         entity: Option<&str>,
-        fixture: Fixture,
+        base_path: String,
+        entries: Vec<(String, String)>,
     ) -> Fixture {
-        super::fixtures::add_required_refs(db, config, api_version, entity, fixture).await
+        let fixture = super::fixtures::seed(
+            db,
+            config,
+            api_version,
+            entity,
+            entries,
+            self.dto_casing,
+            base_path,
+        )
+        .await;
+        if !fixture.gaps.is_empty() {
+            let mut sink = self
+                .seed_gaps
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for gap in &fixture.gaps {
+                sink.push(gap.clone());
+            }
+        }
+        fixture
     }
 
     pub(super) async fn build_validation_test(
@@ -335,17 +349,13 @@ impl IfmlE2eTestGenerator {
             original,
             updated,
             fixture: self
-                .attach_required_refs(
+                .seed_fixture(
                     db,
                     config,
                     api_version,
                     c.entity.as_deref(),
-                    Fixture {
-                        casing: self.dto_casing,
-                        base_path: api.base_path,
-                        entries: self.typed_fixture_entries(db, config, c).await,
-                        deps: Vec::new(),
-                    },
+                    api.base_path,
+                    self.typed_fixture_entries(db, config, c).await,
                 )
                 .await,
             target_pattern: url_pattern(&view_route(&save.0), &save.1),
@@ -446,17 +456,13 @@ impl IfmlE2eTestGenerator {
             is_collection: is_collection(c),
             transition,
             fixture: self
-                .attach_required_refs(
+                .seed_fixture(
                     db,
                     config,
                     api_version,
                     c.entity.as_deref(),
-                    Fixture {
-                        casing: self.dto_casing,
-                        base_path: api.base_path,
-                        entries: self.valid_fixture_entries(db, config, c, &workflow).await,
-                        deps: Vec::new(),
-                    },
+                    api.base_path,
+                    self.valid_fixture_entries(db, c, &workflow).await,
                 )
                 .await,
         })
@@ -472,26 +478,20 @@ impl IfmlE2eTestGenerator {
     pub(super) async fn valid_fixture_entries(
         &self,
         db: &dyn GraphQuerier,
-        config: &DomainConfig,
         c: &IfmlComponent,
         workflow: &RenderWorkflow,
     ) -> Vec<(String, String)> {
         let entries = fixture_entries(c);
-        let entries = super::fixtures::strip_workflow_status(entries, Some(&workflow.status_field));
-        let mut entries = entries;
+        let mut entries =
+            super::fixtures::strip_workflow_status(entries, Some(&workflow.status_field));
         for (field, value) in entries.iter_mut() {
             if let Some(code) = codelist_fixture_value(db, c.entity.as_deref(), field).await {
                 *value = format!("'{}'", js_string(&code));
             }
         }
-        super::fixtures::with_required_entries(
-            db,
-            config,
-            c.entity.as_deref(),
-            entries,
-            self.dto_casing,
-        )
-        .await
+        // Required members + the reference closure are the seed projection's
+        // job (`seed_fixture`, issue #806).
+        entries
     }
 
     /// Actor-persona guard tests for a view: one per human actor, asserting
@@ -672,17 +672,13 @@ impl IfmlE2eTestGenerator {
                 crate::ux::plan::CollectionPlan::Table => None,
             };
             let fixture = self
-                .attach_required_refs(
+                .seed_fixture(
                     db,
                     config,
                     api_version,
                     c.entity.as_deref(),
-                    Fixture {
-                        casing: self.dto_casing,
-                        base_path: api.base_path,
-                        entries,
-                        deps: Vec::new(),
-                    },
+                    api.base_path,
+                    entries,
                 )
                 .await;
             return Some(UxViewTest {
@@ -903,17 +899,13 @@ impl IfmlE2eTestGenerator {
                         target_view: target.clone(),
                         target_pattern: pattern,
                         seed: Some(
-                            self.attach_required_refs(
+                            self.seed_fixture(
                                 db,
                                 config,
                                 api_version,
                                 c.entity.as_deref(),
-                                Fixture {
-                                    casing: self.dto_casing,
-                                    base_path: api.base_path,
-                                    entries: self.valid_journey_entries(db, config, c).await,
-                                    deps: Vec::new(),
-                                },
+                                api.base_path,
+                                self.valid_journey_entries(db, config, c).await,
                             )
                             .await,
                         ),
@@ -1008,24 +1000,23 @@ impl IfmlE2eTestGenerator {
             if !api.has_create {
                 continue;
             }
-            return Some((
-                Some(param.to_string()),
-                Some(
-                    self.attach_required_refs(
-                        db,
-                        config,
-                        api_version,
-                        c.entity.as_deref(),
-                        Fixture {
-                            casing: self.dto_casing,
-                            base_path: api.base_path,
-                            entries: self.valid_journey_entries(db, config, c).await,
-                            deps: Vec::new(),
-                        },
-                    )
-                    .await,
-                ),
-            ));
+            let fixture = self
+                .seed_fixture(
+                    db,
+                    config,
+                    api_version,
+                    c.entity.as_deref(),
+                    api.base_path,
+                    self.valid_journey_entries(db, config, c).await,
+                )
+                .await;
+            // Issue #806: a record we cannot create cannot be opened — the
+            // caller records the omission (auth: `omitted-specs.md`; journeys:
+            // no journey for this view) instead of emitting a seed that 4xxs.
+            if fixture.unseedable().is_some() {
+                return None;
+            }
+            return Some((Some(param.to_string()), Some(fixture)));
         }
         None
     }
@@ -1051,15 +1042,10 @@ impl IfmlE2eTestGenerator {
             .as_deref()
             .and_then(|entity| workflow_for_entity(config, entity))
             .map(|w| w.status_field);
-        let entries = super::fixtures::strip_workflow_status(entries, status.as_deref());
-        super::fixtures::with_required_entries(
-            db,
-            config,
-            c.entity.as_deref(),
-            entries,
-            self.dto_casing,
-        )
-        .await
+        // Required members + the reference closure are the seed projection's
+        // job (`seed_fixture`, issue #806) — this helper only supplies the
+        // component's DSL values in the model spelling.
+        super::fixtures::strip_workflow_status(entries, status.as_deref())
     }
 }
 
@@ -1374,17 +1360,13 @@ impl IfmlE2eTestGenerator {
                 (parent_fixture, Some(add))
             } else {
                 (
-                    self.attach_required_refs(
+                    self.seed_fixture(
                         db,
                         config,
                         api_version,
                         component.entity.as_deref(),
-                        Fixture {
-                            casing: self.dto_casing,
-                            base_path: api.base_path.clone(),
-                            entries: self.typed_fixture_entries(db, config, component).await,
-                            deps: Vec::new(),
-                        },
+                        api.base_path.clone(),
+                        self.typed_fixture_entries(db, config, component).await,
                     )
                     .await,
                     None,
@@ -1483,6 +1465,7 @@ impl IfmlE2eTestGenerator {
                 entries: parent_entries,
                 casing: self.dto_casing,
                 deps: Vec::new(),
+                gaps: Vec::new(),
             },
         )
         .await;
@@ -1492,17 +1475,13 @@ impl IfmlE2eTestGenerator {
         // under the `add` prefix so the body's placeholders bind inside
         // the consuming test.
         let child_fixture = self
-            .attach_required_refs(
+            .seed_fixture(
                 db,
                 config,
                 api_version,
                 component.entity.as_deref(),
-                Fixture {
-                    casing: self.dto_casing,
-                    base_path: api.base_path.clone(),
-                    entries: self.typed_fixture_entries(db, config, component).await,
-                    deps: Vec::new(),
-                },
+                api.base_path.clone(),
+                self.typed_fixture_entries(db, config, component).await,
             )
             .await;
         let child_dep_setup = child_fixture.dep_setup_js("add", "\t\t");

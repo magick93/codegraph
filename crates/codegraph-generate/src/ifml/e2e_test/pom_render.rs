@@ -580,6 +580,18 @@ pub(super) fn render_actions_section(
             "  async action{pascal}{op_pascal}(): Promise<void> {{\n",
             op_pascal = to_pascal_case(&action.op_snake),
         ));
+        // Issue #809: a click that lands before hydration completes (or while
+        // the client guard re-runs after it) hits a control the framework is
+        // about to replace, which Playwright reports as "element was detached
+        // from the DOM, retrying" until the timeout. Waiting for the app's
+        // hydration marker first makes the interaction land on the settled
+        // DOM; the wait is soft so a consumer layout without the marker keeps
+        // working (the click's own actionability wait still applies). The
+        // cap is short: the marker is emitted by every IFML root/shell layout,
+        // so only a consumer-owned layout can miss it.
+        s.push_str(
+            "    await this.page.waitForSelector('body.hydrated', { timeout: 10_000 }).catch(() => undefined);\n",
+        );
         s.push_str(&format!(
             "    await this.{component}Action{op_pascal}().click();\n  }}\n\n",
             op_pascal = to_pascal_case(&action.op_snake),

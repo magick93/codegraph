@@ -876,6 +876,18 @@ testids = { root = "card" }
 async fn form_fixtures_derive_typed_values_from_spec_fields() {
     let engine = MockEngine::new();
     engine.ingest_schema(&customer_schema()).await.unwrap();
+    // Issue #806: the seed body is the create DTO's surface, so a field the
+    // schema does not declare never reaches the wire (`deny_unknown_fields`
+    // would 422 it). The typed spec below declares `name`, so the entity
+    // carries it.
+    engine
+        .ingest_property(
+            "CustomerType",
+            "sales/customer_type.json",
+            &property("name", "String"),
+        )
+        .await
+        .unwrap();
     engine
         .ingest_property(
             "CustomerType",

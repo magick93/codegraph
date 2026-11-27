@@ -708,6 +708,10 @@ pub(crate) struct WorkflowJourney {
     pub transition_to: String,
     pub creator: String,
     pub driver: String,
+    /// Required create-body fields the seed could not fill (issue #806): a
+    /// journey whose seed cannot be created is dropped, recorded in
+    /// `omitted-specs.md`.
+    pub gaps: Vec<super::fixtures::SeedGap>,
 }
 
 /// The shell nav-click journey payload: entry view plus the persona it
@@ -797,25 +801,16 @@ pub(crate) async fn build_workflow_journeys(
                 entries,
                 Some(workflow.status_field.as_str()),
             );
-            let entries = super::fixtures::with_required_entries(
-                db,
-                config,
-                Some(entity),
-                entries,
-                dto_casing,
-            )
-            .await;
-            let fixture = super::fixtures::add_required_refs(
+            // Issue #806: the create body comes from the ONE seed projection
+            // (DTO create surface + required members + the reference closure).
+            let fixture = super::fixtures::seed(
                 db,
                 config,
                 api_version,
                 Some(entity),
-                Fixture {
-                    base_path: String::new(),
-                    entries,
-                    casing: dto_casing,
-                    deps: Vec::new(),
-                },
+                entries,
+                dto_casing,
+                String::new(),
             )
             .await;
             out.push(WorkflowJourney {
@@ -828,6 +823,7 @@ pub(crate) async fn build_workflow_journeys(
                 transition_to: to,
                 creator,
                 driver,
+                gaps: fixture.gaps.clone(),
             });
         }
     }
@@ -1249,6 +1245,7 @@ mod seed_assert_tests {
                 base_path: "/api/v1/billing/refund_request".to_string(),
                 entries: vec![("title".to_string(), "'Refund'".to_string())],
                 deps: Vec::new(),
+                gaps: Vec::new(),
             }),
         };
         let rendered = render_auth_spec(&spec, "../e2e/personas");

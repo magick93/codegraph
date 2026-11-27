@@ -5,7 +5,18 @@
 <script lang="ts">
 	import {{ shell.import.export_name }} from '{{ shell.import.import_path }}';
 
+	// (The shadcn pack override keeps the hydration marker the shell layout
+	// carries — both layouts must signal it or action clicks race hydration.)
+	import { onMount } from 'svelte';
+	import { afterNavigate } from '$app/navigation';
+
 	let { children }: { children: import('svelte').Snippet } = $props();
+
+	// Hydration marker (issue #809): the generated page classes wait for it
+	// before driving an action control, so a click never lands in a DOM the
+	// framework is about to replace.
+	onMount(() => document.body.classList.add('hydrated'));
+	afterNavigate(() => document.body.classList.add('hydrated'));
 </script>
 
 <{{ shell.import.export_name }} data-slot="navigation-menu"{% if shell.testid %} testid="{{ shell.testid }}"{% endif %}>

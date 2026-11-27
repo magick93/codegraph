@@ -72,6 +72,7 @@ fn modal_click_through_renders_wrapper_and_close_assertions() {
                 base_path: "/api/v1/sales/customer".to_string(),
                 entries: vec![],
                 deps: Vec::new(),
+                gaps: Vec::new(),
             },
             target_pattern: "/customerdialog\\?dialog=open".to_string(),
             modal: Some(ModalCloseAssertions {
@@ -151,6 +152,7 @@ fn spec_render_includes_all_test_kinds() {
                 base_path: "/api/v1/sales/customer".to_string(),
                 entries: vec![("name".to_string(), "'Test name'".to_string())],
                 deps: Vec::new(),
+                gaps: Vec::new(),
             },
             target_pattern: "/customerdetail\\?customerId=[^&]+".to_string(),
             modal: None,
@@ -216,6 +218,7 @@ fn ux_test_fixture() -> UxViewTest {
                 ),
             ],
             deps: Vec::new(),
+            gaps: Vec::new(),
         },
         table_testid: "grid-table".to_string(),
         row_testid: "grid-row".to_string(),
@@ -969,6 +972,7 @@ fn view_journey_spec_walks_hops_and_arrivals() {
             base_path: "/api/v1/sales/customer".to_string(),
             entries: vec![("name".to_string(), "'Test name'".to_string())],
             deps: Vec::new(),
+            gaps: Vec::new(),
         }),
         fills: Vec::new(),
     };
@@ -983,6 +987,7 @@ fn view_journey_spec_walks_hops_and_arrivals() {
             base_path: "/api/v1/sales/customer".to_string(),
             entries: vec![("name".to_string(), "'Test name'".to_string())],
             deps: Vec::new(),
+            gaps: Vec::new(),
         }],
         paths: vec![JourneyPath {
             views: vec![
@@ -1205,6 +1210,7 @@ fn detail_auth_specs_are_seeded_or_explicitly_omitted() {
         entries: vec![("title".to_string(), "'Test title'".to_string())],
         casing: DtoKeyCasing::default(),
         deps: Vec::new(),
+        gaps: Vec::new(),
     };
     let seeded = super::auth::build_auth_spec(
         &detail_vc,
@@ -1272,6 +1278,22 @@ fn action_plan_renders_pom_action_methods() {
         rendered.contains("async actionInfoEscalate(): Promise<void>"),
         "click method missing:\n{rendered}"
     );
+    // Issue #809: the click waits out hydration first — a control replaced
+    // under the cursor is Playwright's "element was detached from the DOM,
+    // retrying" loop.
+    let click_body = rendered
+        .split("async actionInfoEscalate(): Promise<void> {")
+        .nth(1)
+        .expect("click body");
+    let click_body = click_body.split("\n  }").next().unwrap_or_default();
+    assert!(
+        click_body.contains("waitForSelector('body.hydrated'"),
+        "the action drive must wait out hydration:\n{rendered}"
+    );
+    assert!(
+        click_body.contains("this.infoActionEscalate().click()"),
+        "{rendered}"
+    );
     assert!(
         rendered.contains("infoActionError(): Locator"),
         "error-span accessor missing:\n{rendered}"
@@ -1314,6 +1336,7 @@ fn action_spec_renders_legs_through_the_pom() {
                     ("escalation".to_string(), "'none'".to_string()),
                 ],
                 deps: Vec::new(),
+                gaps: Vec::new(),
             },
             acts: vec![
                 ActionAct {
@@ -1393,6 +1416,7 @@ fn guarded_action_specs_seed_the_permitted_persona() {
                 base_path: "/api/v1/core/position".to_string(),
                 entries: vec![("title".to_string(), "'Seed title'".to_string())],
                 deps: Vec::new(),
+                gaps: Vec::new(),
             },
             acts: vec![
                 ActionAct {
@@ -1569,6 +1593,7 @@ fn collection_add_spec_drives_the_pom_method_with_the_parent_fixture() {
                 base_path: "/api/v1/payroll/pay-run".to_string(),
                 entries: vec![("pay_run_id".to_string(), "'ws692-parent'".to_string())],
                 deps: Vec::new(),
+                gaps: Vec::new(),
             },
             acts: vec![
                 ActionAct {

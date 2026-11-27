@@ -1549,13 +1549,22 @@ testids = { root = "side-nav" }
     );
 }
 
+/// No shell mapping ⇒ the ROUTE generator emits no shell layout. The
+/// skeleton's hydration-marker layout (issue #809) is still written — it
+/// carries no shell markup, and the page classes' action drive waits for the
+/// marker it sets.
 #[tokio::test]
-async fn no_shell_mapping_emits_no_layout() {
+async fn no_shell_mapping_emits_no_shell_layout() {
     let dir = tempfile::tempdir().unwrap();
     let svelte = generate_svelte(dir.path(), SHELL_IFML).await;
+    let layout = read(&svelte, "src/routes/+layout.svelte");
     assert!(
-        !svelte.join("src/routes/+layout.svelte").exists(),
-        "no shell mapping must mean no layout emission"
+        layout.contains("document.body.classList.add('hydrated')"),
+        "the skeleton layout carries only the hydration marker:\n{layout}"
+    );
+    assert!(
+        !layout.contains("<Nav") && !layout.contains("shell.import"),
+        "no shell mapping must mean no shell markup:\n{layout}"
     );
 }
 
@@ -1633,10 +1642,8 @@ async fn without_design_system_no_pack_template_content_is_emitted() {
         &[],
     )
     .await;
-    assert!(
-        !svelte.join("src/routes/+layout.svelte").exists(),
-        "pack-less runs keep builtin emission behavior"
-    );
+    // The skeleton's hydration layout (issue #809) is the ONE layout a
+    // pack-less run emits; it must not carry pack content (checked below).
     for entry in walkdir::WalkDir::new(&svelte)
         .into_iter()
         .filter_map(|e| e.ok())
