@@ -350,24 +350,34 @@ async fn main() -> Result<()> {
             graph_artifact,
             emit_graph,
             graph_reachability,
-        } => codegraph::init::commands::cmd_doctor(&codegraph::init::commands::DoctorArgs {
-            config,
-            schemas,
-            classifier,
-            profiles_config,
-            mox_files,
-            rosetta_files,
-            ddd_files,
-            evt_files,
-            deploy_files,
-            ifml_files,
-            extension_points,
-            fail_on_findings,
-            graph_artifact,
-            emit_graph,
-            graph_reachability,
-        })
-        .map(|_summary| ())
-        .map_err(|e| codegraph::error::Error::Config(format!("doctor failed: {e}"))),
+        } => {
+            // Surface the revs this wrapper was rendered from (issue #602):
+            // `codegraph doctor` compares the template rev against its own
+            // to flag a drifted scaffold, so the reader can see both sides.
+            println!(
+                "INFO wrapper — codegraph rev {}, project templates {}",
+                if CODEGRAPH_REV.is_empty() { "(local path deps)" } else { CODEGRAPH_REV },
+                CODEGRAPH_TEMPLATE_REV
+            );
+            codegraph::init::commands::cmd_doctor(&codegraph::init::commands::DoctorArgs {
+                config,
+                schemas,
+                classifier,
+                profiles_config,
+                mox_files,
+                rosetta_files,
+                ddd_files,
+                evt_files,
+                deploy_files,
+                ifml_files,
+                extension_points,
+                fail_on_findings,
+                graph_artifact,
+                emit_graph,
+                graph_reachability,
+            })
+            .map(|_summary| ())
+            .map_err(|e| codegraph::error::Error::Config(format!("doctor failed: {e}")))
+        }
     }
 }

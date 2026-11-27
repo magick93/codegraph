@@ -72,4 +72,18 @@ fn scaffolded_wrapper_compiles_against_the_local_checkout() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+
+    // Issue #602: a fresh scaffold's first build must be warning-free —
+    // every consumer sees the wrapper's diagnostics. Cargo replays cached
+    // diagnostics on a warm target dir, so a warm rerun still sees them.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let wrapper_warnings: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("warning: `demo-app-graph`") || l.contains("demo-app-graph/src/"))
+        .collect();
+    assert!(
+        wrapper_warnings.is_empty(),
+        "the scaffolded wrapper must compile with zero warnings (issue #602):\n\
+         {wrapper_warnings:#?}\n--- stderr ---\n{stderr}"
+    );
 }
