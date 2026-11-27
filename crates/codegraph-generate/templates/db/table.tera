@@ -73,7 +73,17 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {{ child.schema_name }}.{{ child.t
 
 ALTER TABLE {{ child.schema_name }}.{{ child.table_name | quote_pg }} ADD CONSTRAINT {{ ("fk_" ~ child.table_name ~ "_parent") | truncate_pg }} FOREIGN KEY ({{ child.parent_fk_column }}) REFERENCES {{ child.parent_schema }}.{{ child.parent_table | quote_pg }}(id) ON DELETE CASCADE;
 
-CREATE INDEX {{ ("idx_" ~ child.table_name ~ "_parent") | truncate_pg }} ON {{ child.schema_name }}.{{ child.table_name | quote_pg }}({{ child.parent_fk_column }});
+CREATE INDEX {{ ("idx_" ~ child.table_name ~ "_parent") | truncate_pg }} ON {{ child.schema_name }}.{{ child.table_name | quote_pg }}({{ child.parent_fk_column }});{% if child.media_reference and not is_tenant_scoped %}
+
+-- Media overwrite-in-place (issue #701), GLOBAL parent (no RLS migration):
+-- collapse pre-#701 duplicates to the newest row per parent (`id DESC`, the
+-- display rule), then the UNIQUE index the upload handler's upsert targets.
+DELETE FROM {{ child.schema_name }}.{{ child.table_name | quote_pg }} AS older
+ USING {{ child.schema_name }}.{{ child.table_name | quote_pg }} AS newer
+ WHERE older.{{ child.parent_fk_column }} = newer.{{ child.parent_fk_column }}
+   AND older.id < newer.id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS {{ ("uq_" ~ child.table_name ~ "_" ~ child.parent_fk_column) | truncate_pg }} ON {{ child.schema_name }}.{{ child.table_name | quote_pg }}({{ child.parent_fk_column }});{% endif %}
 {% for fk in child.foreign_keys %}
 {% set child_fk_constraint_name = ("fk_" ~ child.table_name ~ "_" ~ fk.column_name) | truncate_pg %}
 DO $$ BEGIN

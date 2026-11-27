@@ -26,6 +26,7 @@ fn child(columns: Vec<ColumnDef>) -> ChildTableDef {
         foreign_keys: vec![],
         check_constraints: vec![],
         child_tables: vec![],
+        media_reference: false,
     }
 }
 
@@ -197,6 +198,7 @@ fn trust_parent_context() -> DdlContext {
         has_demo_flag: false,
         append_only: false,
         tenant_backfill: None,
+        media_unique_parent_fk: None,
     }
 }
 
@@ -230,6 +232,7 @@ fn trust_junction_child() -> ChildTableDef {
         foreign_keys: vec![],
         check_constraints: vec![],
         child_tables: vec![],
+        media_reference: false,
     }
 }
 
@@ -453,6 +456,7 @@ fn rls_role_enforced_policies_use_configured_minima() {
         has_demo_flag: false,
         append_only: false,
         tenant_backfill: None,
+        media_unique_parent_fk: None,
     };
     let sql = render_template_with_project(&tera, "db/rls.tera", &ctx, &project).unwrap();
 
@@ -534,6 +538,7 @@ fn test_context() -> DdlContext {
         has_demo_flag: false,
         append_only: false,
         tenant_backfill: None,
+        media_unique_parent_fk: None,
     }
 }
 
@@ -785,4 +790,67 @@ fn rendered_table_ddl_quotes_reserved_column_names() {
         sql.contains("\n    \"name\" TEXT NOT NULL"),
         "rendered migration must quote reserved-word columns: {sql}"
     );
+}
+
+/// Issue #701: a MEDIA child table is one reference row per parent. Its RLS
+/// migration dedups (newest per parent) then builds the UNIQUE index, inside
+/// the NO FORCE window; a non-media child renders byte-identically to before.
+#[test]
+fn media_child_rls_dedups_then_indexes_and_non_media_is_untouched() {
+    let parent = trust_parent_context();
+    let plain = trust_junction_child();
+    let mut media = trust_junction_child();
+    media.media_reference = true;
+
+    let plain_sql = render_ddl_template("db/rls.tera", &child_table_rls_context(&parent, &plain));
+    let media_sql = render_ddl_template("db/rls.tera", &child_table_rls_context(&parent, &media));
+    assert!(!plain_sql.contains("UNIQUE INDEX"), "{plain_sql}");
+
+    let dedup = media_sql
+        .find("DELETE FROM core.trust_settlor_ids AS older")
+        .expect("dedup");
+    let index = media_sql
+        .find(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_trust_settlor_ids_trust_id ON \
+             core.trust_settlor_ids(trust_id);",
+        )
+        .expect("unique index");
+    let force = media_sql
+        .find("\nALTER TABLE core.trust_settlor_ids FORCE ROW LEVEL SECURITY;")
+        .expect("force");
+    assert!(dedup < index && index < force, "{media_sql}");
+    // Removing the media block reproduces the plain child migration exactly.
+    let block_start = media_sql
+        .find("\n\n-- Media overwrite-in-place")
+        .expect("block");
+    let block_end = index + media_sql[index..].find(';').expect("index terminator") + 1;
+    let stripped = format!("{}{}", &media_sql[..block_start], &media_sql[block_end..]);
+    assert_eq!(stripped, plain_sql);
+}
+
+/// Issue #701, the defensive GLOBAL-parent branch (no RLS migration exists
+/// there, so the table migration owns the dedup + index).
+#[test]
+fn media_child_of_a_global_parent_indexes_in_the_table_migration() {
+    let mut media = trust_junction_child();
+    media.media_reference = true;
+    let mut global = trust_parent_context();
+    global.is_tenant_scoped = false;
+    global.child_tables = vec![media.clone()];
+    let sql = render_ddl_template("db/table.tera", &global);
+    let dedup = sql
+        .find("DELETE FROM core.trust_settlor_ids AS older")
+        .expect("dedup");
+    let index = sql
+        .find("CREATE UNIQUE INDEX IF NOT EXISTS uq_trust_settlor_ids_trust_id")
+        .expect("unique index");
+    assert!(dedup < index, "{sql}");
+
+    // A tenant-scoped parent's table migration carries neither (the RLS file
+    // owns them), and a non-media child never does.
+    let mut scoped = trust_parent_context();
+    scoped.child_tables = vec![media];
+    assert!(!render_ddl_template("db/table.tera", &scoped).contains("UNIQUE INDEX"));
+    global.child_tables = vec![trust_junction_child()];
+    assert!(!render_ddl_template("db/table.tera", &global).contains("UNIQUE INDEX"));
 }

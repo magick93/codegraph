@@ -105,7 +105,38 @@ pub(crate) fn child_table_rls_context(parent: &DdlContext, child: &ChildTableDef
             parent_table: child.parent_table.clone(),
             parent_fk_column: child.parent_fk_column.clone(),
         }),
+        // Media child tables only (issue #701).
+        media_unique_parent_fk: child
+            .media_reference
+            .then(|| child.parent_fk_column.clone()),
     }
+}
+
+/// The child tables of `schema_title` that carry a MEDIA field (issue #701),
+/// resolved through the media plan's own derivation (`MediaFieldPlan.
+/// child_table`) so the DDL and the upload handler cannot disagree about
+/// which tables are media references. Empty when the domain declares no
+/// `[media]`.
+async fn media_child_tables(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    schema_title: &str,
+) -> Result<std::collections::BTreeSet<String>> {
+    let Some(media) = config.domains.get(domain).and_then(|d| d.media.as_ref()) else {
+        return Ok(std::collections::BTreeSet::new());
+    };
+    let titles = [schema_title.to_string()];
+    let plan = crate::media::plan::build_media_plan_for_domain(
+        db,
+        config,
+        domain,
+        media,
+        &config.defaults.type_suffix,
+        &titles,
+    )
+    .await?;
+    Ok(plan.fields.into_iter().map(|f| f.child_table).collect())
 }
 
 /// Post-process column types and defaults through the dialect.
@@ -255,6 +286,14 @@ impl EntityGenerator for DdlGenerator {
                 });
             }
             ctx.has_updated_at = true;
+        }
+
+        // Media overwrite-in-place (issue #701): mark the media child tables
+        // on the MODEL context (unquoted names — the plan's spelling) before
+        // the render copy is taken.
+        let media_children = media_child_tables(db, config, domain, schema_title).await?;
+        for child in &mut ctx.child_tables {
+            child.media_reference = media_children.contains(&child.table_name);
         }
 
         // Render-time quoting of reserved-word identifiers (#451): the

@@ -118,6 +118,8 @@ pub(in crate::db::ddl) fn composition_node_to_child_table(
         foreign_keys,
         check_constraints,
         child_tables: nested_children,
+        // Set by the DDL generator from the media plan (issue #701).
+        media_reference: false,
     }
 }
 

@@ -63,7 +63,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use codegraph_ops::db::{psql_exec, psql_query};
+use codegraph_ops::db::{psql_exec, psql_exec_file, psql_query};
 use codegraph_ops::pg::PgTarget;
 use serde_json::Value;
 
@@ -922,6 +922,9 @@ async fn media_plane_end_to_end_over_rustfs() {
     // running app serves nothing for a soft-deleted parent and leaves the
     // reference row + the object intact.
     run_soft_delete_leg(&base, &target, &rustfs, &key_a).await;
+    // Issue #701: overwrite-in-place is ENFORCED — concurrent uploads land
+    // one row, and a pre-#701 duplicate collapses on re-migrate.
+    run_overwrite_enforcement_legs(&base, &target, &key_a, &app_dir.join("migrations")).await;
 
     // ── Issue #744: the soft-deleted parent serves no media (#699) ──────
     // #699's pins are tier-local (the plan flag cross-checked against the
@@ -1373,6 +1376,132 @@ async fn run_legs(
 /// route); the fix extracts `(parent_id, id)` AND requires the contact row's
 /// `person_id` to equal the URL parent — otherwise a caller could pair its own
 /// person id with another org's contact id (an IDOR).
+/// Issue #701. Before the fix the upload ran DELETE + INSERT in one
+/// transaction with no uniqueness, so two uploads could interleave into two
+/// reference rows; now the child carries a UNIQUE index on its parent FK and
+/// the upload is one `ON CONFLICT … DO UPDATE` upsert.
+async fn run_overwrite_enforcement_legs(
+    base: &str,
+    target: &PgTarget,
+    key_a: &str,
+    migrations: &Path,
+) {
+    // ── LEG 701a — N concurrent uploads to ONE parent/field ⇒ ONE row ───
+    const UPLOADS: usize = 8;
+    let files: Vec<PathBuf> = (0..UPLOADS)
+        .map(|i| {
+            write_bytes(
+                &format!("concurrent-{i}.png"),
+                format!("PNG payload {i}").as_bytes(),
+            )
+        })
+        .collect();
+    let statuses: Vec<u16> = std::thread::scope(|scope| {
+        let handles: Vec<_> = files
+            .iter()
+            .enumerate()
+            .map(|(i, file)| {
+                scope.spawn(move || {
+                    upload(
+                        base,
+                        PARENT_A,
+                        key_a,
+                        file,
+                        "image/png",
+                        &format!("upload-concurrent-{i}"),
+                    )
+                    .status
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("upload thread"))
+            .collect()
+    });
+    assert!(
+        statuses.iter().all(|s| *s == 200),
+        "every concurrent upload succeeds (the upsert never conflicts out): {statuses:?}"
+    );
+    let count = psql_query(
+        target,
+        &format!("SELECT count(*) FROM {CHILD_TABLE} WHERE asset_id = '{PARENT_A}';"),
+    )
+    .await
+    .expect("count probe");
+    assert_eq!(
+        count.trim(),
+        "1",
+        "{UPLOADS} concurrent uploads leave exactly ONE reference row"
+    );
+    println!("leg 701a: {UPLOADS} concurrent uploads → one reference row");
+
+    // ── LEG 701b — upgrade: a pre-#701 duplicate collapses on re-migrate ─
+    // Recreate the pre-#701 state: no index, two rows for one parent (the
+    // OWNER connection bypasses RLS). The planted row carries the largest
+    // possible id, so `id DESC` (the display rule) must keep it.
+    let rls = fs::read_dir(migrations)
+        .expect("migrations dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with("assets_asset_photo_rls.sql"))
+        })
+        .expect("the media child's RLS migration");
+    psql_exec(
+        target,
+        &format!(
+            "DROP INDEX IF EXISTS assets.uq_asset_photo_asset_id; \
+             INSERT INTO {CHILD_TABLE} (id, asset_id, platform_organization_id, url, mime_type) \
+             VALUES ('ffffffff-ffff-4fff-bfff-ffffffffffff', '{PARENT_A}', '{ORG_A}', \
+             'planted-newest', 'image/png');"
+        ),
+    )
+    .await
+    .expect("plant the pre-#701 duplicate");
+    let planted = psql_query(
+        target,
+        &format!("SELECT count(*) FROM {CHILD_TABLE} WHERE asset_id = '{PARENT_A}';"),
+    )
+    .await
+    .expect("count probe");
+    assert_eq!(planted.trim(), "2", "the duplicate is planted");
+
+    psql_exec_file(target, &rls)
+        .await
+        .expect("re-applying the child migration over a duplicate must succeed");
+    let after = psql_query(
+        target,
+        &format!(
+            "SELECT count(*)::text || '|' || max(url) FROM {CHILD_TABLE} \
+             WHERE asset_id = '{PARENT_A}';"
+        ),
+    )
+    .await
+    .expect("row probe");
+    assert_eq!(
+        after.trim(),
+        "1|planted-newest",
+        "the dedup keeps exactly the newest (id DESC) row"
+    );
+    let index = psql_query(
+        target,
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'assets' \
+         AND indexname = 'uq_asset_photo_asset_id';",
+    )
+    .await
+    .expect("index probe");
+    assert!(
+        index.contains("UNIQUE") && index.contains("(asset_id)"),
+        "the unique index on the parent FK exists after re-migrate: {index}"
+    );
+    println!(
+        "leg 701b: re-migrate collapsed the duplicate to the newest row; unique index present"
+    );
+}
+
 async fn run_nested_legs(base: &str, target: &PgTarget, rustfs: &RustFs, key_a: &str, key_b: &str) {
     let payload_a = b"\x89PNG\r\n\x1a\nnested media payload A".to_vec();
     let payload_b = b"\x89PNG\r\n\x1a\nnested media payload B".to_vec();

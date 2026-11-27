@@ -3916,6 +3916,45 @@ Gates: `media_pipeline_tests`
 route + session, presigned leg, wasm32 sea-orm-free), nightly
 `ifml_codegen_gate` T0 boot.
 
+### Media overwrite-in-place is enforced (#701)
+
+"One reference row per (parent, field)" used to be a comment: the upload ran
+`DELETE … WHERE {parent_fk} = $1 …` then `INSERT` in one transaction, which
+two concurrent uploads could interleave into TWO rows (`display` hid it with
+`ORDER BY id DESC LIMIT 1`; a direct reader of the child table did not). It is
+now a constraint plus an atomic upsert:
+
+- **DDL**: a MEDIA child table (`ChildTableDef.media_reference`, set by the
+  DDL generator from the media plan's own `MediaFieldPlan.child_table` — one
+  derivation, so the DDL and the handler cannot disagree about which tables
+  are media references) carries `CREATE UNIQUE INDEX IF NOT EXISTS
+  uq_{child_table}_{parent_fk}` on the parent FK alone (#700 already
+  guarantees the tenant equals the parent's). It is emitted in the child's
+  `_rls.sql`, inside the #700 NO FORCE window after the tenant backfill, and
+  is preceded by an idempotent **dedup that keeps the newest row per parent**
+  (`id DESC`, the display rule) — an existing deployment can already hold the
+  duplicates the race produced, and the index build would fail on them; under
+  FORCE the policies hide every row from the migration owner, so the dedup
+  must ride the same window. A GLOBAL parent (no RLS file) carries both in the
+  table migration (defensive: `is_global_entity` is constant `false` today).
+- **Upload**: `INSERT … ON CONFLICT ({parent_fk}) DO UPDATE SET {url} =
+  EXCLUDED.{url}, {mime} = EXCLUDED.{mime}` on the same scoped transaction,
+  tenant column still bound, parent gate still first; no DELETE on the upload
+  path. The object key is the deterministic overwrite-in-place key, so there
+  is no old-key cleanup to preserve.
+- **Consumer-visible upgrade**: on the next migrate, duplicate reference rows
+  are collapsed to the newest (`id DESC`) per parent. The child `_rls.sql`
+  checksum changes (the #700 precedent — a tracked-file change).
+- **Scope**: media children ONLY. Non-media `[0..1]` child tables keep the
+  repository plane's DELETE+INSERT replace race and byte-identical DDL — a
+  recorded P1 follow-up (#852).
+- Gates: `media_pipeline_tests` (`media_child_ddl_dedups_then_makes_the_parent_fk_unique`,
+  `non_media_child_ddl_is_unchanged`, `media_upload_upserts_on_the_parent_fk`),
+  the in-crate `db::ddl::tests` render KATs (incl. the global-parent branch),
+  `media_compile_tests`, and `media_runtime_tests -- --ignored` (concurrent
+  uploads → one row; a pre-#701 duplicate collapses on re-migrate and the
+  index exists).
+
 ### Postgres schema source of truth (#702)
 
 The domains.toml DOMAIN KEY is the single source of truth for every
@@ -4188,7 +4227,8 @@ axum's 2 MiB `DefaultBodyLimit`), builds + boots it
 `/tmp/opencode/ws695-target`) and drives every leg against Postgres AND the
 bucket: upload (child row carries the session org; bytes in the bucket),
 display (307 → the signed URL really serves the bytes), overwrite in place
-(one row, new bytes), remove (row + object gone), the cross-tenant denials
+(one row, new bytes; since #701 also N concurrent uploads → one row, and a
+pre-#701 duplicate collapses on re-migrate), remove (row + object gone), the cross-tenant denials
 (a foreign/other-org parent id answers 404 on upload/display/remove and
 leaves the owner's row + object untouched; org B's own upload lands under
 its own key and cannot touch org A's), and 413/415 with the generated error

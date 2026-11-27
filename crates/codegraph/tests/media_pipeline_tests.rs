@@ -612,12 +612,13 @@ async fn media_routes_ride_the_session_bundle_and_a_tenant_scoped_parent_gate() 
     media_route_module_key(module, "const PARENT_SOFT_DELETE: bool = true;");
     media_route_module_key(module, "        PARENT_SOFT_DELETE,\n");
 
-    // Every child statement carries the tenant predicate (the child table
-    // inherits the parent's tenant column): upload DELETE + INSERT column,
-    // display SELECT, remove SELECT + DELETE.
+    // Every child statement carries the tenant (the child table inherits the
+    // parent's tenant column): the upload upsert binds it as an INSERT column
+    // (#701 — no upload DELETE any more); display SELECT, remove SELECT +
+    // DELETE filter on it.
     assert_eq!(
         module.matches("platform_organization_id = $2").count(),
-        4,
+        3,
         "the child statements must carry the tenant predicate:\n{module}"
     );
     assert!(
@@ -757,19 +758,21 @@ async fn media_child_statements_filter_on_the_exact_session_tenant() {
         !module.contains("00000000-0000-0000-0000-000000000000"),
         "no media statement names the zero tenant:\n{module}"
     );
-    // Upload DELETE, display SELECT, remove SELECT, remove DELETE — all four
-    // carry the exact-org predicate.
+    // Display SELECT, remove SELECT, remove DELETE — all three carry the
+    // exact-org predicate (the upload is an upsert since #701: it binds the
+    // tenant column instead of filtering on it — pinned by
+    // `media_upload_insert_binds_the_tenant_second`).
     assert_eq!(
         module.matches("platform_organization_id = $2").count(),
-        4,
-        "all four child statements filter on the session tenant:\n{module}"
+        3,
+        "all three filtering child statements use the session tenant:\n{module}"
     );
     // No child statement filters on the parent FK alone.
     assert_eq!(
         module
             .matches("WHERE person_id = $1 AND platform_organization_id = $2")
             .count(),
-        4,
+        3,
         "every child WHERE keeps the tenant predicate:\n{module}"
     );
     // The parent gate is what makes an unscoped child statement safe, and it
@@ -2553,8 +2556,8 @@ async fn media_child_sql_rides_the_scoped_transaction_and_the_gate_gets_the_sess
     );
     assert_eq!(
         module.matches("tx.execute_raw(").count(),
-        3,
-        "exactly upload's two writes (DELETE + INSERT) and remove's DELETE ride it: {module}"
+        2,
+        "exactly upload's upsert (#701) and remove's DELETE ride it: {module}"
     );
     assert!(
         !module.contains("state.db.execute_raw(") && !module.contains("state.db.query_one_raw("),
@@ -3641,5 +3644,201 @@ async fn monolith_topology_still_emits_media_route_modules() {
     assert!(
         router.contains("media_person_avatar::upload"),
         "the router mounts the upload route: {router}"
+    );
+}
+
+// ── Issue #701: overwrite-in-place is ENFORCED ──────────────────────────
+
+/// Render the DDL generator for `PersonType` and return `(file name, sql)`.
+async fn ddl_files(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<(String, String)> {
+    use codegraph_generate::traits::EntityGenerator as _;
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let generator =
+        codegraph_generate::db::ddl::DdlGenerator::new(std::path::Path::new("/tmp/media-701-ddl"));
+    generator
+        .generate(
+            db,
+            "PersonType",
+            "core",
+            config,
+            &tera,
+            &ProjectConfig::default(),
+        )
+        .await
+        .expect("DDL generation")
+        .into_iter()
+        .map(|f| {
+            (
+                f.path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                f.content,
+            )
+        })
+        .collect()
+}
+
+/// A second, NON-media `[0..1]` value-object child on the same entity: its
+/// DDL must not move (the non-media replace race is a recorded follow-up).
+async fn ingest_non_media_child(db: &(impl GraphIngestor + GraphQuerier)) {
+    db.ingest_schema(&schema(
+        "AddressType",
+        "AddressType",
+        "value_object",
+        "address",
+        false,
+    ))
+    .await
+    .expect("address schema");
+    db.ingest_property(
+        "PersonType",
+        "PersonType",
+        &prop(
+            "address",
+            RefClassificationKind::ValueObject,
+            Some("AddressType"),
+        ),
+    )
+    .await
+    .expect("address property");
+    db.ingest_property(
+        "AddressType",
+        "AddressType",
+        &prop("line1", RefClassificationKind::EntityReference, None),
+    )
+    .await
+    .expect("address line");
+    db.ingest_edge(
+        "address::PersonType",
+        "AddressType",
+        EdgeType::ReferencesSchema,
+        None,
+    )
+    .await
+    .expect("address edge");
+}
+
+fn file<'a>(files: &'a [(String, String)], name: &str) -> &'a str {
+    files
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, sql)| sql.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "no {name} among {:?}",
+                files.iter().map(|(n, _)| n).collect::<Vec<_>>()
+            )
+        })
+}
+
+/// The media child's RLS migration collapses pre-#701 duplicates to the
+/// newest row per parent and THEN builds the UNIQUE index the upsert
+/// targets — both inside the NO FORCE window, after the #700 backfill.
+#[tokio::test]
+async fn media_child_ddl_dedups_then_makes_the_parent_fk_unique() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let files = ddl_files(&engine, &config).await;
+    let rls = file(&files, "core_person_avatar_rls.sql");
+
+    let no_force = rls
+        .find("NO FORCE ROW LEVEL SECURITY")
+        .expect("NO FORCE window");
+    let backfill = rls
+        .find("SET platform_organization_id = p.platform_organization_id")
+        .expect("#700 backfill");
+    let dedup = rls
+        .find(
+            "DELETE FROM core.person_avatar AS older\n USING core.person_avatar AS newer\n \
+             WHERE older.person_id = newer.person_id\n   AND older.id < newer.id;",
+        )
+        .unwrap_or_else(|| panic!("the newest-row-per-parent dedup:\n{rls}"));
+    let index = rls
+        .find(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_person_avatar_person_id ON \
+             core.person_avatar(person_id);",
+        )
+        .unwrap_or_else(|| panic!("the unique index on the parent FK:\n{rls}"));
+    let force = rls
+        .find("\nALTER TABLE core.person_avatar FORCE ROW LEVEL SECURITY;")
+        .expect("FORCE");
+    assert!(
+        no_force < backfill && backfill < dedup && dedup < index && index < force,
+        "order: NO FORCE → backfill → dedup → unique index → FORCE:\n{rls}"
+    );
+    // The table migration carries no second copy (the parent is tenant
+    // scoped — the RLS file owns it).
+    let table = file(&files, "core_person.sql");
+    assert!(
+        !table.contains("uq_person_avatar"),
+        "a tenant-scoped parent's index lives in the child RLS file only:\n{table}"
+    );
+}
+
+/// A non-media `[0..1]` child on the same media entity keeps its DDL
+/// byte-identical to a run without `[media]`; and without `[media]` the
+/// avatar child carries no index either.
+#[tokio::test]
+async fn non_media_child_ddl_is_unchanged() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    ingest_non_media_child(&engine).await;
+    let media = ddl_files(
+        &engine,
+        &parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml"),
+    )
+    .await;
+    let plain = ddl_files(&engine, &parse_domain_config_str(BASE_TOML).expect("toml")).await;
+
+    assert_eq!(
+        file(&media, "core_person_address_rls.sql"),
+        file(&plain, "core_person_address_rls.sql"),
+        "the non-media child's RLS migration must not move"
+    );
+    assert!(!file(&media, "core_person_address_rls.sql").contains("CREATE UNIQUE INDEX"));
+    assert!(
+        !file(&plain, "core_person_avatar_rls.sql").contains("CREATE UNIQUE INDEX"),
+        "no [media] ⇒ no media index"
+    );
+    assert_eq!(
+        file(&media, "core_person.sql"),
+        file(&plain, "core_person.sql"),
+        "the table migration does not move for a tenant-scoped parent"
+    );
+}
+
+/// The upload is ONE atomic upsert targeting that index — no DELETE on the
+/// upload path, so two concurrent uploads cannot interleave into two rows.
+#[tokio::test]
+async fn media_upload_upserts_on_the_parent_fk() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    let start = media_route_module_key(module, "pub async fn upload(");
+    let end = start
+        + module[start..]
+            .find("\npub async fn display(")
+            .expect("display follows upload");
+    let upload = &module[start..end];
+    assert!(
+        upload.contains(
+            "ON CONFLICT (person_id) DO UPDATE SET url = EXCLUDED.url, mime_type = \
+             EXCLUDED.mime_type"
+        ),
+        "the upload upserts on the unique parent FK:\n{upload}"
+    );
+    assert!(
+        !upload.contains("DELETE FROM {CHILD_TABLE}"),
+        "no DELETE + INSERT race on the upload path:\n{upload}"
+    );
+    assert!(
+        !upload.contains("failed to clear the media reference"),
+        "the separate clear statement is gone:\n{upload}"
     );
 }
