@@ -391,6 +391,24 @@ async fn producer_events_publish_in_the_command_transaction() {
     .await
     .expect("generation over the publishing fixture must succeed");
 
+    // 1b. The catalogue's runtime-publication marks (issue #820 slice c): the
+    // planner facts reach the generated document, naming the REAL queue each
+    // event publishes on (`ProducerChannel.queue`, never a re-derived name).
+    let catalogue = fs::read_to_string(output.join("docs/events.md"))
+        .expect("the gate app emits docs/events.md");
+    for mark in [
+        "Runtime publication: published at runtime by PayRunService.approve \
+         (arm: transition; queue: events_payroll)",
+        "Runtime publication: published at runtime by PayRunService.approve \
+         (arm: transition; queue: events_audit)",
+    ] {
+        assert!(
+            catalogue.contains(mark),
+            "catalogue missing the produced mark `{mark}`:\n{catalogue}"
+        );
+    }
+    println!("gate: catalogue marks — both produced events name their queue");
+
     // 2. Scratch DB: prelude → pgmq → migrations → API key.
     let db = GateDb::create(base).await.expect("scratch database");
     db.apply_prelude().await.expect("prelude");

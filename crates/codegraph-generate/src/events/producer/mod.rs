@@ -75,18 +75,32 @@ impl ProducerPlanIndex {
     }
 }
 
-/// Build the index for a generation run (the flag gates the work).
-pub async fn plan_index_for_run(
+/// Build the run's producer report (the flag gates the work).
+///
+/// ONE planner run feeds every consumer: the publishing plane derives its
+/// [`ProducerPlanIndex`] from this report and the catalogue plane (#820
+/// slice c) reads the SAME report for its runtime-publication marks — never
+/// a second run, never a re-derivation.
+///
+/// `Some` whenever the `events_producer` flag is ON (the gate lives in
+/// `build_generator_context`) and the planner SUCCEEDED, INCLUDING the case
+/// where no operation declares an emitted event: the catalogue must still mark
+/// every declared event `not emitted`, so a zero-plan run cannot be conflated
+/// with a flag-OFF one. `None` means the flag is off (or the analysis could
+/// not run — never a guessed diagnostic), and then no marks are rendered.
+/// The publishing plane keeps its own gate: `build_generator_context` filters
+/// the derived index to non-empty, so an empty report still yields `None`
+/// `producer_plans` and byte-identical command/handler output.
+pub async fn report_for_run(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
     workers_topology: bool,
     database_target: crate::db::dialect::DatabaseTarget,
-) -> Option<Arc<ProducerPlanIndex>> {
+) -> Option<Arc<ProducerReport>> {
     let report = plan_for_graph(db, config, workers_topology, database_target)
         .await
         .ok()?;
-    let index = ProducerPlanIndex::from_report(&report);
-    (!index.is_empty()).then(|| Arc::new(index))
+    Some(Arc::new(report))
 }
 
 /// Run the planner over an arbitrary source. An error means the analysis

@@ -1,0 +1,56 @@
+// Events-producer corpus designs (issue #820 slice c).
+//
+// `ShipmentService` carries the class A/C shapes: one clean patch emission,
+// one operation per first-blocking refusal (R1 near miss, R1 no candidate,
+// R2, R3, R9 no machine, R7) and the two no-runtime-site shapes (a
+// `protected` op and a `findAll` seam) so the "no partial publish" claim
+// is evidenced by the refusal rather than a silently skipped emission.
+// `JobService` carries class B: a bound transition with the context facts.
+import "corpus.mox";
+
+application Corpus {
+    base nz.example.corpus
+
+    module corpus {
+        entity ShipmentType scaffold repository ShipmentRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+
+        entity JobType scaffold repository JobRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+
+        machine jobState: JobState {
+            initial Queued;
+            Queued -> Running via Start;
+            Running -> Done via Finish;
+            terminal Done;
+        }
+
+        service ShipmentService {
+            inject ShipmentRepository;
+
+            book => ShipmentRepository.save emits ShipmentBooked;
+            recordStatus => ShipmentRepository.save emits ShipmentStatusRecorded;
+            recordMystery => ShipmentRepository.save emits ShipmentMystery;
+            recordNote => ShipmentRepository.save emits ShipmentNoted;
+            recordWeight => ShipmentRepository.save emits ParcelWeighed;
+            guessState => ShipmentRepository.save emits ShipmentStateGuessed;
+            protected archive => ShipmentRepository.save emits ShipmentArchived;
+            browse => ShipmentRepository.findAll emits ShipmentBrowsed;
+        }
+
+        service JobService {
+            inject JobRepository;
+
+            start => JobRepository.save emits JobStarted transition Start;
+            mislabel => JobRepository.save emits JobMislabelled;
+        }
+    }
+}

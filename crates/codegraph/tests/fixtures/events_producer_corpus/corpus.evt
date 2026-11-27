@@ -1,0 +1,88 @@
+// Events-producer corpus contracts (issue #820 slice c): one event per class,
+// each carrying the shape the planner's first blocker keys on.
+import "corpus.mox"
+
+// Class A — a clean record payload on the plain-patch arm.
+event ShipmentBooked version "1.0.0" {
+    reference: String;
+    amount: String;
+}
+
+// R1 — `statusCode` is one `_code` strip away from the record's `status`.
+event ShipmentStatusRecorded version "1.0.0" {
+    statusCode: String;
+}
+
+// R1 — nothing within edit distance 2.
+event ShipmentMystery version "1.0.0" {
+    xyzzy: String;
+}
+
+// R2 — a nullable record feature feeding a required payload field.
+event ShipmentNoted version "1.0.0" {
+    note: String;
+}
+
+// R3 — the only source lives in the contained `parcels` collection.
+event ParcelWeighed version "1.0.0" {
+    weightGrams: int;
+}
+
+// R9 — `previousState` on a machine-less plain patch.
+event ShipmentStateGuessed version "1.0.0" {
+    previousState: ShipmentStatus;
+}
+
+// R4 — the emitting operation is `protected` (a valid visibility, not a site).
+event ShipmentArchived version "1.0.0" {
+    reference: String;
+}
+
+// R4 — the emitting operation is a `findAll` seam (no runtime site).
+event ShipmentBrowsed version "1.0.0" {
+    reference: String;
+}
+
+// Class B — clock + transition states + correlation/organization context.
+event JobStarted version "1.0.0" {
+    label: String;
+    attempts: int;
+    occurredOn: Instant;
+    previousState: JobState;
+    nextState: JobState;
+    correlationId: String;
+    organizationId: String;
+}
+
+// Class A/B pluralization shape: one event bound by TWO operations, kept on
+// ONE catalogue line (`ops` joined with ", ").
+event JobTouched version "1.0.0" {
+    label: String;
+}
+
+// R7 — a String payload against the record's int `attempts` column.
+event JobMislabelled version "1.0.0" {
+    attempts: String;
+}
+
+channel shipments {
+    publishes ShipmentBooked;
+    publishes ShipmentStatusRecorded;
+    publishes ShipmentMystery;
+    publishes ShipmentNoted;
+    publishes ParcelWeighed;
+    publishes ShipmentStateGuessed;
+    publishes ShipmentArchived;
+    publishes ShipmentBrowsed;
+}
+
+// A second channel publishing the same event: the catalogue's `queues:` form.
+channel audit {
+    publishes ShipmentBooked;
+}
+
+channel jobs {
+    publishes JobStarted;
+    publishes JobTouched;
+    publishes JobMislabelled;
+}

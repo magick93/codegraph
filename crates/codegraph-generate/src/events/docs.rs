@@ -176,17 +176,29 @@ pub fn event_schemas(arch: &EventArchitecture, variant: EnvelopeVariant) -> Vec<
 
 /// All document artifacts for a run (issue #614 today; the AsyncAPI and
 /// catalogue projections join in #610/#616). Empty architecture ⇒ empty.
+///
+/// `producer_report` is the run's events-producer planner output (issue #820
+/// slice c): `Some` whenever the `events_producer` flag is ON and the planner
+/// succeeded (even with zero plans — a declared event then still marks
+/// `not emitted`), and `None` only when the flag is OFF or the analysis could
+/// not run. Absent ⇒ no marks, byte-identical.
 pub fn document_artifacts(
     arch: &EventArchitecture,
     variant: EnvelopeVariant,
     ddd_models: &[codegraph_core::types::DddModelGraph],
+    producer_report: Option<&crate::events::producer::ProducerReport>,
 ) -> Vec<DocArtifact> {
     if arch.is_empty() {
         return Vec::new();
     }
     let mut docs = event_schemas(arch, variant);
     docs.push(asyncapi_document(arch, variant));
-    docs.push(catalogue_markdown(arch, variant, ddd_models));
+    docs.push(catalogue_markdown(
+        arch,
+        variant,
+        ddd_models,
+        producer_report,
+    ));
     docs
 }
 
@@ -402,6 +414,85 @@ fn pascal(s: &str) -> String {
     codegraph_naming::to_pascal_case(s)
 }
 
+/// The catalogue's runtime-publication mark for one declared event (issue
+/// #820 slice c): ONE line, rendered as its own paragraph directly after the
+/// per-event metadata table.
+///
+///  - a planned event: `Runtime publication: published at runtime by
+///    {Service}.{op} (arm: …; queue: …)`. Several emitting operations and/or
+///    channels stay ONE line: the operations join with `", "` in declaration
+///    order, and the arm/queue keys pluralize (`arms:`/`queues:`) with their
+///    deduped values when the plans disagree. Queues come from the plan's
+///    `publish` list — never re-derived from the channel name.
+///  - a declared event no operation binds: `Runtime publication: not
+///    emitted — no modeled service operation declares this event`.
+///
+/// Refusal/warning sentences are deliberately NOT rendered here: a flag-ON run
+/// hard-fails refusals before generation (`ValidationPass::
+/// check_event_producers`), so a refused binding can never reach a written
+/// tree. They stay on the validation and doctor surfaces.
+fn runtime_publication_mark(
+    report: Option<&crate::events::producer::ProducerReport>,
+    event_name: &str,
+) -> Option<String> {
+    use crate::events::producer::{ProducerArm, ProducerPlan};
+
+    let report = report?;
+    let plans: Vec<&ProducerPlan> = report
+        .plans
+        .iter()
+        .filter(|plan| plan.event.name == event_name)
+        .collect();
+    if plans.is_empty() {
+        return Some(
+            "Runtime publication: not emitted — no modeled service operation declares this event"
+                .to_string(),
+        );
+    }
+
+    let mut ops: Vec<String> = Vec::new();
+    let mut arms: Vec<&'static str> = Vec::new();
+    let mut queues: Vec<String> = Vec::new();
+    for plan in plans {
+        let op = format!("{}.{}", plan.service, plan.op);
+        if !ops.contains(&op) {
+            ops.push(op);
+        }
+        let arm = match &plan.arm {
+            ProducerArm::Transition(_) => "transition",
+            ProducerArm::Patch => "patch",
+        };
+        if !arms.contains(&arm) {
+            arms.push(arm);
+        }
+        for channel in &plan.publish {
+            if !queues.contains(&channel.queue) {
+                queues.push(channel.queue.clone());
+            }
+        }
+    }
+
+    let arm_clause = if arms.len() == 1 {
+        format!("arm: {}", arms[0])
+    } else {
+        format!("arms: {}", arms.join(", "))
+    };
+    // R12 refuses a plan with no persisted channel, so `queues` is non-empty
+    // for every planned event; the empty arm keeps the projection total.
+    let queue_clause = if queues.is_empty() {
+        "queue: —".to_string()
+    } else if queues.len() == 1 {
+        format!("queue: {}", queues[0])
+    } else {
+        format!("queues: {}", queues.join(", "))
+    };
+
+    Some(format!(
+        "Runtime publication: published at runtime by {} ({arm_clause}; {queue_clause})",
+        ops.join(", ")
+    ))
+}
+
 /// The event catalogue (issue #616): the whole
 /// event→channel→subscription→consumer graph as a deterministic markdown
 /// document. Governance slots (owner/classification/retention/pii —
@@ -409,11 +500,13 @@ fn pascal(s: &str) -> String {
 /// and stay omitted otherwise; today nothing carries them, so no
 /// placeholder noise is emitted. `ddd_models` supplies the cross-plane
 /// `emits` edges (`.ddd` service operations declaring event emission —
-/// pherolang's loosely-coupled dimension).
+/// pherolang's loosely-coupled dimension). `producer_report` supplies the
+/// slice-(c) runtime-publication marks (issue #820): `None` ⇒ no marks.
 pub fn catalogue_markdown(
     arch: &EventArchitecture,
     variant: EnvelopeVariant,
     ddd_models: &[codegraph_core::types::DddModelGraph],
+    producer_report: Option<&crate::events::producer::ProducerReport>,
 ) -> DocArtifact {
     use std::collections::BTreeMap;
     use std::fmt::Write as _;
@@ -452,6 +545,13 @@ pub fn catalogue_markdown(
             event.name, event.name
         )
         .unwrap();
+
+        // The runtime-publication mark (issue #820 slice c): one line, its
+        // own paragraph, before the payload table. Absent on every flag-OFF
+        // run (no producer report), so the document stays byte-identical.
+        if let Some(mark) = runtime_publication_mark(producer_report, &event.name) {
+            let _ = writeln!(out, "\n{mark}");
+        }
 
         out.push_str("\n### Payload\n\n");
         writeln!(out, "| Field | Rust type | Resolved schema |").unwrap();
@@ -579,5 +679,180 @@ pub fn catalogue_markdown(
     DocArtifact {
         rel_path: "docs/events.md".to_string(),
         content: out,
+    }
+}
+
+#[cfg(test)]
+mod producer_mark_tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use crate::ddd::service_ops::{ServiceOpState, StateName, WireKey};
+    use crate::events::model::{EventDefinition, EventFieldDef};
+    use crate::events::producer::planner::ProducerChannel;
+    use crate::events::producer::{
+        EmissionArm, EmissionSite, ProducerEntitySurface, ProducerInputs, SurfaceField,
+    };
+
+    use super::runtime_publication_mark;
+
+    fn payload_field(name: &str, rust_type: &str) -> EventFieldDef {
+        EventFieldDef {
+            name: name.to_string(),
+            rust_type: rust_type.to_string(),
+            resolved_title: None,
+            is_primitive: true,
+        }
+    }
+
+    fn event(name: &str) -> EventDefinition {
+        EventDefinition {
+            name: name.to_string(),
+            version: Some("1.0.0".to_string()),
+            fields: vec![payload_field("status", "String")],
+            domain: Some("orders".to_string()),
+        }
+    }
+
+    fn surface() -> ProducerEntitySurface {
+        ProducerEntitySurface {
+            domain: "orders".to_string(),
+            title: "WorkerType".to_string(),
+            rust_type_name: "WorkerType".to_string(),
+            fields: vec![
+                SurfaceField {
+                    name: "id".to_string(),
+                    rust_type: "uuid::Uuid".to_string(),
+                    is_optional: false,
+                    is_array: false,
+                    is_entity_ref: false,
+                    is_codelist: false,
+                },
+                SurfaceField {
+                    name: "status".to_string(),
+                    rust_type: "WorkerStatus".to_string(),
+                    is_optional: false,
+                    is_array: false,
+                    is_entity_ref: false,
+                    is_codelist: true,
+                },
+            ],
+            children: Vec::new(),
+            alt_identities: Vec::new(),
+            state_field: Some("status".to_string()),
+            state_type: Some("WorkerStatus".to_string()),
+            has_read: true,
+        }
+    }
+
+    fn state() -> ServiceOpState {
+        ServiceOpState {
+            current_expr: "response.status".to_string(),
+            wire_key: WireKey::new("status"),
+            initial: StateName::new("Draft"),
+            machine_id: "worker_type_status".to_string(),
+            all: Vec::new(),
+            op: Vec::new(),
+        }
+    }
+
+    fn site(op: &str, arm: EmissionArm, emits: &[&str]) -> EmissionSite {
+        EmissionSite {
+            service: "WorkerService".to_string(),
+            op: op.to_string(),
+            module_domain: "orders".to_string(),
+            emits: emits.iter().map(|e| (*e).to_string()).collect(),
+            is_protected: false,
+            child_bound: false,
+            entity: Some("WorkerType".to_string()),
+            arm,
+            own_writes: BTreeSet::from(["status".to_string()]),
+            writable_fields: BTreeSet::from(["status".to_string()]),
+        }
+    }
+
+    fn channel(name: &str) -> ProducerChannel {
+        ProducerChannel {
+            name: name.to_string(),
+            name_snake: name.to_string(),
+            enum_name: "OrdersEvent".to_string(),
+            queue: format!("events_{name}"),
+        }
+    }
+
+    /// Two operations (a transition and a patch) and two channels produce ONE
+    /// line: the ops join in declaration order, the arm/queue keys pluralize
+    /// with their deduped values, and the queues come from the plans' own
+    /// `publish` list.
+    #[test]
+    fn mark_pluralizes_arms_and_queues_on_one_line() {
+        let mut inputs = ProducerInputs {
+            events: vec![event("StatusPlaced")],
+            sites: vec![
+                site(
+                    "approve",
+                    EmissionArm::Transition(state()),
+                    &["StatusPlaced"],
+                ),
+                site("amend", EmissionArm::Patch, &["StatusPlaced"]),
+            ],
+            entities: BTreeMap::from([(
+                ("orders".to_string(), "WorkerType".to_string()),
+                surface(),
+            )]),
+            publish_targets: BTreeMap::from([(
+                "StatusPlaced".to_string(),
+                vec![channel("orders"), channel("audit")],
+            )]),
+            type_suffix: "Type".to_string(),
+        };
+        inputs.sites[1].own_writes.clear();
+        let report = super::super::producer::planner::plan(&inputs);
+        assert_eq!(report.plans.len(), 2, "{:?}", report.refusals);
+
+        assert_eq!(
+            runtime_publication_mark(Some(&report), "StatusPlaced").as_deref(),
+            Some(
+                "Runtime publication: published at runtime by WorkerService.approve, \
+                 WorkerService.amend (arms: transition, patch; queues: events_orders, \
+                 events_audit)"
+            )
+        );
+    }
+
+    /// One plan keeps the singular keys, and an event no operation binds
+    /// carries the unbound line — the line that tells a reader the payload
+    /// exists but nothing publishes it.
+    #[test]
+    fn mark_singularizes_and_names_the_unbound_case() {
+        let inputs = ProducerInputs {
+            events: vec![event("StatusPlaced"), event("StatusDropped")],
+            sites: vec![site("amend", EmissionArm::Patch, &["StatusPlaced"])],
+            entities: BTreeMap::from([(
+                ("orders".to_string(), "WorkerType".to_string()),
+                surface(),
+            )]),
+            publish_targets: BTreeMap::from([(
+                "StatusPlaced".to_string(),
+                vec![channel("orders")],
+            )]),
+            type_suffix: "Type".to_string(),
+        };
+        let report = super::super::producer::planner::plan(&inputs);
+        assert_eq!(
+            runtime_publication_mark(Some(&report), "StatusPlaced").as_deref(),
+            Some(
+                "Runtime publication: published at runtime by WorkerService.amend \
+                 (arm: patch; queue: events_orders)"
+            )
+        );
+        assert_eq!(
+            runtime_publication_mark(Some(&report), "StatusDropped").as_deref(),
+            Some(
+                "Runtime publication: not emitted — no modeled service operation declares \
+                 this event"
+            )
+        );
+        // No producer report (the flag-OFF shape) ⇒ no mark at all.
+        assert_eq!(runtime_publication_mark(None, "StatusPlaced"), None);
     }
 }

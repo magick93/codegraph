@@ -1427,8 +1427,12 @@ async fn event_schemas_emit_per_declared_event() {
     let arch = super::architecture_for(&db, &project(), &config())
         .await
         .expect("architecture builds");
-    let docs =
-        crate::events::docs::document_artifacts(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    let docs = crate::events::docs::document_artifacts(
+        &arch,
+        crate::events::EnvelopeVariant::Native,
+        &[],
+        None,
+    );
     let mut paths: Vec<&str> = docs.iter().map(|d| d.rel_path.as_str()).collect();
     paths.sort();
     assert_eq!(
@@ -1502,8 +1506,12 @@ async fn event_schemas_emit_per_declared_event() {
 #[test]
 fn event_schemas_emit_nothing_without_events() {
     let arch = crate::events::EventArchitecture::default();
-    let docs =
-        crate::events::docs::document_artifacts(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    let docs = crate::events::docs::document_artifacts(
+        &arch,
+        crate::events::EnvelopeVariant::Native,
+        &[],
+        None,
+    );
     assert!(docs.is_empty(), "{docs:?}");
 }
 
@@ -1761,8 +1769,12 @@ async fn catalogue_renders_the_event_graph() {
     let arch = super::architecture_for(&db, &project(), &config())
         .await
         .expect("architecture builds");
-    let doc =
-        crate::events::docs::catalogue_markdown(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    let doc = crate::events::docs::catalogue_markdown(
+        &arch,
+        crate::events::EnvelopeVariant::Native,
+        &[],
+        None,
+    );
     assert_eq!(doc.rel_path, "docs/events.md");
     for needle in [
         "# Event catalogue",
@@ -1789,8 +1801,12 @@ async fn catalogue_renders_the_event_graph() {
         );
     }
     // Deterministic.
-    let again =
-        crate::events::docs::catalogue_markdown(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    let again = crate::events::docs::catalogue_markdown(
+        &arch,
+        crate::events::EnvelopeVariant::Native,
+        &[],
+        None,
+    );
     assert_eq!(doc.content, again.content);
 }
 
@@ -1809,8 +1825,12 @@ async fn catalogue_lists_function_consumers() {
             fn_name: "recalc_totals".to_string(),
             domain: Some("sales".to_string()),
         });
-    let doc =
-        crate::events::docs::catalogue_markdown(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    let doc = crate::events::docs::catalogue_markdown(
+        &arch,
+        crate::events::EnvelopeVariant::Native,
+        &[],
+        None,
+    );
     assert!(
         doc.content.contains("## Function consumers") && doc.content.contains("| recalc_totals |"),
         "function consumer missing:\n{}",
@@ -1874,6 +1894,7 @@ async fn catalogue_lists_the_emitting_service_operations() {
         &arch,
         crate::events::EnvelopeVariant::Native,
         &[model],
+        None,
     );
     assert!(
         doc.content.contains("lending.LoanService.renew"),

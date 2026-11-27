@@ -1,0 +1,47 @@
+// Events-producer corpus fixture (issue #820 slice c).
+//
+// One model source encoding the consumer survey shapes: a class with a
+// nullable feature (R2), a contained value-object collection (R3), a
+// workflow-managed codelist status and a String money field (class A's clean
+// record payload), plus a second class carrying a MODELED machine so the
+// transition-context facts bind (class B).
+package nz.example.corpus
+
+type Instant wraps String {
+    format "date-time"
+}
+
+enum ShipmentStatus {
+    Draft as "D" = 0
+    Booked as "B" = 1
+    Cancelled as "C" = 2
+}
+
+enum JobState {
+    Queued as "Q" = 0
+    Running as "R" = 1
+    Done as "D" = 2
+}
+
+class ParcelLine {
+    int weightGrams
+    String sku
+}
+
+// Class A/C: `reference` + the String money field `amount` are the clean
+// record payload; `status` is workflow-managed (domains.toml), `note` is the
+// nullable R2 source, and `parcels` is the contained collection R3 keys on.
+class ShipmentType {
+    String reference
+    String amount
+    ShipmentStatus status
+    String[0..1] note
+    contains ParcelLine[] parcels
+}
+
+// Class B: the machine-bearing record (previousState/nextState bind).
+class JobType {
+    String label
+    int attempts
+    JobState jobState
+}
