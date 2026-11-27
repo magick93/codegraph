@@ -556,6 +556,7 @@ $fn$ LANGUAGE plpgsql;
     pub async fn apply_migrations(&self, migrations_dir: &Path) -> Result<(), String> {
         run_api_migrations(migrations_dir, &self.target)
             .await
+            .map(|_report| ())
             .map_err(|e| e.to_string())
     }
 

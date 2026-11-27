@@ -215,6 +215,13 @@ pub struct OpsDbTarget {
     /// table after migration (default `false` → warn instead).
     #[serde(default)]
     pub grant_strict: Option<bool>,
+    /// Tolerate per-file migration errors instead of failing the migrate
+    /// stage (issue #427: fail-on-error is the DEFAULT; this is the explicit
+    /// opt-out for consumers with known-broken legacy bands). Lenient stays
+    /// LOUD: per-file warnings, a run-summary banner and a dedicated
+    /// results-JSON field.
+    #[serde(default)]
+    pub migrate_lenient: Option<bool>,
 }
 
 /// Database targets.
@@ -424,6 +431,7 @@ mod tests {
                     seed_sql: None,
                     grant_role: None,
                     grant_strict: None,
+                    migrate_lenient: None,
                 },
                 e2e: None,
                 e2e_app: None,
@@ -792,6 +800,7 @@ keep = 10
                     seed_sql: None,
                     grant_role: None,
                     grant_strict: None,
+                    migrate_lenient: None,
                 },
                 e2e: None,
                 e2e_app: None,

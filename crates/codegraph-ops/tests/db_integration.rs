@@ -12,7 +12,7 @@ use codegraph_ops::db::{
     advisory_lock, advisory_unlock, missing_extensions, psql_exec, psql_exec_file, psql_query,
 };
 use codegraph_ops::env::ensure_psql;
-use codegraph_ops::migrate::{link_migrations_to_supabase, run_api_migrations};
+use codegraph_ops::migrate::{clear_tracking, link_migrations_to_supabase, run_api_migrations};
 use codegraph_ops::pg::PgTarget;
 
 use std::fs;
@@ -139,6 +139,11 @@ async fn migrations_apply_in_phases() {
     psql_exec(&t, "DROP SCHEMA IF EXISTS ops_itest CASCADE;")
         .await
         .expect("cleanup failed");
+
+    // Issue #427: the tracking table would SKIP these fixed-name files on a
+    // re-run against the shared target — clear it so the test always
+    // exercises a fresh application (the reset semantic).
+    clear_tracking(&t).await.expect("clear tracking failed");
 
     run_api_migrations(dir.path(), &t)
         .await
@@ -412,6 +417,9 @@ async fn migrations_apply_full_generated_set() {
     let dir = tempfile::tempdir().unwrap();
     write_full_generated_set(dir.path());
     cleanup_full_set(&t).await;
+    // Issue #427: fixed-name files skip on a re-run against the shared
+    // target — clear tracking so the test always applies fresh.
+    clear_tracking(&t).await.expect("clear tracking failed");
 
     // The plain-Postgres api path must apply the SAME platform band as
     // `supabase db reset` — basejump (tenancy) + pgmq (events) included.
@@ -513,6 +521,9 @@ async fn migrations_apply_full_generated_set() {
         role: "app_user".to_string(),
         strict: true,
     };
+    // Clear tracking so this second call RE-APPLIES (a skipped band would
+    // make the strict verification vacuous).
+    clear_tracking(&t).await.expect("clear tracking failed");
     codegraph_ops::migrate::run_api_migrations_with_options(dir.path(), &t, &strict)
         .await
         .expect("strict grant verification should pass after migration");
@@ -571,6 +582,10 @@ async fn phased_and_file_order_application_match() {
 
     // Run 2: the harness's phased application (run_api_migrations).
     cleanup_full_set(&t).await;
+    // Issue #427: fixed-name files skip on a re-run against the shared
+    // target — clear tracking so the phased inventory is a REAL application
+    // (a skip would compare an empty inventory against the file-order one).
+    clear_tracking(&t).await.expect("clear tracking failed");
     run_api_migrations(dir.path(), &t)
         .await
         .expect("phased migrations failed");
@@ -713,4 +728,313 @@ async fn object_inventory(t: &PgTarget) -> String {
     parts.push(enums);
 
     parts.join("\n===\n")
+}
+
+// ── Issue #427: fail-on-error, tracking skip, reset semantics, replay-all ──
+
+/// Issue #427 acceptance: a migration that errors FAILS the run (STRICT is
+/// the default) with a per-file summary naming every broken file/chunk and
+/// stating the band is partial — and NOTHING is recorded in the tracking
+/// table (a partial band records nothing, #756). The lenient opt-out
+/// downgrades the same failures to a report with `failed` set, still
+/// without recording.
+#[tokio::test]
+#[ignore = "requires a running Postgres (set DATABASE_URL or default localhost:5432)"]
+async fn migration_errors_fail_the_run_with_a_per_file_summary() {
+    if skip_if_no_psql() {
+        return;
+    }
+    let _guard = DB_LOCK.lock().await;
+    let t = target();
+
+    let dir = tempfile::tempdir().unwrap();
+    // Unique prefix per test — the tracking table is SHARED across tests on
+    // this target, and names are its keys.
+    const P: &str = "t427_err";
+    std::fs::write(
+        dir.path().join(format!("{P}_001_good.sql")),
+        format!("CREATE SCHEMA IF NOT EXISTS {P};\nCREATE TABLE {P}.x (id int);\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(format!("{P}_002_bad_table.sql")),
+        format!("CREATE TABLE {P}.broken (id int NONSENSE COLUMN HERE;\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(format!("{P}_003_bad_fk.sql")),
+        format!(
+            "ALTER TABLE {P}.x ADD CONSTRAINT {P}_fk FOREIGN KEY (id) REFERENCES {P}.missing(id);\n"
+        ),
+    )
+    .unwrap();
+
+    cleanup_tracking_rows(&t, P).await;
+    psql_exec(&t, &format!("DROP SCHEMA IF EXISTS {P} CASCADE;"))
+        .await
+        .expect("cleanup failed");
+
+    // STRICT (the default): the run fails, the summary names every file.
+    let err = run_api_migrations(dir.path(), &t)
+        .await
+        .expect_err("a migration that errors must fail the run (issue #427 fail-on-error)");
+    let text = err.to_string();
+    assert!(text.contains("2 migration file"), "{text}");
+    assert!(text.contains("PARTIAL"), "{text}");
+    assert!(
+        text.contains(&format!("{P}_002_bad_table.sql")),
+        "the summary must name the broken table file: {text}"
+    );
+    assert!(
+        text.contains("FK constraint batch"),
+        "the summary must name the failing FK chunk: {text}"
+    );
+
+    // A partial band records NOTHING (the #756 contract holds under the new
+    // failure semantics).
+    let recorded = tracking_rows(&t, P).await;
+    assert_eq!(
+        recorded, 0,
+        "a failed band must not record in platform._migrations"
+    );
+
+    // LENIENT (the explicit opt-out): the same failures return a report —
+    // and still record nothing. From a CLEAN slate (the strict run above
+    // applied file 001 before failing), the failure count is exactly the
+    // two broken files.
+    psql_exec(&t, &format!("DROP SCHEMA IF EXISTS {P} CASCADE;"))
+        .await
+        .expect("cleanup failed");
+    let report = codegraph_ops::migrate::run_migrations(
+        dir.path(),
+        &t,
+        &codegraph_ops::migrate::MigrateOptions {
+            lenient: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("lenient mode must tolerate the failures");
+    assert_eq!(report.failed, 2, "{report:?}");
+    assert_eq!(
+        tracking_rows(&t, P).await,
+        0,
+        "a tolerated PARTIAL band must not record either"
+    );
+
+    psql_exec(&t, &format!("DROP SCHEMA IF EXISTS {P} CASCADE;"))
+        .await
+        .expect("cleanup failed");
+    cleanup_tracking_rows(&t, P).await;
+}
+
+/// Issue #427 acceptance (speed): the SECOND consecutive application applies
+/// ~0 files (checksum-matched files skip), a CHANGED file re-applies, and
+/// `--replay-all` bypasses the skip entirely.
+#[tokio::test]
+#[ignore = "requires a running Postgres (set DATABASE_URL or default localhost:5432)"]
+async fn consecutive_run_applies_zero_and_replay_all_reapplies() {
+    if skip_if_no_psql() {
+        return;
+    }
+    let _guard = DB_LOCK.lock().await;
+    let t = target();
+
+    const P: &str = "t427_skip";
+    let dir = tempfile::tempdir().unwrap();
+    // Idempotent on purpose: the replay_all leg re-applies EVERYTHING, and
+    // non-idempotent files over an existing band fail loudly (the documented
+    // replay semantics — issue #427).
+    std::fs::write(
+        dir.path().join(format!("{P}_001_a.sql")),
+        format!("CREATE SCHEMA IF NOT EXISTS {P};\nCREATE TABLE IF NOT EXISTS {P}.a (id int);\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(format!("{P}_002_b.sql")),
+        format!("CREATE TABLE IF NOT EXISTS {P}.b (id int);\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(format!("{P}_003_c.sql")),
+        format!("CREATE INDEX IF NOT EXISTS {P}_b_idx ON {P}.b (id);\n"),
+    )
+    .unwrap();
+
+    cleanup_tracking_rows(&t, P).await;
+    psql_exec(&t, &format!("DROP SCHEMA IF EXISTS {P} CASCADE;"))
+        .await
+        .expect("cleanup failed");
+
+    let first = run_api_migrations(dir.path(), &t)
+        .await
+        .expect("first apply failed");
+    assert_eq!(first.applied, 3, "{first:?}");
+    assert_eq!(first.skipped, 0, "{first:?}");
+
+    // The consecutive pass: the speed acceptance — ~0 files applied.
+    let second = run_api_migrations(dir.path(), &t)
+        .await
+        .expect("second apply failed");
+    assert_eq!(
+        second.applied, 0,
+        "checksum-matched files must skip: {second:?}"
+    );
+    assert_eq!(second.skipped, 3, "{second:?}");
+
+    // A CHANGED file (new bytes, same name) re-applies and re-records. The
+    // changed content is IDEMPOTENT on purpose — a non-idempotent changed
+    // file over an existing band fails loudly (the documented replay
+    // semantics), so the test proves the re-apply with SQL that can land.
+    std::fs::write(
+        dir.path().join(format!("{P}_002_b.sql")),
+        format!(
+            "CREATE TABLE IF NOT EXISTS {P}.b (id int);\n\
+             ALTER TABLE {P}.b ADD COLUMN IF NOT EXISTS note text;\n"
+        ),
+    )
+    .unwrap();
+    let third = run_api_migrations(dir.path(), &t)
+        .await
+        .expect("third apply failed");
+    assert_eq!(
+        third.applied, 1,
+        "the changed file must re-apply: {third:?}"
+    );
+    assert_eq!(third.skipped, 2, "{third:?}");
+    let column = psql_query(
+        &t,
+        &format!(
+            "SELECT count(*) FROM information_schema.columns \
+             WHERE table_schema = '{P}' AND table_name = 'b' AND column_name = 'note';"
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        column, "1",
+        "the changed file's new statement must have landed"
+    );
+
+    // replay_all bypasses the skip entirely (apply everything).
+    let replayed = codegraph_ops::migrate::run_migrations(
+        dir.path(),
+        &t,
+        &codegraph_ops::migrate::MigrateOptions {
+            replay_all: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("replay_all run failed");
+    assert_eq!(replayed.applied, 3, "{replayed:?}");
+    assert_eq!(replayed.skipped, 0, "{replayed:?}");
+
+    psql_exec(&t, &format!("DROP SCHEMA IF EXISTS {P} CASCADE;"))
+        .await
+        .expect("cleanup failed");
+    cleanup_tracking_rows(&t, P).await;
+}
+
+/// Issue #427 acceptance (reset semantics): `clear_tracking` makes a reset
+/// database re-band cleanly — without it, stale rows would skip every file
+/// against schemas the reset wiped.
+#[tokio::test]
+#[ignore = "requires a running Postgres (set DATABASE_URL or default localhost:5432)"]
+async fn reset_clears_tracking_and_rebands() {
+    if skip_if_no_psql() {
+        return;
+    }
+    let _guard = DB_LOCK.lock().await;
+    let t = target();
+
+    const P: &str = "t427_reset";
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(format!("{P}_001_a.sql")),
+        format!("CREATE SCHEMA IF NOT EXISTS {P};\nCREATE TABLE {P}.a (id int);\n"),
+    )
+    .unwrap();
+
+    cleanup_tracking_rows(&t, P).await;
+    psql_exec(&t, &format!("DROP SCHEMA IF EXISTS {P} CASCADE;"))
+        .await
+        .expect("cleanup failed");
+
+    run_api_migrations(dir.path(), &t)
+        .await
+        .expect("first apply failed");
+    assert_eq!(tracking_rows(&t, P).await, 1);
+
+    // Simulate the reset: wipe the domain schema (what reset_sql does) —
+    // then clear_tracking. The next run must RE-BAND (apply again), not
+    // skip against the wiped schema.
+    psql_exec(&t, &format!("DROP SCHEMA IF EXISTS {P} CASCADE;"))
+        .await
+        .expect("reset dropped the schema");
+    codegraph_ops::migrate::clear_tracking(&t)
+        .await
+        .expect("clear_tracking failed");
+    assert_eq!(
+        tracking_rows(&t, P).await,
+        0,
+        "clear_tracking must empty the tracking table"
+    );
+
+    let rebanded = run_api_migrations(dir.path(), &t)
+        .await
+        .expect("re-band failed");
+    assert_eq!(rebanded.applied, 1, "a reset DB must re-band: {rebanded:?}");
+    assert_eq!(rebanded.skipped, 0, "{rebanded:?}");
+
+    // The table is recreated by the next record (clear dropped it).
+    let exists = psql_query(
+        &t,
+        "SELECT to_regclass('platform._migrations') IS NOT NULL;",
+    )
+    .await
+    .unwrap();
+    assert!(
+        exists.trim().ends_with('t'),
+        "record_tracking must recreate the table"
+    );
+
+    psql_exec(&t, &format!("DROP SCHEMA IF EXISTS {P} CASCADE;"))
+        .await
+        .expect("cleanup failed");
+    cleanup_tracking_rows(&t, P).await;
+}
+
+/// Tracking rows for this test's file prefix (the name column is the key).
+async fn tracking_rows(t: &PgTarget, prefix: &str) -> usize {
+    // An absent table (a fresh target, or a failed run — a partial band
+    // never records, so record_tracking never created the table) counts
+    // as zero.
+    let exists = psql_query(t, "SELECT to_regclass('platform._migrations') IS NOT NULL;")
+        .await
+        .unwrap_or_default()
+        .trim()
+        .ends_with('t');
+    if !exists {
+        return 0;
+    }
+    psql_query(
+        t,
+        &format!("SELECT count(*) FROM platform._migrations WHERE name LIKE '{prefix}\\_%';"),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("tracking count query failed: {e}"))
+    .trim()
+    .parse()
+    .unwrap_or(0)
+}
+
+/// Delete this test's tracking rows (names are the shared table's keys).
+async fn cleanup_tracking_rows(t: &PgTarget, prefix: &str) {
+    psql_exec(
+        t,
+        &format!("DELETE FROM platform._migrations WHERE name LIKE '{prefix}\\_%';"),
+    )
+    .await
+    .ok();
 }

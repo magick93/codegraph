@@ -47,7 +47,7 @@ enum FileKind {
 }
 
 /// The full phase plan for a migration directory.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct MigrationPhases {
     /// Phase 0: sorted, deduplicated schema names ("platform", "api_keys_private"
     /// plus every `CREATE SCHEMA [IF NOT EXISTS] <x>` found in the files).
@@ -55,14 +55,32 @@ struct MigrationPhases {
     /// Phase 1: table/codelist files (FK lines are stripped per-file at apply
     /// time and deferred to phase 2).
     tables: Vec<PathBuf>,
-    /// Phase 2: FK constraint lines, in file order.
-    fk_lines: Vec<String>,
+    /// Phase 2: FK constraint lines GROUPED BY SOURCE FILE, in file order —
+    /// the tracking-skip filter (issue #427) drops a skipped file's group so
+    /// its constraints are not re-applied.
+    fk_lines_by_file: Vec<(String, Vec<String>)>,
     /// Phase 3: `*_fts.sql`, `*_embedding.sql`, `*_process_history_view.sql`.
     aux: Vec<PathBuf>,
     /// Phase 4: `*_rls.sql`, `*_trigger.sql`.
     rls_triggers: Vec<PathBuf>,
     /// Non-SQL files in the directory, tracked for reporting only.
     ignored: Vec<PathBuf>,
+}
+
+impl MigrationPhases {
+    /// Every FK constraint line, flattened in file order (the chunking input).
+    fn all_fk_lines(&self) -> Vec<String> {
+        self.fk_lines_by_file
+            .iter()
+            .flat_map(|(_, lines)| lines.iter().cloned())
+            .collect()
+    }
+
+    /// Total migration files across the applied phases (the skip report's
+    /// denominator).
+    fn total_files(&self) -> usize {
+        self.tables.len() + self.aux.len() + self.rls_triggers.len()
+    }
 }
 
 /// Classify a migration basename into its application phase.
@@ -174,7 +192,7 @@ fn extract_create_schemas(content: &str) -> Vec<String> {
 fn migration_phases(dir: &Path) -> OpsResult<MigrationPhases> {
     let mut schemas = vec!["platform".to_string(), "api_keys_private".to_string()];
     let mut tables = Vec::new();
-    let mut fk_lines = Vec::new();
+    let mut fk_lines_by_file: Vec<(String, Vec<String>)> = Vec::new();
     let mut aux = Vec::new();
     let mut rls_triggers = Vec::new();
     let mut ignored = Vec::new();
@@ -199,12 +217,14 @@ fn migration_phases(dir: &Path) -> OpsResult<MigrationPhases> {
             Err(e) => return Err(OpsError::Io(e)),
         };
         schemas.extend(extract_create_schemas(&content));
-        fk_lines.extend(
-            content
-                .lines()
-                .filter(|line| is_fk_line(line))
-                .map(|line| line.to_string()),
-        );
+        let fk_here: Vec<String> = content
+            .lines()
+            .filter(|line| is_fk_line(line))
+            .map(|line| line.to_string())
+            .collect();
+        if !fk_here.is_empty() {
+            fk_lines_by_file.push((name.clone(), fk_here));
+        }
         match classify_file(&name) {
             FileKind::Skip => ignored.push(path.clone()),
             FileKind::Tables => tables.push(path.clone()),
@@ -219,7 +239,7 @@ fn migration_phases(dir: &Path) -> OpsResult<MigrationPhases> {
     Ok(MigrationPhases {
         schemas,
         tables,
-        fk_lines,
+        fk_lines_by_file,
         aux,
         rls_triggers,
         ignored,
@@ -233,8 +253,8 @@ fn temp_counter() -> u64 {
 }
 
 /// Write phase-1 content to a temp file so it can be applied via
-/// `psql_exec_file_ok` (psql takes a path, and the FK lines must be removed
-/// from the input first). Returns the temp path.
+/// `psql_exec_file_strict` (psql takes a path, and the FK lines must be
+/// removed from the input first). Returns the temp path.
 fn write_phase1_file(original: &Path, content: &str) -> OpsResult<PathBuf> {
     let stem = original
         .file_stem()
@@ -362,36 +382,108 @@ const GRANT_SKIP_SCHEMAS: &[&str] = &[
     "realtime",
 ];
 
+/// Policy for a migration run (issue #427). Defaults are STRICT: a
+/// migration that errors fails the run with a per-file summary — silent
+/// partial application hid a wiped basejump schema and a two-month broken
+/// `0002_api_key_management.sql`. The lenient opt-out is EXPLICIT and stays
+/// loud (per-file warnings + a run-summary banner + a dedicated results-JSON
+/// field), never silent.
+#[derive(Debug, Clone, Default)]
+pub struct MigrateOptions {
+    /// Post-migration grant sweep for the generated API role.
+    pub grant: GrantOptions,
+    /// `--migrate-lenient` / `[database.api] migrate_lenient`: per-file
+    /// failures downgrade from fatal to loud warnings.
+    pub lenient: bool,
+    /// `--replay-all`: bypass the `platform._migrations` tracking and apply
+    /// every file, checksum-matching ones included. For clean databases,
+    /// idempotent sets and drift repair — over an existing band it fails
+    /// loudly on non-idempotent files, which is correct.
+    pub replay_all: bool,
+}
+
+impl MigrateOptions {
+    /// Strict options carrying `grant` (the legacy
+    /// [`run_api_migrations_with_options`] shape).
+    pub fn strict(grant: GrantOptions) -> Self {
+        Self {
+            grant,
+            lenient: false,
+            replay_all: false,
+        }
+    }
+}
+
+/// What a migration run did. `applied` counts files actually executed this
+/// run; `skipped` counts files whose recorded checksum matched (the
+/// consecutive-run speed win — the second pass applies ~0 files, issue #427
+/// acceptance); `failed` counts files/chunks whose errors were tolerated
+/// under lenient mode (strict mode turns any failure into a hard error and
+/// never returns a report).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct MigrateReport {
+    pub applied: usize,
+    pub skipped: usize,
+    pub failed: usize,
+}
+
 /// Apply generated SQL migrations to a plain-Postgres target in dependency
 /// order, then grant the API role DML on domain tables and verify the grants
-/// (default [`GrantOptions`]). Generated migrations have cross-schema deps,
-/// hence phases:
+/// (default [`GrantOptions`], STRICT failure semantics — issue #427).
+/// Generated migrations have cross-schema deps, hence phases:
 ///
 /// * Phase 0: `CREATE SCHEMA` — "platform" + "api_keys_private" plus every
 ///   `CREATE SCHEMA [IF NOT EXISTS] <x>` found in the migration files (dedup,
 ///   sort), applied via `psql_exec`.
-/// * Phase 1: `CREATE TABLE` + codelists — every table file with its FK
-///   constraint lines removed, applied tolerantly (`psql_exec_file_ok`);
-///   per-file errors are collected and warned, not fatal.
+/// * Phase 1: `CREATE TABLE` + codelists — every UNTRACKED table file with
+///   its FK constraint lines removed.
 /// * Phase 2: FK constraints — all `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN
-///   KEY` lines, chunked into bounded batches and applied via `psql_exec`;
-///   per-chunk failure is a warning (the run continues).
+///   KEY` lines from the apply set, chunked into bounded batches.
 /// * Phase 3: aux files (`*_fts.sql`, `*_embedding.sql`,
-///   `*_process_history_view.sql`) via `psql_exec_file_ok`.
-/// * Phase 4: `*_rls.sql` + `*_trigger.sql` via `psql_exec_file_ok`.
+///   `*_process_history_view.sql`).
+/// * Phase 4: `*_rls.sql` + `*_trigger.sql`.
+///
+/// Tracking (issues #756 + #427): files whose `platform._migrations` checksum
+/// matches are SKIPPED (a consecutive run applies ~0 files); a checksum
+/// mismatch re-applies. `--replay-all` bypasses the skip. Failure semantics
+/// are STRICT by default: any per-file (phase 1/3/4) or per-chunk (phase 2)
+/// error FAILS the run with a per-file summary; [`MigrateOptions::lenient`]
+/// downgrades that to loud warnings. The band records in the tracking table
+/// only when it applied without errors — a partial band records nothing
+/// (the #756 contract).
 ///
 /// An advisory lock (key 73287328) is acquired before phase 0 and released
-/// afterwards, on both success and failure paths.
-pub async fn run_api_migrations(migration_dir: &Path, target: &PgTarget) -> OpsResult<()> {
-    run_api_migrations_with_options(migration_dir, target, &GrantOptions::default()).await
+/// afterwards, on both success and failure paths — the same key the
+/// generated boot runner takes, so the two planes cannot interleave.
+pub async fn run_api_migrations(
+    migration_dir: &Path,
+    target: &PgTarget,
+) -> OpsResult<MigrateReport> {
+    run_migrations(migration_dir, target, &MigrateOptions::default()).await
 }
 
-/// [`run_api_migrations`] with explicit [`GrantOptions`].
+/// [`run_api_migrations`] with explicit [`GrantOptions`] (strict failure
+/// semantics — the pre-#427 signature).
 pub async fn run_api_migrations_with_options(
     migration_dir: &Path,
     target: &PgTarget,
     grant: &GrantOptions,
-) -> OpsResult<()> {
+) -> OpsResult<MigrateReport> {
+    run_migrations(
+        migration_dir,
+        target,
+        &MigrateOptions::strict(grant.clone()),
+    )
+    .await
+}
+
+/// [`run_api_migrations`] with full [`MigrateOptions`] — the entry point the
+/// suites call with their CLI/manifest plumbing.
+pub async fn run_migrations(
+    migration_dir: &Path,
+    target: &PgTarget,
+    options: &MigrateOptions,
+) -> OpsResult<MigrateReport> {
     let phases = migration_phases(migration_dir)?;
 
     output::section("Applying migrations");
@@ -407,20 +499,53 @@ pub async fn run_api_migrations_with_options(
         Err(e) => output::warn(format!("extension check failed: {e}")),
     }
 
-    let result = match apply_phases(&phases, target).await {
-        Ok(()) => {
-            output::section("Granting API role access");
-            grant_app_user_access(&phases, target, grant).await
+    // Tracking-aware skip (issue #427): files whose recorded checksum
+    // matches are not re-applied, and their FK lines are excluded from
+    // phase 2. replay_all bypasses the read entirely.
+    let tracked = read_tracking(target).await?;
+    let (apply_view, skipped) = filter_skipped(&phases, &tracked, options.replay_all)?;
+
+    let result = match apply_phases(&apply_view, target).await {
+        Err(e) => Err(e),
+        // A clean or lenient-tolerated band still gets the grant sweep (it
+        // is idempotent and the pre-#427 behavior). The strict/lenient
+        // decision happens on the COLLECTED per-file errors.
+        Ok(errors) => {
+            let grant_result = async {
+                output::section("Granting API role access");
+                grant_app_user_access(&apply_view, target, &options.grant).await
+            };
+            match grant_result.await {
+                Ok(()) if errors.is_empty() => {
+                    record_tracking(&apply_view, target)
+                        .await
+                        .map(|()| MigrateReport {
+                            applied: apply_view.total_files(),
+                            skipped,
+                            failed: 0,
+                        })
+                }
+                Ok(()) if options.lenient => {
+                    for e in &errors {
+                        output::warn(format!("  {e}"));
+                    }
+                    output::warn(format!(
+                        "MIGRATE LENIENT: {} migration error(s) tolerated — the band is \
+                         PARTIAL and was NOT recorded in platform._migrations; the run \
+                         continues only because --migrate-lenient / manifest \
+                         migrate_lenient opted out of the strict default",
+                        errors.len()
+                    ));
+                    Ok(MigrateReport {
+                        applied: apply_view.total_files(),
+                        skipped,
+                        failed: errors.len(),
+                    })
+                }
+                Ok(()) => Err(OpsError::TestFailure(migration_error_summary(&errors))),
+                Err(e) => Err(e),
+            }
         }
-        Err(e) => Err(e),
-    };
-    // Issue #756: record the band in the ONE tracking table the generated
-    // app's boot runner reads, so a later boot over this database applies
-    // nothing. Only a COMPLETE band records — a partial band records nothing
-    // and the boot runner's object-existence adoption probe covers it.
-    let result = match result {
-        Ok(()) => record_tracking(&phases, target).await,
-        Err(e) => Err(e),
     };
 
     match crate::db::advisory_unlock(target, MIGRATION_LOCK_KEY).await {
@@ -428,6 +553,21 @@ pub async fn run_api_migrations_with_options(
         Err(e) => output::warn(format!("advisory unlock failed: {e}")),
     }
     result
+}
+
+/// The per-file summary a failing migrate stage carries (into the error, the
+/// suite output and the results JSON). Pure so it is unit-testable.
+fn migration_error_summary(errors: &[String]) -> String {
+    let mut out = format!(
+        "{} migration file(s)/chunk(s) failed — the database is in a PARTIAL \
+         state and nothing was recorded:",
+        errors.len()
+    );
+    for e in errors {
+        out.push_str("\n  - ");
+        out.push_str(e);
+    }
+    out
 }
 
 /// Domain schemas the app role needs DML on: every schema discovered from the
@@ -528,7 +668,10 @@ async fn verify_grant_access(
         .lines()
         .filter(|l| !l.trim().is_empty())
         .map(|l| {
-            let mut parts = l.split('\t');
+            // psql -t -A joins columns with `|`; the old '\t' split turned
+            // every missing-grant row into one garbled "schema|table"
+            // diagnostic.
+            let mut parts = l.split('|');
             let schema = parts.next().unwrap_or("?");
             let table = parts.next().unwrap_or("?");
             format!("{schema}.{table}")
@@ -581,6 +724,131 @@ fn fnv1a_64_hex(bytes: &[u8]) -> String {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("{hash:016x}")
+}
+
+/// FNV-1a 64-bit hex over a file's ORIGINAL bytes — the checksum the
+/// tracking table records and the skip filter compares (issue #756/#427).
+fn file_checksum(path: &Path) -> OpsResult<String> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| OpsError::Command(format!("read {} for checksum: {e}", path.display())))?;
+    Ok(fnv1a_64_hex(&bytes))
+}
+
+/// Read `platform._migrations` as a name → checksum map. An absent table (a
+/// fresh database, or after [`clear_tracking`]) is an empty map — first
+/// application applies everything.
+async fn read_tracking(target: &PgTarget) -> OpsResult<std::collections::HashMap<String, String>> {
+    let exists = crate::db::psql_query(
+        target,
+        "SELECT to_regclass('platform._migrations') IS NOT NULL;",
+    )
+    .await
+    .map(|v| v.trim().ends_with('t'))
+    .unwrap_or(false);
+    if !exists {
+        return Ok(std::collections::HashMap::new());
+    }
+    let rows =
+        crate::db::psql_query(target, "SELECT name, checksum FROM platform._migrations;").await?;
+    Ok(rows
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| {
+            // psql -t -A joins columns with `|` (the separator every
+            // psql_query caller parses; a '\t' split silently yields an
+            // EMPTY map and the skip would never fire). Migration filenames
+            // are generated snake_case — they never carry `|`.
+            let mut parts = l.split('|');
+            let name = parts.next()?;
+            let checksum = parts.next()?;
+            Some((name.to_string(), checksum.to_string()))
+        })
+        .collect())
+}
+
+/// Clear the tracking table (issue #427 reset semantics): after a reset
+/// wiped the domain schemas, stale rows would make the next run SKIP every
+/// file against a database that no longer has them. The table is dropped
+/// (the boot runner's adoption contract treats an absent table as
+/// adoptable; [`record_tracking`] recreates it). Schema-absent is tolerated.
+pub async fn clear_tracking(target: &PgTarget) -> OpsResult<()> {
+    crate::db::psql_exec(
+        target,
+        "CREATE SCHEMA IF NOT EXISTS platform;\n\
+         DROP TABLE IF EXISTS platform._migrations;",
+    )
+    .await
+}
+
+/// Split the phase plan into the files to APPLY this run (dropping every
+/// file whose recorded checksum matches — the consecutive-run ~0-files
+/// acceptance) and the skip count. `replay_all` bypasses the tracking read
+/// entirely. A checksum MISMATCH re-applies the file and the post-band
+/// upsert refreshes the recorded value. A checksum read error is a hard
+/// error (fail closed — never apply blindly on a broken read). Pure over
+/// `tracked` so it is unit-testable.
+fn filter_skipped(
+    phases: &MigrationPhases,
+    tracked: &std::collections::HashMap<String, String>,
+    replay_all: bool,
+) -> OpsResult<(MigrationPhases, usize)> {
+    if replay_all {
+        return Ok((phases.clone(), 0));
+    }
+    let mut keep = Vec::with_capacity(phases.total_files());
+    for path in phases
+        .tables
+        .iter()
+        .chain(phases.aux.iter())
+        .chain(phases.rls_triggers.iter())
+    {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let keep_this = match tracked.get(&name) {
+            Some(recorded) => file_checksum(path)? != *recorded,
+            None => true,
+        };
+        keep.push(keep_this);
+    }
+    let mut it = keep.into_iter();
+    let mut kept = |list: &[PathBuf]| -> Vec<PathBuf> {
+        list.iter()
+            .zip(&mut it)
+            .filter(|(_, keep)| *keep)
+            .map(|(p, _)| p.clone())
+            .collect::<Vec<_>>()
+    };
+    let tables = kept(&phases.tables);
+    let aux = kept(&phases.aux);
+    let rls_triggers = kept(&phases.rls_triggers);
+    let skipped = phases.total_files() - (tables.len() + aux.len() + rls_triggers.len());
+    // A skipped file's FK lines must not re-apply either: keep only the
+    // groups whose source file is still in the apply set.
+    let kept_names: std::collections::HashSet<String> = tables
+        .iter()
+        .chain(aux.iter())
+        .chain(rls_triggers.iter())
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+    let fk_lines_by_file = phases
+        .fk_lines_by_file
+        .iter()
+        .filter(|(name, _)| kept_names.contains(name))
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok((
+        MigrationPhases {
+            schemas: phases.schemas.clone(),
+            tables,
+            fk_lines_by_file,
+            aux,
+            rls_triggers,
+            ignored: phases.ignored.clone(),
+        },
+        skipped,
+    ))
 }
 
 /// Record the applied band in `platform._migrations` (issue #756). Called
@@ -644,7 +912,13 @@ async fn record_tracking(phases: &MigrationPhases, target: &PgTarget) -> OpsResu
     Ok(())
 }
 
-async fn apply_phases(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<()> {
+/// Apply the phase plan, collecting every per-file (phases 1/3/4) and
+/// per-chunk (phase 2) error — the caller decides fatal vs lenient-tolerated
+/// (issue #427). Warnings print inline as they happen, so the output is
+/// readable even before the summary. `Ok(errors)` with an empty vec = clean.
+async fn apply_phases(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<Vec<String>> {
+    let mut errors: Vec<String> = Vec::new();
+
     // Phase 0: CREATE SCHEMA upfront so cross-schema references resolve.
     let schema_sql = phases
         .schemas
@@ -657,14 +931,14 @@ async fn apply_phases(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<
         .map_err(|e| OpsError::Command(format!("phase 0 (CREATE SCHEMA) failed: {e}")))?;
     output::ok("All schemas created");
 
-    // Phase 1: CREATE TABLE + codelists, without FK lines. Errors are
-    // collected and warned — the FK phase may still succeed.
-    let mut errors: Vec<String> = Vec::new();
+    // Phase 1: CREATE TABLE + codelists, without FK lines.
     for file in &phases.tables {
         let content = match std::fs::read_to_string(file) {
             Ok(c) => c,
             Err(e) => {
-                errors.push(format!("{}: read failed: {e}", file.display()));
+                let line = format!("{}: read failed: {e}", file.display());
+                output::warn(format!("  {line}"));
+                errors.push(line);
                 continue;
             }
         };
@@ -675,12 +949,16 @@ async fn apply_phases(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<
         let temp = match write_phase1_file(file, &filtered) {
             Ok(p) => p,
             Err(e) => {
-                errors.push(format!("{}: temp write failed: {e}", file.display()));
+                let line = format!("{}: temp write failed: {e}", file.display());
+                output::warn(format!("  {line}"));
+                errors.push(line);
                 continue;
             }
         };
-        if let Err(e) = crate::db::psql_exec_file_ok(target, &temp).await {
-            errors.push(format!("{}: {e}", file.display()));
+        if let Err(e) = crate::db::psql_exec_file_strict(target, &temp).await {
+            let line = format!("{}: {e}", file.display());
+            output::warn(format!("  {line}"));
+            errors.push(line);
         }
         let _ = std::fs::remove_file(&temp);
     }
@@ -688,72 +966,77 @@ async fn apply_phases(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<
         output::ok(format!("Tables created ({} files)", phases.tables.len()));
     } else {
         output::warn(format!(
-            "Table creation: {}/{} file(s) had errors (continuing to FK phase)",
+            "Table creation: {}/{} file(s) had errors",
             errors.len(),
             phases.tables.len()
         ));
-        for e in &errors {
-            output::warn(format!("  {e}"));
-        }
     }
 
     // Phase 2: FK constraints, chunked into bounded batches so the argv
     // limit is never hit (669 migration files join to >128KB of SQL).
-    if !phases.fk_lines.is_empty() {
-        let chunks = chunk_sql(&phases.fk_lines, FK_CHUNK_LINES);
-        let mut failed = 0usize;
-        for chunk in &chunks {
-            match crate::db::psql_exec(target, chunk).await {
-                Ok(()) => {}
-                Err(e) => {
-                    failed += 1;
-                    output::warn(format!(
-                        "FK constraint batch failed (continuing): {}",
-                        error_tail(&e.to_string(), 400)
-                    ));
-                }
+    let fk_lines = phases.all_fk_lines();
+    if !fk_lines.is_empty() {
+        let chunks = chunk_sql(&fk_lines, FK_CHUNK_LINES);
+        let before = errors.len();
+        for (index, chunk) in chunks.iter().enumerate() {
+            if let Err(e) = crate::db::psql_exec(target, chunk).await {
+                let line = format!(
+                    "FK constraint batch {}/{}: {}",
+                    index + 1,
+                    chunks.len(),
+                    error_tail(&e.to_string(), 400)
+                );
+                output::warn(format!("  {line}"));
+                errors.push(line);
             }
         }
-        if failed == 0 {
+        if errors.len() == before {
             output::ok(format!(
                 "FK constraints applied ({} chunk(s))",
-                chunks.len()
-            ));
-        } else {
-            output::warn(format!(
-                "FK constraints: {failed}/{} chunk(s) failed",
                 chunks.len()
             ));
         }
     }
 
     // Phase 3: FTS, embeddings, process-history views.
-    let mut aux_count = 0usize;
+    let mut aux_errors = 0usize;
     for file in &phases.aux {
-        if let Err(e) = crate::db::psql_exec_file_ok(target, file).await {
-            output::warn(format!("{}: {e}", file.display()));
+        if let Err(e) = crate::db::psql_exec_file_strict(target, file).await {
+            let line = format!("{}: {e}", file.display());
+            output::warn(format!("  {line}"));
+            errors.push(line);
+            aux_errors += 1;
         }
-        aux_count += 1;
     }
-    output::ok(format!(
-        "FTS + embeddings + views applied ({aux_count} files)"
-    ));
+    if aux_errors == 0 {
+        output::ok(format!(
+            "FTS + embeddings + views applied ({} files)",
+            phases.aux.len()
+        ));
+    }
 
     // Phase 4: RLS + triggers.
-    let mut rls_count = 0usize;
+    let mut rls_errors = 0usize;
     for file in &phases.rls_triggers {
-        if let Err(e) = crate::db::psql_exec_file_ok(target, file).await {
-            output::warn(format!("{}: {e}", file.display()));
+        if let Err(e) = crate::db::psql_exec_file_strict(target, file).await {
+            let line = format!("{}: {e}", file.display());
+            output::warn(format!("  {line}"));
+            errors.push(line);
+            rls_errors += 1;
         }
-        rls_count += 1;
     }
-    output::ok(format!("RLS + triggers applied ({rls_count} files)"));
+    if rls_errors == 0 {
+        output::ok(format!(
+            "RLS + triggers applied ({} files)",
+            phases.rls_triggers.len()
+        ));
+    }
 
-    let total = phases.tables.len() + phases.aux.len() + phases.rls_triggers.len();
     output::info(format!(
-        "applied {total} migration files (tables/codelists: {}, FK lines: {}, FTS/embeddings/views: {}, RLS/triggers: {})",
+        "applied {} migration files this run (tables/codelists: {}, FK lines: {}, FTS/embeddings/views: {}, RLS/triggers: {})",
+        phases.total_files(),
         phases.tables.len(),
-        phases.fk_lines.len(),
+        fk_lines.len(),
         phases.aux.len(),
         phases.rls_triggers.len(),
     ));
@@ -769,7 +1052,7 @@ async fn apply_phases(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<
             names.join(", ")
         ));
     }
-    Ok(())
+    Ok(errors)
 }
 
 #[cfg(test)]
@@ -837,8 +1120,9 @@ mod tests {
         assert_eq!(phases.tables.len(), 2, "a_core.sql + pgmq_extra.sql");
         assert_eq!(phases.aux.len(), 3);
         assert_eq!(phases.rls_triggers.len(), 2);
-        assert_eq!(phases.fk_lines.len(), 1);
-        assert!(phases.fk_lines[0].contains("ADD CONSTRAINT"));
+        let fk_lines = phases.all_fk_lines();
+        assert_eq!(fk_lines.len(), 1);
+        assert!(fk_lines[0].contains("ADD CONSTRAINT"));
         assert!(phases.tables[0].ends_with("a_core.sql"));
         assert!(phases.tables[1].ends_with("pgmq_extra.sql"));
         assert_eq!(phases.ignored.len(), 1);
@@ -882,11 +1166,85 @@ mod tests {
         );
         assert!(phases.schemas.iter().any(|s| s == "basejump"));
         assert!(phases.schemas.iter().any(|s| s == "platform"));
+        let fk_lines = phases.all_fk_lines();
         assert!(
-            phases.fk_lines.iter().any(|l| l.contains("fk_owner")),
-            "basejump FK lines must be deferred to phase 2, got {:?}",
-            phases.fk_lines
+            fk_lines.iter().any(|l| l.contains("fk_owner")),
+            "basejump FK lines must be deferred to phase 2, got {fk_lines:?}"
         );
+        // FK lines are attributed per source file — the tracking-skip filter
+        // drops a skipped file's group (issue #427).
+        assert_eq!(phases.fk_lines_by_file.len(), 1);
+        assert_eq!(phases.fk_lines_by_file[0].0, "0001_basejump_install.sql");
+    }
+
+    /// The tracking-skip filter (issue #427): checksum-matching files drop
+    /// out of the apply view (and their FK groups with them), mismatches
+    /// stay, untracked files stay, and replay_all bypasses everything.
+    #[test]
+    fn filter_skipped_drops_matching_and_keeps_mismatched() {
+        let dir = fake_dir(&[
+            (
+                "001_same.sql",
+                "CREATE TABLE same ();\nALTER TABLE same ADD CONSTRAINT fk1 FOREIGN KEY (a) REFERENCES b(id);\n",
+            ),
+            (
+                "002_changed.sql",
+                "CREATE TABLE changed ();\nALTER TABLE changed ADD CONSTRAINT fk2 FOREIGN KEY (a) REFERENCES b(id);\n",
+            ),
+            ("003_new.sql", "CREATE TABLE new ();"),
+        ]);
+        let phases = migration_phases(dir.path()).unwrap();
+        assert_eq!(phases.total_files(), 3);
+
+        let mut tracked = std::collections::HashMap::new();
+        tracked.insert(
+            "001_same.sql".to_string(),
+            file_checksum(&dir.path().join("001_same.sql")).unwrap(),
+        );
+        tracked.insert(
+            "002_changed.sql".to_string(),
+            "deadbeefdeadbeef".to_string(),
+        );
+
+        let (view, skipped) = filter_skipped(&phases, &tracked, false).unwrap();
+        assert_eq!(skipped, 1, "only the checksum match skips");
+        let names: Vec<String> = view
+            .tables
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(names, vec!["002_changed.sql", "003_new.sql"]);
+        // The skipped file's FK group must not survive into phase 2.
+        assert_eq!(view.fk_lines_by_file.len(), 1);
+        assert_eq!(view.fk_lines_by_file[0].0, "002_changed.sql");
+
+        // replay_all bypasses the skip entirely.
+        let (all, skipped) = filter_skipped(&phases, &tracked, true).unwrap();
+        assert_eq!(skipped, 0);
+        assert_eq!(all.total_files(), 3);
+        assert_eq!(all.all_fk_lines().len(), 2);
+    }
+
+    #[test]
+    fn migration_error_summary_names_every_file() {
+        let summary = migration_error_summary(&["001_a.sql: syntax error".into()]);
+        assert!(summary.contains("1 migration file"), "{summary}");
+        assert!(summary.contains("001_a.sql"), "{summary}");
+        assert!(summary.contains("PARTIAL"), "{summary}");
+        let two = migration_error_summary(&[
+            "001_a.sql: syntax error".into(),
+            "002_b.sql: relation missing".into(),
+        ]);
+        assert!(two.contains("002_b.sql"), "{two}");
+    }
+
+    #[test]
+    fn migrate_options_default_to_strict_and_unless_replayed() {
+        let opts = MigrateOptions::default();
+        assert!(!opts.lenient, "fail-on-error is the default (issue #427)");
+        assert!(!opts.replay_all);
+        let strict = MigrateOptions::strict(GrantOptions::default());
+        assert!(!strict.lenient && !strict.replay_all);
     }
 
     #[test]

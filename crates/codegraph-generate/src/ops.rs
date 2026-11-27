@@ -78,6 +78,7 @@ fn default_api_db_target(port: u16) -> OpsDbTarget {
         seed_sql: None,
         grant_role: None,
         grant_strict: None,
+        migrate_lenient: None,
     }
 }
 
