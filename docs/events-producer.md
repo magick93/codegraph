@@ -1,13 +1,15 @@
 # Events producer v1 — the refusal contract (issue #820)
 
-Status: **contract published** (implementation slice pending; the
-`events_producer` flag stays **OFF** by default, so output is byte-identical).
+Status: **slices (a) and (b) landed; slice (c) adds the catalogue marks**
+(issue #820). The `events_producer` flag stays **OFF** by default, so every
+shipped profile's output is byte-identical — the marks below render only when a
+run enables the flag.
 
 This document is the interface the consumer codes against: the exact message
 shape for every generation-time refusal the producer planner can raise, so
 payload-field renames in a model can be done **before** the flag is turned on.
-It is normative for the implementation slice: the emitted strings are pinned by
-KATs in the same PR that lands the planner.
+It is normative: the emitted strings are pinned by KATs in the same PR that
+lands each slice.
 
 ## Where the messages surface
 
@@ -270,6 +272,40 @@ from inside the command's transaction:
   409/403 paths); a plain patch publishes only when a write happened (never on
   the idempotent-read arm).
 
+## Catalogue marks (slice c)
+
+With `events_producer` ON, the generated `docs/events.md` marks every declared
+event's runtime publication with ONE line, its own paragraph, directly after
+the event's metadata table (before `### Payload`):
+
+```
+Runtime publication: published at runtime by {Service}.{op} (arm: {arm}; queue: {queue})
+```
+
+- `{arm}` is `transition` or `patch` (the publishing arms); `{queue}` is the
+  plan's own bound queue — `ProducerChannel.queue` from the same planner run,
+  never a re-derived channel name.
+- Several emitting operations and/or channels stay ONE line: the operations
+  join with `", "` in declaration order, and the keys pluralize with their
+  deduped values in the plan's order — `arms: transition, patch` /
+  `queues: events_audit, events_orders`.
+- A declared event that no modeled service operation binds carries:
+
+```
+Runtime publication: not emitted — no modeled service operation declares this event
+```
+
+**Refusals and warnings are deliberately NOT rendered in the catalogue.** A
+flag-ON run hard-fails on every R*/W* finding before any file is written
+(`ValidationPass::check_event_producers`), so a written tree cannot contain a
+refused binding — the mark above would be dead text. Those sentences stay on
+the validation and `codegraph doctor` surfaces (see above).
+
+The marks are gated on the flag exactly like the publishing seam: flag OFF ⇒ no
+planner report reaches the catalogue ⇒ `docs/events.md` is byte-identical to
+the pre-slice-(c) document. The projector takes the report as `Option`, so the
+projection is pure and unit-testable without an engine.
+
 ## Sequencing with pherolang (EV2 / EV3)
 
 - **EV2** (arm-scoped emissions) is the grammar that lets a contract declare
@@ -282,5 +318,6 @@ from inside the command's transaction:
 - Neither blocks publishing this contract. The v1 implementation slices:
   (a) planner + R1–R9 KATs + doctor diagnostics (flag OFF, byte-identical),
   (b) the transaction seam + typed construction + the rollback live gate
-  (flag ON), (c) the catalogue section that marks each event
-  `published at runtime` / `not emitted (<refusal>)`.
+  (flag ON), (c) the catalogue marks — `published at runtime` for a planned
+  event, `not emitted` for a declared event no operation binds (refusal marks
+  are unreachable once (a)'s fail-closed validation runs first).

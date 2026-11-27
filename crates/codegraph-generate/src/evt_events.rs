@@ -490,6 +490,10 @@ pub struct EvtEventsGenerator {
     /// `src/event_handlers/handlers.rs` on every run, so the implementation
     /// survives a clean clone/regenerate.
     event_handlers_source: Option<PathBuf>,
+    /// This run's events-producer report (issue #820 slice c). `Some` only
+    /// under the `events_producer` flag with at least one planned publish —
+    /// the catalogue's runtime-publication marks are rendered from it.
+    producer_report: Option<std::sync::Arc<crate::events::producer::ProducerReport>>,
 }
 
 impl EvtEventsGenerator {
@@ -498,12 +502,24 @@ impl EvtEventsGenerator {
             output_dir: output_dir.to_path_buf(),
             workers_topology: false,
             event_handlers_source: None,
+            producer_report: None,
         }
     }
 
     /// Point the consumer-handler seam at a committed source file.
     pub fn with_event_handlers(mut self, source: Option<PathBuf>) -> Self {
         self.event_handlers_source = source;
+        self
+    }
+
+    /// Hand the run's events-producer report in (issue #820 slice c). The
+    /// catalogue reads it for the runtime-publication marks; `None` (the
+    /// default, and every flag-OFF run) renders no marks.
+    pub fn with_producer_report(
+        mut self,
+        report: Option<std::sync::Arc<crate::events::producer::ProducerReport>>,
+    ) -> Self {
+        self.producer_report = report;
         self
     }
 
@@ -546,7 +562,12 @@ impl GlobalGenerator for EvtEventsGenerator {
             _ => crate::events::EnvelopeVariant::Native,
         };
         let ddd_models = db.get_ddd_models().await.unwrap_or_default();
-        let docs = crate::events::docs::document_artifacts(&arch, variant, &ddd_models);
+        let docs = crate::events::docs::document_artifacts(
+            &arch,
+            variant,
+            &ddd_models,
+            self.producer_report.as_deref(),
+        );
         let docs: Vec<GeneratedFile> = docs
             .into_iter()
             .map(|d| GeneratedFile {

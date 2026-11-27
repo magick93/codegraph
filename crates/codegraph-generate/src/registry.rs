@@ -465,6 +465,7 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
     global_gens.push(Box::new(
         evt_events::EvtEventsGenerator::new(output_dir)
             .with_workers_topology(ctx.workers_topology)
+            .with_producer_report(ctx.producer_report().cloned())
             .with_event_handlers(ctx.config.events.handlers.as_ref().map(|p| {
                 ctx.domain_config_dir
                     .map(|dir| dir.join(p))

@@ -75,18 +75,25 @@ impl ProducerPlanIndex {
     }
 }
 
-/// Build the index for a generation run (the flag gates the work).
-pub async fn plan_index_for_run(
+/// Build the run's producer report (the flag gates the work).
+///
+/// ONE planner run feeds every consumer: the publishing plane derives its
+/// [`ProducerPlanIndex`] from this report and the catalogue plane (#820
+/// slice c) reads the SAME report for its runtime-publication marks — never
+/// a second run, never a re-derivation. `None` when the analysis could not
+/// run or yielded no publishable plan, which is exactly the pre-slice-(c)
+/// index gate: a flag-ON run with nothing to publish renders no marks, and
+/// a flag-OFF run never gets here.
+pub async fn report_for_run(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
     workers_topology: bool,
     database_target: crate::db::dialect::DatabaseTarget,
-) -> Option<Arc<ProducerPlanIndex>> {
+) -> Option<Arc<ProducerReport>> {
     let report = plan_for_graph(db, config, workers_topology, database_target)
         .await
         .ok()?;
-    let index = ProducerPlanIndex::from_report(&report);
-    (!index.is_empty()).then(|| Arc::new(index))
+    (!report.plans.is_empty()).then(|| Arc::new(report))
 }
 
 /// Run the planner over an arbitrary source. An error means the analysis

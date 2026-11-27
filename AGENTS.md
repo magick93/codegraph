@@ -2320,9 +2320,7 @@ OFF = zero diagnostics, byte-identical).
   in `docs/tdd/820a-events-producer-planner.tdd.md` (drop the `_code`
   projection → the nearest KAT fails; ignore the flag → the flag-off pins
   fail).
-- **Deferred**: publishing (transaction seam, typed construction, rollback
-  live gate), the catalogue's published/refused marks, a doctor source CLI
-  knob.
+- **Deferred**: a doctor source CLI knob.
 
 ### The events producer publishing plane (issue #820 slice b)
 
@@ -2383,12 +2381,78 @@ review-fixture drift, evt pipeline/workers and ux/policy canaries hold).
   Record: `docs/tdd/820b-events-producer-publishing.tdd.md` (teeth: ignore
   the flag → the flag-off emit golden fails; publish on `&self.db` instead
   of `&tx` → the rollback pin fails).
-- **Deferred**: the catalogue's published/refused marks (slice c), a workers
-  live gate for the publishing plane (action handlers are monolith-only; the
-  cornucopia leg is template-pinned and wasm-compiled), statement-body
-  publishing arms, and an operator-preinstalled admin-owned `pgmq` (the
-  template cannot grant as a non-owner; the standard migration-owned path is
-  what the gate proves).
+- **Deferred**: a workers live gate for the publishing plane (action handlers
+  are monolith-only; the cornucopia leg is template-pinned and wasm-compiled),
+  statement-body publishing arms, and an operator-preinstalled admin-owned
+  `pgmq` (the template cannot grant as a non-owner; the standard
+  migration-owned path is what the gate proves). The catalogue's marks landed
+  in slice (c) — see the section above.
+
+### The events producer catalogue marks (issue #820 slice c)
+
+With `events_producer = true`, the generated `docs/events.md` marks every
+declared event's runtime publication. Flag OFF (the shipped default) keeps the
+catalogue byte-identical — the marks render only when the run's producer
+report is present, so no shipped profile moves and no canary re-blesses.
+
+- **ONE planner run, two consumers**: `build_generator_context` now builds a
+  `ProducerReport` (`producer::report_for_run`, `None` when the flag is off or
+  no plan exists — the exact pre-slice gate) and derives the slice-(b)
+  `ProducerPlanIndex` from it, storing both on `GeneratorContext`. The events
+  generator gets the report via `EvtEventsGenerator::with_producer_report`
+  (registry-wired, the `.with_event_handlers` precedent). No second planner
+  run, no graph data, no `GRAPH_FORMAT_VERSION` move.
+- **Pure projection** (`events/docs.rs::runtime_publication_mark`, threaded as
+  `catalogue_markdown(…, producer_report: Option<&ProducerReport>)` and
+  `document_artifacts(…, producer_report)`): one line, its own paragraph,
+  directly after the per-event metadata table (before `### Payload`) —
+  `Runtime publication: published at runtime by {Service}.{op} (arm:
+  transition|patch; queue: {queue})`. Several emitting operations and/or
+  channels stay ONE line: ops join `", "` in declaration order, and the keys
+  pluralize with their deduped values in the plan's order (`arms: …`,
+  `queues: …`). Queues are the plan's own `publish` list —
+  `ProducerChannel.queue`, never a re-derived channel name. A declared event no
+  operation binds renders `Runtime publication: not emitted — no modeled
+  service operation declares this event`.
+- **Refusal marks are NOT rendered, by construction**: a flag-ON run hard-fails
+  every R*/W* finding in `ValidationPass::check_event_producers` before any
+  file is written, so a refused binding cannot exist in a written tree. The
+  sentences stay on the validation + doctor surfaces (`docs/events-producer.md`
+  is normative for both).
+- **Corpus fixture** (`crates/codegraph/tests/fixtures/events_producer_corpus/`):
+  one `.mox` (a nullable feature, a contained VO collection, a
+  workflow-managed status, a String money field; plus a machine-bearing
+  second class) with its `.ddd`/`.evt`, encoding class A (clean record
+  payload), class B (clock + `previousState`/`nextState` + correlation/
+  organization context) and class C by FIRST blocker: R1 near-miss
+  (`statusCode` → `status`), R1 no candidate (`xyzzy`), R2 nullable source,
+  R3 contained-child-only source, R7 `String` payload vs `i32` column, R9
+  `previousState` on a machine-less patch, and R4 no-runtime-site (a
+  `protected` op + a `findAll` seam) so "no partial publish" is evidenced.
+- **Gates**: `cargo test -p codegraph --test events_producer_corpus_tests` (5:
+  the exact documented sentences in declaration order over the FULL corpus +
+  no plan for any refused pair + flag-ON hard errors / flag-OFF silence + a
+  plan-less flag-OFF run succeeding; then generation over a CLEAN A/B subset
+  asserting `publish_*_in_tx(` per class and the EXACT catalogue lines —
+  single/multi-op, `arm:`/`arms:`, `queue:`/`queues:`, and the unbound line —
+  plus the enumerated flag-ON → flag-OFF delta: stripping the mark lines
+  reproduces the flag-OFF catalogue byte-for-byte) + the shipped-default pin
+  (`shipped_profiles_keep_the_producer_flag_off` — the repo's in-test profiles
+  never read `profiles.toml`, so this is the only pin on the product default,
+  and it is what mutation proof 2 bites) + the in-crate
+  `events::docs::producer_mark_tests` (2 pluralization/unbound/no-report KATs)
+  + the extended `events_producer_live_gate` (the generated catalogue carries
+  both payroll marks naming their real queues) + the standing evt/ux/policy
+  canaries (no movement: no canaried tree enables the flag).
+  Record: `docs/tdd/820c-events-producer-catalogue.tdd.md` (teeth: drop the
+  mark line → the corpus catalogue assertion fails; flip
+  `events_producer = true` in the shipped `profiles.toml` → the flag-off
+  byte-identity pins fail).
+- **Deferred**: statement-body publishing arms, a workers live gate for the
+  publishing plane (action handlers are monolith-only; the cornucopia leg is
+  template-pinned and wasm-compiled), an operator-preinstalled admin-owned
+  `pgmq`, and a per-event *refusal* mark (unreachable until a flag-ON run can
+  write a tree with refusals — today it cannot).
 
 ## Deployment models as generator input (pherolang #49)
 
