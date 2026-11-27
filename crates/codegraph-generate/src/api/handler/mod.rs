@@ -25,6 +25,7 @@ mod guards;
 mod imports;
 pub mod include_deleted;
 mod invariants;
+mod producer;
 
 use guards::build_guard_blocks;
 use imports::build_handler_imports;
@@ -819,35 +820,14 @@ impl EntityGenerator for HandlerGenerator {
                     route.create_invariant_block = invariant_blocks.create_block.clone();
                 }
             }
-            // Events-producer publishing (issue #820 slice b): an Update
-            // route with planned events calls `update_with_events` and passes
-            // the outgoing variants. Attached BEFORE the execution blocks are
-            // re-rendered (the update tail reads the argument).
-            if let Some(index) = &self.producer_plans {
-                let plans = index.for_entity(&domain, schema_title);
-                for route in service_ops.iter_mut() {
-                    if !matches!(
-                        route.execution,
-                        crate::ddd::service_ops::ExecutionKind::Update { .. }
-                    ) {
-                        continue;
-                    }
-                    let op_plans: Vec<_> = plans
-                        .iter()
-                        .filter(|plan| plan.service == route.service && plan.op == route.op_name)
-                        .cloned()
-                        .collect();
-                    if !op_plans.is_empty() {
-                        route.publish_arg =
-                            Some(crate::events::producer::render::render_handler_call(
-                                &op_plans,
-                                &domain,
-                                &module_name,
-                                &entity_name,
-                            ));
-                    }
-                }
-            }
+            producer::attach_publish_args(
+                &mut service_ops,
+                self.producer_plans.as_ref(),
+                &domain,
+                schema_title,
+                &module_name,
+                &entity_name,
+            );
             // Issue #778: the execution blocks are pre-rendered from the
             // route, so every route is re-rendered ONCE here — after the
             // post-pass attached the invariant/guard slots above, before
