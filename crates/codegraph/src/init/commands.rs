@@ -1432,6 +1432,17 @@ fn check_ifml_files(ifml_files: &[PathBuf]) -> (usize, usize) {
                     .filter(|raw| matches!(raw.rsplit('.').next(), Some("actor") | Some("json")))
                     .cloned()
                     .collect();
+                // Issue #605: a file importing only non-policy sources (e.g.
+                // a `.mox` domain) has nothing to resolve — that is not a
+                // failed policy compile. `resolve_actor_policy(&[])` returns
+                // `None`, which must not read as "none compile".
+                if policy_imports.is_empty() {
+                    println!(
+                        "INFO ifml — {}: no policy imports; requires:/roles: are unchecked",
+                        path.display()
+                    );
+                    continue;
+                }
                 let policy =
                     crate::ifml_actor_import::resolve_actor_policy(&policy_imports, base_dir);
                 match policy {

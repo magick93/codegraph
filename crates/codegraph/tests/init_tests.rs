@@ -3016,3 +3016,92 @@ fn doctor_warns_once_on_a_protected_op_an_ifml_action_binds() {
         "the bound protected op must warn: {bound_summary:?}"
     );
 }
+
+// ── doctor --ifml-files with zero policy imports (issue #605) ──────────────
+
+/// The DOCTOR_IFML model importing ONLY a `.mox` domain — no `.actor`/`.json`.
+fn doctor_ifml_mox_only() -> String {
+    DOCTOR_IFML.replace("import \"portal.actor\";", "import \"portal.mox\";")
+}
+
+/// An `.ifml` whose imports carry no policy (only a `.mox`) is not a
+/// failed policy compile: doctor exits 0 and prints the INFO line naming
+/// that `requires:`/`roles:` are unchecked (issue #605).
+#[test]
+fn doctor_ifml_without_policy_imports_is_info_not_failure() {
+    let dir = TempDir::new().unwrap();
+    cmd_init(&init_args(dir.path(), "demo-app", None, false)).unwrap();
+    let project = dir.path().join("demo-app");
+    fs::write(project.join("portal.mox"), DOCTOR_IFML_MOX).unwrap();
+    let ifml = project.join("app.ifml");
+    fs::write(&ifml, doctor_ifml_mox_only()).unwrap();
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_codegraph"))
+        .arg("doctor")
+        .arg("--config")
+        .arg(project.join("domains.toml"))
+        .arg("--profiles-config")
+        .arg(project.join("profiles.toml"))
+        .arg("--mox-files")
+        .arg(project.join("model/common.mox"))
+        .arg("--ifml-files")
+        .arg(&ifml)
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "a policy-free ifml must not fail doctor:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("INFO ifml — ")
+            && stdout.contains("no policy imports; requires:/roles: are unchecked"),
+        "doctor must say the policy gate is unchecked:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("none compile"),
+        "a policy-free ifml must not read as a failed policy compile:\n{stdout}"
+    );
+}
+
+/// The twin: an `.actor` import that exists but does not compile stays a
+/// HARD failure — the #605 early-out covers only the zero-import case.
+#[test]
+fn doctor_ifml_broken_policy_import_stays_hard_failure() {
+    let dir = TempDir::new().unwrap();
+    cmd_init(&init_args(dir.path(), "demo-app", None, false)).unwrap();
+    let project = dir.path().join("demo-app");
+    fs::write(project.join("portal.mox"), DOCTOR_IFML_MOX).unwrap();
+    fs::write(
+        project.join("portal.actor"),
+        "actors { this is not an actor file",
+    )
+    .unwrap();
+    let ifml = project.join("app.ifml");
+    fs::write(&ifml, DOCTOR_IFML).unwrap();
+
+    let err = cmd_doctor(&DoctorArgs {
+        config: project.join("domains.toml"),
+        schemas: None,
+        classifier: None,
+        profiles_config: Some(project.join("profiles.toml")),
+        mox_files: vec![project.join("model/common.mox")],
+        rosetta_files: vec![],
+        ddd_files: vec![],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![ifml],
+        extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
+    })
+    .unwrap_err();
+    assert!(
+        format!("{err}").contains("hard check"),
+        "a broken policy import must stay a hard failure: {err}"
+    );
+}
