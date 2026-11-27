@@ -70,6 +70,15 @@ pub struct DdlContext {
     /// parent's own INSERT trigger always stamps the session org, so it has
     /// no legacy rows to repair and keeps the zero tolerance in its policies.
     pub tenant_backfill: Option<TenantBackfill>,
+    /// For a MEDIA child table (issue #701): its parent-FK column, which the
+    /// child's RLS migration dedups on (newest row per parent kept, `id DESC`
+    /// — the display rule) and then makes UNIQUE, so the upload handler's
+    /// `INSERT … ON CONFLICT ({parent_fk}) DO UPDATE` enforces one reference
+    /// row per (parent, field). `None` everywhere else: non-media `[0..1]`
+    /// children keep their DDL byte-identical (their replace race is a
+    /// recorded follow-up).
+    #[serde(default)]
+    pub media_unique_parent_fk: Option<String>,
 }
 
 /// A child table's backfill source (issue #700). Every writer of a child row
@@ -178,6 +187,13 @@ pub struct ChildTableDef {
     pub foreign_keys: Vec<ForeignKeyDef>,
     pub check_constraints: Vec<CheckConstraint>,
     pub child_tables: Vec<ChildTableDef>,
+    /// `true` for a MEDIA reference child table (issue #701): one reference
+    /// row per (parent, field), enforced by a UNIQUE index on
+    /// `parent_fk_column` that the upload handler's upsert targets. Emitted
+    /// in the child's RLS migration (inside its NO FORCE window) for a
+    /// tenant-scoped parent, and in the table migration for a global one
+    /// (no RLS file exists there).
+    pub media_reference: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

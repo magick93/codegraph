@@ -685,32 +685,32 @@ async fn design_finder_emission_compiles() {
     )
     .await;
 
-    let mut impls = Vec::new();
-    let domain_root = app_dir.join("src/domain/library");
-    for entry in fs::read_dir(&domain_root).unwrap() {
-        let entry = entry.unwrap();
-        if entry.path().is_dir() {
-            let candidate = entry.path().join("repository_impl.rs");
-            if candidate.exists() {
-                impls.push(candidate);
-            }
-        }
-    }
+    // Select the finder-bearing impl BY NAME. The pin used to take the first
+    // `read_dir` entry, whose order is filesystem-dependent (ext4 htree order
+    // is seeded per filesystem): wherever `chapter/` came first it read the
+    // impl of a design with NO repository — by the #449 contract an EMPTY
+    // op set, so an impl with no methods — and failed on a healthy emitter.
+    let movie_impl =
+        fs::read_to_string(app_dir.join("src/domain/library/movie/repository_impl.rs"))
+            .expect("movie's repository impl");
+    // `Movie findByTitle(String title)` is a declared (equality) design
+    // finder — not the `findById` builtin, which every repository carries.
     assert!(
-        !impls.is_empty(),
-        "the design fixture must emit a repository impl under src/domain/library/"
+        movie_impl.contains("async fn find_by_title("),
+        "the design finders must lower into the SeaORM impl:\n{movie_impl}"
     );
-    let impl_src = fs::read_to_string(&impls[0]).unwrap();
+    // The repository-less designs emit the documented empty impl (the #449
+    // EMPTY op set) — the shape the old order-dependent pick tripped on.
+    let chapter_impl =
+        fs::read_to_string(app_dir.join("src/domain/library/chapter/repository_impl.rs"))
+            .expect("chapter's repository impl");
     assert!(
-        impl_src.contains("fn find_by_"),
-        "the design finders must lower into the SeaORM impl:\n{impl_src}"
+        !chapter_impl.contains("async fn "),
+        "a design without a repository maps to an EMPTY op set:\n{chapter_impl}"
     );
 
     // DD9: the library design's query operations emit onto the same impl —
     // a parameterized Condition, the sort keys, and the bounded page.
-    let movie_impl =
-        fs::read_to_string(app_dir.join("src/domain/library/movie/repository_impl.rs"))
-            .expect("movie's repository impl");
     assert!(
         movie_impl.contains("async fn recent_by_genre("),
         "the declared query lowers onto the impl:\n{movie_impl}"

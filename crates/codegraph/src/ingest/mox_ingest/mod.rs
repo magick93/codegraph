@@ -1046,9 +1046,13 @@ pub(super) fn feature_property(
         },
     };
 
-    // Identity mapping rule (issue #522). A class with exactly ONE `id`
-    // feature treats it as the surrogate identity: every layer must agree on
-    // Uuid, so the declared datatype is overridden — the DDL and entity
+    // Identity mapping rule (issues #522 + #821). A class with exactly ONE
+    // `id` feature keeps it as its OWN column with the datatype forced to
+    // Uuid — it is NOT the primary key: the generated surrogate `id UUID`
+    // stays the PK and every FK's target, with no UNIQUE on the feature (the
+    // validation pass warns when its column collides with the derived
+    // parent-FK column). Every layer must agree on Uuid for the feature, so
+    // the declared datatype is overridden — the DDL and entity
     // generators already emit Uuid for these columns, and a TEXT/String
     // projection over a Uuid column breaks generated hydration (E0308:
     // expected `String`, found `Uuid`). Multiple `id` features are a

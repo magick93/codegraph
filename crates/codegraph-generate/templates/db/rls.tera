@@ -29,7 +29,24 @@ UPDATE {{ schema_name }}.{{ table_name | quote_pg }} AS c
    SET platform_organization_id = p.platform_organization_id
   FROM {{ tenant_backfill.parent_schema }}.{{ tenant_backfill.parent_table | quote_pg }} AS p
  WHERE c.{{ tenant_backfill.parent_fk_column | quote_pg }} = p.id
-   AND c.platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid;
+   AND c.platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid;{% if media_unique_parent_fk %}
+{% set media_uq = "uq_" ~ (table_name | strip_pg_quotes) ~ "_" ~ (media_unique_parent_fk | strip_pg_quotes) %}
+-- Media overwrite-in-place (issue #701): one reference row per (parent,
+-- field). The upload handler upserts (`INSERT … ON CONFLICT ({{ media_unique_parent_fk }})
+-- DO UPDATE`), which needs this UNIQUE index. An existing deployment can
+-- already hold duplicates (concurrent uploads interleaved the pre-#701
+-- DELETE + INSERT), so collapse them to the NEWEST row per parent first —
+-- `id DESC`, the rule the display route reads by — or the index build fails.
+-- Both statements are idempotent and ride the same NO FORCE window as the
+-- tenant backfill above (under FORCE the policies would hide every row from
+-- the migration owner, the dedup would match nothing, and the index build
+-- — which RLS does not filter — would fail on the duplicates).
+DELETE FROM {{ schema_name }}.{{ table_name | quote_pg }} AS older
+ USING {{ schema_name }}.{{ table_name | quote_pg }} AS newer
+ WHERE older.{{ media_unique_parent_fk | quote_pg }} = newer.{{ media_unique_parent_fk | quote_pg }}
+   AND older.id < newer.id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS {{ media_uq | truncate_pg }} ON {{ schema_name }}.{{ table_name | quote_pg }}({{ media_unique_parent_fk | quote_pg }});{% endif %}
 {% endif %}
 ALTER TABLE {{ schema_name }}.{{ table_name | quote_pg }} FORCE ROW LEVEL SECURITY;
 

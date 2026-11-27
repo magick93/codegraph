@@ -309,6 +309,7 @@ impl DdlGenerator {
             // Parent tables have no legacy zero-tenant rows to repair: their
             // own INSERT trigger has always stamped the session org (#700).
             tenant_backfill: None,
+            media_unique_parent_fk: None,
         })
     }
 }

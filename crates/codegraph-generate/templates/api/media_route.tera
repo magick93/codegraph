@@ -395,27 +395,18 @@ pub async fn upload(
     // connection is held across the body read or the provider round trip.
     let tx = {{ scoped_tx_call }}.await?;
 
-    // Overwrite-in-place semantics: one reference row per (parent, field) —
-    // replace any existing row on the SAME transaction that installed the
-    // session bundle. Both statements are exact-org (#700): the child's
-    // INSERT trigger stamps the session organization, so a legacy
-    // zeros-tenant row can only have been repaired by the child migration's
-    // backfill, never by a wider predicate here. Every value is a bound
-    // parameter.
-    let delete = Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        format!("DELETE FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND {{ parent_tenant_column }} = $2{% endif %}"),
-        [
-            Value::from(id),
-{% if parent_tenant_column %}            Value::from(api_key_info.organization_id),
-{% endif %}        ],
-    );
-    tx.execute_raw(delete)
-        .await
-        .map_err(|e| db_err("failed to clear the media reference", e))?;
+    // Overwrite-in-place semantics (issue #701): one reference row per
+    // (parent, field), ENFORCED by the child's UNIQUE index on
+    // `{{ parent_fk_column }}` (emitted by the DDL beside the table) — a
+    // single atomic upsert on the SAME transaction that installed the session
+    // bundle, so two concurrent uploads can no longer interleave a DELETE and
+    // an INSERT into two rows. The INSERT is exact-org (#700): the tenant
+    // column is bound, and the child's INSERT trigger stamps the session
+    // organization; the conflict arm keeps the existing row (and its tenant)
+    // and only replaces the reference. Every value is a bound parameter.
     let insert = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        format!("INSERT INTO {CHILD_TABLE} ({{ parent_fk_column }}{% if parent_tenant_column %}, {{ parent_tenant_column }}{% endif %}, {{ url_column }}, {{ mime_column }}) VALUES ($1{% if parent_tenant_column %}, $2, $3, $4{% else %}, $2, $3{% endif %})"),
+        format!("INSERT INTO {CHILD_TABLE} ({{ parent_fk_column }}{% if parent_tenant_column %}, {{ parent_tenant_column }}{% endif %}, {{ url_column }}, {{ mime_column }}) VALUES ($1{% if parent_tenant_column %}, $2, $3, $4{% else %}, $2, $3{% endif %}) ON CONFLICT ({{ parent_fk_column }}) DO UPDATE SET {{ url_column }} = EXCLUDED.{{ url_column }}, {{ mime_column }} = EXCLUDED.{{ mime_column }}"),
         [
             Value::from(id),
 {% if parent_tenant_column %}            Value::from(api_key_info.organization_id),

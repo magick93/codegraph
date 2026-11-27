@@ -97,6 +97,7 @@ impl ValidationPass {
             r21,
             r22,
             r23,
+            r24,
         ) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
@@ -127,6 +128,7 @@ impl ValidationPass {
                 workers_topology,
                 options.database_target,
             ),
+            Self::check_sole_identity_fk_collisions(db),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -152,6 +154,69 @@ impl ValidationPass {
         issues.extend(r21);
         issues.extend(r22);
         issues.extend(r23);
+        issues.extend(r24);
+        issues
+    }
+
+    /// `sole_identity_fk_collision` (Warning, issue #821): a class with
+    /// exactly ONE `id` feature keeps that feature as its OWN column (the
+    /// declared datatype forced to `UUID`); the generated surrogate `id UUID`
+    /// stays the primary key and the target of every FK. When the feature's
+    /// column is spelled exactly like the parent-FK column child tables
+    /// derive for the class (`codegraph_naming::child_parent_fk_column` —
+    /// the ONE helper the child/DDL planes use), the same name means two
+    /// different things: the business id on the root table, the surrogate
+    /// reference on every child table. Name-based binders (event payloads,
+    /// `?include=`, hand-written handlers) cannot tell them apart. Advisory
+    /// only — the emitted contract is unchanged.
+    async fn check_sole_identity_fk_collisions(db: &dyn GraphQuerier) -> Vec<ValidationIssue> {
+        let mut issues = Vec::new();
+        let Ok(schemas) = db.list_schemas(None).await else {
+            return issues;
+        };
+        for schema in schemas.iter().filter(|s| s.is_entity) {
+            if schema.pg_table_name.is_empty() {
+                continue;
+            }
+            let props = match schema.domain.as_deref() {
+                Some(domain) => db.get_properties_in_domain(&schema.title, domain).await,
+                None => db.get_properties(&schema.title).await,
+            };
+            let Ok(props) = props else {
+                continue;
+            };
+            let ids: Vec<_> = props.iter().filter(|p| p.is_id).collect();
+            // Composite natural keys (2+ `id` features) keep their declared
+            // mapping and are not the surrogate-looking shape.
+            let [sole] = ids.as_slice() else {
+                continue;
+            };
+            let column = if sole.pg_column_name.is_empty() {
+                to_snake_case(&sole.name)
+            } else {
+                sole.pg_column_name.clone()
+            };
+            let derived_fk = codegraph_naming::child_parent_fk_column(&schema.pg_table_name);
+            if column != derived_fk {
+                continue;
+            }
+            issues.push(ValidationIssue {
+                severity: Severity::Warning,
+                entity: schema.title.clone(),
+                check: "sole_identity_fk_collision",
+                message: format!(
+                    "class `{}`: the sole `id` feature `{}` is stored as its own column `{column}` \
+                     (a UUID business id), but `{column}` is also the column every child table of \
+                     `{}` uses to reference the generated surrogate `id` primary key — the same \
+                     name carries two different values. Rename the feature (e.g. `{}Number`) so \
+                     name-based binding cannot confuse them (issue #821)",
+                    schema.title,
+                    sole.name,
+                    schema.pg_table_name,
+                    lower_camel(&schema.pg_table_name),
+                ),
+            });
+        }
         issues
     }
 
@@ -1198,6 +1263,16 @@ async fn namespace_domain_assignments(
 }
 
 /// Recursively check a composition node and its children for phantom FK columns.
+/// `worker_profile` → `workerProfile` (the rename hint's spelling).
+fn lower_camel(snake: &str) -> String {
+    let pascal = codegraph_naming::to_pascal_case(snake);
+    let mut chars = pascal.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 fn check_node_for_phantom_fks(
     node: &codegraph_core::types::CompositionNode,
     issues: &mut Vec<ValidationIssue>,
