@@ -5,6 +5,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::doctor_events::report_for_run;
 use crate::error::{Error, Result};
 use crate::init::context::{ProjectFeatures, ProjectTemplateContext};
 
@@ -1991,7 +1992,8 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     // run path hard-errors on, as WARN lines, while the `events_producer`
     // flag is off. Diagnostic mode never fails; silent when no `.ddd` op
     // emits a declared `.evt` event.
-    soft_warnings += crate::doctor_events::report(args, domain_config.as_ref().ok(), &cross);
+    let config_ref = domain_config.as_ref().ok();
+    soft_warnings += report_for_run(args, config_ref, &cross, build_plan.as_ref());
 
     // The graph-analytics plane (issue #673): the upstream semantic graph
     // + the sweep analytics (separation-of-duty across merged policies,

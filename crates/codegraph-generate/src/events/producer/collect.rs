@@ -13,13 +13,18 @@ use async_trait::async_trait;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
+use crate::db::dialect::{DatabaseTarget, dialect_for_target};
 use crate::ddd::design::DddDesignSurface;
 use crate::ddd::dto::build_dto_context;
 use crate::ddd::service_ops::{BodyRenderContext, ExecutionKind, bind_entity, routes_for_entity};
+use crate::events::Transport;
+use crate::events::model::PublicationSource;
+use crate::events::naming::channel_enum_name;
 use crate::project_config::DtoKeyCasing;
 
 use super::planner::{
-    EmissionArm, EmissionSite, ProducerEntitySurface, ProducerInputs, SurfaceChild, SurfaceField,
+    EmissionArm, EmissionSite, ProducerChannel, ProducerEntitySurface, ProducerInputs,
+    SurfaceChild, SurfaceField,
 };
 
 /// Where the planner's facts come from. The one seam a compiled-model /
@@ -38,15 +43,24 @@ pub struct GraphProducerSource<'a> {
     pub db: &'a dyn GraphQuerier,
     pub config: &'a DomainConfig,
     pub workers_topology: bool,
+    /// The generation target — decides whether a channel is queue-bound
+    /// (slice b's R12) through the same dialect the events generator uses.
+    pub database_target: DatabaseTarget,
 }
 
 impl<'a> GraphProducerSource<'a> {
     #[must_use]
-    pub fn new(db: &'a dyn GraphQuerier, config: &'a DomainConfig, workers_topology: bool) -> Self {
+    pub fn new(
+        db: &'a dyn GraphQuerier,
+        config: &'a DomainConfig,
+        workers_topology: bool,
+        database_target: DatabaseTarget,
+    ) -> Self {
         Self {
             db,
             config,
             workers_topology,
+            database_target,
         }
     }
 }
@@ -102,6 +116,35 @@ impl ProducerSource for GraphProducerSource<'_> {
         let events = crate::events::model::declared_events(db)
             .await
             .map_err(|e| e.to_string())?;
+        let dialect = dialect_for_target(self.database_target);
+        let channels = crate::events::model::declared_channels(db, dialect.as_ref())
+            .await
+            .map_err(|e| e.to_string())?;
+        // Event → bound DSL channels (fanout targets). Trigger-only and
+        // unbound channels never publish.
+        let mut publish_targets: BTreeMap<String, Vec<ProducerChannel>> = BTreeMap::new();
+        for channel in &channels {
+            let Transport::Pgmq(pgmq) = &channel.transport else {
+                continue;
+            };
+            for publication in &channel.publications {
+                if !matches!(publication.source, PublicationSource::Application) {
+                    continue;
+                }
+                let targets = publish_targets
+                    .entry(publication.event.clone())
+                    .or_default();
+                if targets.iter().any(|target| target.name == channel.name) {
+                    continue;
+                }
+                targets.push(ProducerChannel {
+                    name: channel.name.clone(),
+                    name_snake: codegraph_naming::to_snake_case(&channel.name),
+                    enum_name: channel_enum_name(&channel.name),
+                    queue: pgmq.queue.clone(),
+                });
+            }
+        }
         let design_surface = DddDesignSurface::from_graph(db).await.ok();
         let render_context = BodyRenderContext {
             workers_topology: self.workers_topology,
@@ -307,6 +350,7 @@ impl ProducerSource for GraphProducerSource<'_> {
             events,
             sites,
             entities,
+            publish_targets,
             type_suffix,
         })
     }
@@ -336,11 +380,10 @@ fn classify_arm(execution: &ExecutionKind) -> EmissionArm {
     match execution {
         ExecutionKind::Update { state: Some(state) } => EmissionArm::Transition(state.clone()),
         ExecutionKind::Update { state: None } => EmissionArm::Patch,
-        ExecutionKind::Body { plan } => match &plan.state {
-            Some(state) => EmissionArm::Transition(state.clone()),
-            None if plan.saves => EmissionArm::Patch,
-            None => EmissionArm::NonPublishing("read-only"),
-        },
+        // Slice (b) refuses statement bodies: their saves are multiple
+        // `commands.update` calls, so one publish cannot be placed reliably
+        // (the body seam is a recorded follow-up).
+        ExecutionKind::Body { .. } => EmissionArm::NonPublishing("statement-body"),
         ExecutionKind::Create { .. } => EmissionArm::NonPublishing("create-shaped"),
         ExecutionKind::Delete => EmissionArm::NonPublishing("delete"),
         ExecutionKind::Read
@@ -458,5 +501,33 @@ fn surface_from_context(
         alt_identities: Vec::new(),
         state_field: None,
         state_type: None,
+        has_read: context.operations.iter().any(|op| op == "read"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ddd::body_lower::BodyPlan;
+
+    #[test]
+    fn statement_bodies_are_not_publishing_arms() {
+        let plan = BodyPlan {
+            block: String::new(),
+            params: Vec::new(),
+            raises: Vec::new(),
+            state: None,
+            body_manages_state: None,
+            saves: true,
+            assigned_fields: Vec::new(),
+            may_refuse: false,
+            responses: Vec::new(),
+        };
+        assert!(matches!(
+            classify_arm(&ExecutionKind::Body {
+                plan: Box::new(plan)
+            }),
+            EmissionArm::NonPublishing("statement-body")
+        ));
     }
 }

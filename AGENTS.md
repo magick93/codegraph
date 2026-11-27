@@ -2324,6 +2324,72 @@ OFF = zero diagnostics, byte-identical).
   live gate), the catalogue's published/refused marks, a doctor source CLI
   knob.
 
+### The events producer publishing plane (issue #820 slice b)
+
+With `events_producer = true`, a planned `emits` binding PUBLISHES inside the
+command's transaction. Flag OFF stays byte-identical (handler matrix,
+review-fixture drift, evt pipeline/workers and ux/policy canaries hold).
+
+- **Transaction seam**: `templates/ddd/command_update.tera` (included by
+  `command.tera`) emits `{Entity}OutgoingEvent`, `update_with_events(…,
+  outgoing, traceparent)` and a shared `update_impl`; the plain `update()`
+  keeps its signature and passes `&[], None`. Placement: repository write →
+  `after_update_tx` hook → publish → `commit()`; a publish error propagates
+  and rolls the write (and the earlier publishes) back. The post-write
+  re-read (`repo.find_by_id(&tx, id)`) builds the payload; the pre-write
+  re-read runs only when a binding uses `previousState`
+  (`ProducerPlan.needs_previous_state`).
+- **Provider-neutral publish**: `templates/events/emit.tera` gains
+  `publish_{channel}_in_tx` on both legs (SeaORM `&impl ConnectionTrait`,
+  cornucopia `&impl GenericClient`) with the existing `publish_*` as a thin
+  wrapper. `EventContext` gains `entity_table`/`entity_id` under the flag and
+  both envelopes (native + CloudEvents `entitytable`/`entityid`) carry them;
+  the inbound W3C `traceparent` is captured by the handler
+  (`extract_traceparent`, support.tera, gated on `has_producer_events`).
+- **Pure render** (`events/producer/render.rs`): the planner's `ProducerPlan`
+  lowers to the generated text (outgoing enum, pre-read, publish block,
+  handler argument) with the contract's type adaptations and the contracts'
+  `to_snake_case` field projection (#835). The command generator pre-renders;
+  the template carries no binding logic.
+- **Fanout**: one publish per bound DSL channel declaring the event
+  (`events::model::declared_channels`, sharing `collect_channels` with the
+  events generator); any failure rolls the whole operation back.
+- **`ProducerPlanIndex`** (on `GeneratorContext`): the planner runs once per
+  run and is injected into the command + handler generators.
+- **R11/R12 + statement bodies** (`docs/events-producer.md`): R12 — no
+  persisted (pgmq-bound) channel; R11 — the entity exposes no `read` for the
+  in-transaction re-read; a statement-body op is R4
+  (`NonPublishing("statement-body")` — a body's saves are multiple
+  transactions).
+- **Live gate fix (the 403)**: the scratch prelude creates `pgmq` as the
+  Supabase image's superuser (the #727 M6 constraint); `CREATE EXTENSION`
+  requires ownership of its declared schema, so the NOSUPERUSER migration
+  role could not install it, phase-1 swallowed the failure, and `app_user`
+  never got `USAGE` → 42501 → 403 at the publish. Gate-only fix:
+  `GateDb::exec_as_admin` + `prepare_pgmq` drop the placeholder as admin and
+  install the extension as the migration role (the ownership a real project
+  gets from its own `0003`; no migration output moved). Plain Postgres uses
+  the functional shim before the band with only `0003`'s `CREATE EXTENSION`
+  line neutralised. pgmq 1.5.1 registers queue tables in the extension, so
+  the rollback leg RENAMES the audit queue (a `DROP` is refused) and reads
+  the `message` column (not `payload`).
+- **Gates**: `cargo test -p codegraph-generate --lib -- events::producer
+  evt_events` (91) + `cargo test -p codegraph --test events_producer_tests`
+  (7) + `--test events_producer_compile_tests -- --ignored` (the #551
+  generated-app `cargo check`) + `--test events_producer_live_gate --
+  --ignored --nocapture` (real HTTP: typed envelope incl. identity +
+  traceparent; a failing second publish rolls the write and the first
+  message back; the replay publishes both) + the standing canaries.
+  Record: `docs/tdd/820b-events-producer-publishing.tdd.md` (teeth: ignore
+  the flag → the flag-off emit golden fails; publish on `&self.db` instead
+  of `&tx` → the rollback pin fails).
+- **Deferred**: the catalogue's published/refused marks (slice c), a workers
+  live gate for the publishing plane (action handlers are monolith-only; the
+  cornucopia leg is template-pinned and wasm-compiled), statement-body
+  publishing arms, and an operator-preinstalled admin-owned `pgmq` (the
+  template cannot grant as a non-owner; the standard migration-owned path is
+  what the gate proves).
+
 ## Deployment models as generator input (pherolang #49)
 
 pherolang `.deploy` deployment models compile — against their imported `.ddd`

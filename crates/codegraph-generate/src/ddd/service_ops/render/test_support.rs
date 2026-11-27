@@ -56,6 +56,7 @@ pub(super) fn route(
         raise_responses: Vec::new(),
         render_facts,
         execution_block: String::new(),
+        publish_arg: None,
     }
 }
 

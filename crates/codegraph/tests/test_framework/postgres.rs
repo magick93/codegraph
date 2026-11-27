@@ -532,6 +532,20 @@ $fn$ LANGUAGE plpgsql;
         psql_exec(&admin, sql).await.map_err(|e| e.to_string())
     }
 
+    /// Run SQL as the base target's ADMIN role against this scratch database.
+    ///
+    /// The prelude's reserved-role/bootstrap statements need the image's
+    /// superuser (#727); so does a staging fixture that has to undo an
+    /// admin-owned placeholder — the `pgmq` schema the prelude creates as
+    /// `supabase_admin` (the #727 M6 constraint), which blocks the migration
+    /// role from installing the extension itself.
+    pub async fn exec_as_admin(&self, sql: &str) -> Result<(), String> {
+        let mut admin = resolve_admin_target(&self.base).await?;
+        admin.db = self.target.db.clone();
+        admin.role = self.target.role.clone();
+        psql_exec(&admin, sql).await.map_err(|e| e.to_string())
+    }
+
     /// Run the generated migration set as the APP target (the role the base
     /// names). On the Supabase image that role is `BYPASSRLS` +
     /// `CREATEROLE` — privileges a deployment's `app_user` does not have — so

@@ -1335,6 +1335,9 @@ async fn run_validation_gates(
             plan.deployment_topology == codegraph_generate::profile::DeploymentTopology::Workers
         }),
         build_plan.is_some_and(|plan| plan.events_producer),
+        build_plan
+            .map(|plan| plan.database_target())
+            .unwrap_or_default(),
     )
     .await?;
 
@@ -1904,7 +1907,14 @@ pub async fn generate(
 
     // generate uses a pre-populated backend; schema base dir is unknown here.
     // Pass an empty path so UiCodelistGenerator skips gracefully.
-    run_validation(be.querier(), &config, false, false).await?;
+    run_validation(
+        be.querier(),
+        &config,
+        false,
+        false,
+        codegraph_generate::db::dialect::DatabaseTarget::default(),
+    )
+    .await?;
     let ifml_component_mappings =
         load_ifml_component_mappings(ifml_components, ifml_design_system)?;
     // Issue #293: plan-less run (no BuildPlan) — a CLI ux-rules file still
@@ -2116,6 +2126,7 @@ async fn run_validation(
     config: &codegraph_config::DomainConfig,
     workers_topology: bool,
     events_producer: bool,
+    database_target: codegraph_generate::db::dialect::DatabaseTarget,
 ) -> Result<()> {
     let issues = crate::validate::ValidationPass::run_with_options(
         querier,
@@ -2123,6 +2134,7 @@ async fn run_validation(
         crate::validate::ValidationOptions {
             workers_topology,
             events_producer,
+            database_target,
         },
     )
     .await;

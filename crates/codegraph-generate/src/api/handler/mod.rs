@@ -25,6 +25,7 @@ mod guards;
 mod imports;
 pub mod include_deleted;
 mod invariants;
+mod producer;
 
 use guards::build_guard_blocks;
 use imports::build_handler_imports;
@@ -438,11 +439,17 @@ pub struct HandlerContext {
     pub create_invariant_block: String,
     #[serde(default)]
     pub update_invariant_block: String,
+    /// The entity has a publishing service-op route (issue #820 slice b):
+    /// the support fragment emits the traceparent helper.
+    #[serde(default)]
+    pub has_producer_events: bool,
 }
 
 pub struct HandlerGenerator {
     output_dir: PathBuf,
     parent_candidates: Vec<ParentCandidate>,
+    /// Events-producer plans (issue #820 slice b), when publishing is on.
+    producer_plans: Option<std::sync::Arc<crate::events::producer::ProducerPlanIndex>>,
     /// This run's type registry (issue #746). Defaults to the ambient
     /// registry for direct construction; the pipeline injects the run's own
     /// handle via [`Self::with_type_registry`].
@@ -460,9 +467,21 @@ impl HandlerGenerator {
             boundaries: crate::ddd::dto_boundaries::BoundaryIndexCache::new(),
             output_dir: output_dir.to_path_buf(),
             parent_candidates: Vec::new(),
+            producer_plans: None,
             rules_guards: false,
             type_registry: TypeRegistryHandle::ambient(),
         }
+    }
+
+    /// Attach the run's producer plans (issue #820 slice b): publishing
+    /// routes gain their outgoing-event argument and the traceparent helper.
+    #[must_use]
+    pub fn with_producer_plans(
+        mut self,
+        plans: Option<std::sync::Arc<crate::events::producer::ProducerPlanIndex>>,
+    ) -> Self {
+        self.producer_plans = plans;
+        self
     }
 
     /// Use `registry` for this generator's import resolution.
@@ -801,6 +820,14 @@ impl EntityGenerator for HandlerGenerator {
                     route.create_invariant_block = invariant_blocks.create_block.clone();
                 }
             }
+            producer::attach_publish_args(
+                &mut service_ops,
+                self.producer_plans.as_ref(),
+                &domain,
+                schema_title,
+                &module_name,
+                &entity_name,
+            );
             // Issue #778: the execution blocks are pre-rendered from the
             // route, so every route is re-rendered ONCE here — after the
             // post-pass attached the invariant/guard slots above, before
@@ -887,8 +914,10 @@ impl EntityGenerator for HandlerGenerator {
             project,
         );
 
+        let has_producer_events = service_ops.iter().any(|route| route.publish_arg.is_some());
         let ctx = HandlerContext {
             has_create: operations.contains(&"create".to_string()),
+            has_producer_events,
             has_read: operations.contains(&"read".to_string()),
             has_update: operations.contains(&"update".to_string()),
             has_delete: operations.contains(&"delete".to_string()),

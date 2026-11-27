@@ -1,0 +1,117 @@
+{% if has_update %}
+
+{% if producer %}    pub async fn update(&self, id: Uuid, cmd: Update{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<(), {{ domain | pascal_case }}Error> {
+        self.update_impl(id, cmd, source, correlation_id, api_key_id, organization_id, user_id, role, &[], None).await
+    }
+
+    /// Publishing variant (issue #820): the service-op handler passes the
+    /// events the operation owns; the command publishes them inside this
+    /// transaction, after the write (and after_update_tx hooks) and before
+    /// commit. A publish failure rolls the business write back.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_with_events(&self, id: Uuid, cmd: Update{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String, outgoing: &[{{ producer.enum_name }}], traceparent: Option<String>) -> Result<(), {{ domain | pascal_case }}Error> {
+        self.update_impl(id, cmd, source, correlation_id, api_key_id, organization_id, user_id, role, outgoing, traceparent).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn update_impl(&self, id: Uuid, cmd: Update{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String, outgoing: &[{{ producer.enum_name }}], traceparent: Option<String>) -> Result<(), {{ domain | pascal_case }}Error> {
+{% else %}    pub async fn update(&self, id: Uuid, cmd: Update{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<(), {{ domain | pascal_case }}Error> {
+{% endif %}{% if project.persistence_provider == "cornucopia" %}
+        let mut client = self.client_source.client().await
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
+        let tx = client.transaction().await
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
+{% else %}
+        let tx = self.db.begin().await?;
+{% endif %}
+        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id, &role).await?;
+
+        {% if project.hooks_api_crate %}
+        // --- before_update hook ---
+        if let Some(hooks) = &self.hooks {
+            // Bind the adapter to a local first — `&HookTxAdapter(&tx)` as a
+            // call argument drops the temporary at the end of the statement
+            // while `ctx` still borrows it (E0716; caught by the #518
+            // hooks runtime pin — this site never compiled as a one-liner).
+            let tx_adapter = crate::hook_adapters::HookTxAdapter(&tx);
+            let mut ctx = {{ project.hooks_api_crate }}::generated::types::TxContext::new(
+                &tx_adapter,
+                correlation_id, organization_id, api_key_id, &source,
+            );
+            match hooks.before_update(&mut ctx, id, &cmd).await {
+                Ok({{ project.hooks_api_crate }}::generated::types::HookControl::Abort { reason: _ }) => {
+                    {% if project.persistence_provider == "cornucopia" %}tx.rollback().await.map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;{% else %}tx.rollback().await?;{% endif %}
+                    return Err({{ domain | pascal_case }}Error::Conflict);
+                }
+                Err(e) => {
+                    {% if project.persistence_provider == "cornucopia" %}tx.rollback().await.map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;{% else %}tx.rollback().await?;{% endif %}
+                    return Err({{ domain | pascal_case }}Error::from_repo_err(e));
+                }
+                Ok({{ project.hooks_api_crate }}::generated::types::HookControl::Continue) => {}
+            }
+        }
+
+        {% endif %}
+
+{% if producer %}{{ producer.pre_read }}{% endif %}        self.repo.update(&tx, id, cmd).await
+            .map_err(|e| {
+                let message = e.to_string();
+                if message == "Entity not found or already deleted" || message == "not found" {
+                    {{ domain | pascal_case }}Error::NotFound
+                } else {
+                    {{ domain | pascal_case }}Error::from_repo_err(e)
+                }
+            })?;
+
+        {% if project.hooks_api_crate %}
+        // --- after_update_tx hook ---
+        if let Some(hooks) = &self.hooks {
+            // Bind the adapter to a local first — `&HookTxAdapter(&tx)` as a
+            // call argument drops the temporary at the end of the statement
+            // while `ctx` still borrows it (E0716; caught by the #518
+            // hooks runtime pin — this site never compiled as a one-liner).
+            let tx_adapter = crate::hook_adapters::HookTxAdapter(&tx);
+            let mut ctx = {{ project.hooks_api_crate }}::generated::types::TxContext::new(
+                &tx_adapter,
+                correlation_id, organization_id, api_key_id, &source,
+            );
+            match hooks.after_update_tx(&mut ctx, id).await {
+                Ok({{ project.hooks_api_crate }}::generated::types::HookControl::Abort { reason: _ }) => {
+                    {% if project.persistence_provider == "cornucopia" %}tx.rollback().await.map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;{% else %}tx.rollback().await?;{% endif %}
+                    return Err({{ domain | pascal_case }}Error::Conflict);
+                }
+                Err(e) => {
+                    {% if project.persistence_provider == "cornucopia" %}tx.rollback().await.map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;{% else %}tx.rollback().await?;{% endif %}
+                    return Err({{ domain | pascal_case }}Error::from_repo_err(e));
+                }
+                Ok({{ project.hooks_api_crate }}::generated::types::HookControl::Continue) => {}
+            }
+        }
+
+        {% endif %}
+
+{% if producer %}{{ producer.publish_block }}{% endif %}        tx.commit().await?;
+        tracing::info!(entity_id = %id, event = "updated", "{{ entity_name }}");
+
+        {% if project.hooks_api_crate %}
+        // --- after_update_commit hook ---
+        if let Some(hooks) = &self.hooks {
+            let post_ctx = {{ project.hooks_api_crate }}::generated::types::PostCommitContext::new(
+                std::sync::Arc::new(crate::hook_adapters::HookConnSourceAdapter(
+                    {% if project.persistence_provider == "cornucopia" %}self.client_source.clone(){% else %}self.db.clone(){% endif %})),
+                correlation_id, organization_id, api_key_id, id, source.clone(),
+            );
+            if let Err(e) = hooks.after_update_commit(&post_ctx).await {
+                tracing::error!(entity_id = %id, correlation_id = %correlation_id, "after_update_commit hook failed: {e}");
+            }
+        }
+
+        {% endif %}{% if has_extension_points %}
+        if let Some(dispatcher) = &self.dispatcher {
+            dispatcher.notify(organization_id, "{{ entity_ref }}", "updated", id, correlation_id).await;
+        }
+        {% endif %}
+
+        Ok(())
+    }
+{% endif %}

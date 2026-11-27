@@ -23,6 +23,9 @@ pub struct ValidationIssue {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ValidationOptions {
     pub workers_topology: bool,
+    /// The generation target — the events-producer channel binding (R12)
+    /// resolves through the same dialect the events generator uses.
+    pub database_target: codegraph_generate::db::dialect::DatabaseTarget,
     pub events_producer: bool,
 }
 
@@ -55,6 +58,7 @@ impl ValidationPass {
             ValidationOptions {
                 workers_topology,
                 events_producer: false,
+                ..ValidationOptions::default()
             },
         )
         .await
@@ -116,7 +120,13 @@ impl ValidationPass {
             Self::check_projection_boundaries(db, config),
             Self::check_machine_kernel(db, config),
             Self::check_machine_read_model(db, config),
-            Self::check_event_producers(db, config, options.events_producer, workers_topology),
+            Self::check_event_producers(
+                db,
+                config,
+                options.events_producer,
+                workers_topology,
+                options.database_target,
+            ),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -156,13 +166,18 @@ impl ValidationPass {
         config: &DomainConfig,
         events_producer: bool,
         workers_topology: bool,
+        database_target: codegraph_generate::db::dialect::DatabaseTarget,
     ) -> Vec<ValidationIssue> {
         if !events_producer {
             return Vec::new();
         }
-        let Ok(report) =
-            codegraph_generate::events::producer::plan_for_graph(db, config, workers_topology)
-                .await
+        let Ok(report) = codegraph_generate::events::producer::plan_for_graph(
+            db,
+            config,
+            workers_topology,
+            database_target,
+        )
+        .await
         else {
             // A graph/lowering failure is reported by its own check; never
             // invent a producer diagnostic from it.

@@ -204,6 +204,18 @@ fn update_tail(op: &ServiceOpRoute) -> String {
     if facts.auditable {
         reload_call.push_str(", false");
     }
+    let method = if op.publish_arg.is_some() {
+        "update_with_events"
+    } else {
+        "update"
+    };
+    // Publishing ops pass the outgoing event variants and the inbound trace
+    // context (issue #820 slice b); the command publishes inside its own
+    // transaction. Flag-off / no-plan ops render the historical call.
+    let publish_args = match &op.publish_arg {
+        Some(arg) => format!("        {arg},\n        extract_traceparent(&headers),\n"),
+        None => String::new(),
+    };
     format!(
         concat!(
             "    let cmd: crate::domain::{domain}::{table}::dto_update::Update{entity}Request =\n",
@@ -211,7 +223,7 @@ fn update_tail(op: &ServiceOpRoute) -> String {
             "            AppError::bad_request(format!(\"invalid {entity} update body: {{e}}\"))\n",
             "                .with_correlation_id(correlation_id)\n",
             "        }})?;\n",
-            "    state.{domain}_{table}_commands.update(\n",
+            "    state.{domain}_{table}_commands.{method}(\n",
             "        {param},\n",
             "        cmd,\n",
             "        {types}::SourceContext::api(),\n",
@@ -220,6 +232,7 @@ fn update_tail(op: &ServiceOpRoute) -> String {
             "        api_key_info.organization_id,\n",
             "        api_key_info.user_id,\n",
             "        api_key_info.role.clone(),\n",
+            "{publish_args}",
             "    ).await.map_err(|e: {domain_error}| {{\n",
             "        AppError::from_domain_error(e.http_status(), e.to_string(), \"Failed to update {entity}\")\n",
             "            .with_correlation_id(correlation_id)\n",
@@ -244,6 +257,8 @@ fn update_tail(op: &ServiceOpRoute) -> String {
         types = facts.domain_types_crate,
         domain_error = domain_error,
         reload = reload_call,
+        method = method,
+        publish_args = publish_args,
     )
 }
 #[cfg(test)]

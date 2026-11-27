@@ -399,6 +399,18 @@ pub async fn declared_events(db: &dyn GraphQuerier) -> Result<Vec<EventDefinitio
     EventArchitecture::collect_events(db, &models).await
 }
 
+/// Declared DSL channels only (no trigger channels, no subscriptions) with
+/// their transport binding resolved against `dialect`. The events-producer
+/// planner uses it to resolve an event's publish targets (issue #820 slice b)
+/// through the same `collect_channels` the emit generator reads.
+pub async fn declared_channels(
+    db: &dyn GraphQuerier,
+    dialect: &dyn SqlDialect,
+) -> Result<Vec<EventChannel>> {
+    let models = db.get_evt_models().await?;
+    Ok(EventArchitecture::collect_channels(&models, dialect))
+}
+
 impl EventArchitecture {
     /// Build the architecture from the graph. Empty (and warning-free)
     /// when the graph carries no `.evt` models.

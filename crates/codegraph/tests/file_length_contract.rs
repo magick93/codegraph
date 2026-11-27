@@ -78,10 +78,6 @@ const ALLOWED_TEMPLATES_OVER_LIMIT: &[(&str, &str)] = &[
         "media upload/presign/display/remove handlers; split per route",
     ),
     (
-        "crates/codegraph-generate/templates/ddd/command.tera",
-        "command plane; split per execution kind",
-    ),
-    (
         "crates/codegraph-generate/templates/emdash/admin_ts.tera",
         "emdash admin UI; split per panel",
     ),

@@ -35,6 +35,25 @@ pub struct CommandContext {
     /// The full `domain.table` ref the dispatcher addresses and the
     /// installations SQL matches against `ep.allowed_entities`.
     pub entity_ref: String,
+    /// Events-producer publishing facts (issue #820 slice b): the outgoing
+    /// enum, the pre-write re-read, and the publish block. `None` when the
+    /// flag is off or the entity owns no publishable events — byte-identical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub producer: Option<ProducerCommandContext>,
+}
+
+/// The pre-rendered publishing snippet set for one entity's command module.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProducerCommandContext {
+    /// The outgoing-event enum stem (`PayRunOutgoingEvent`).
+    pub enum_name: String,
+    /// The full enum definition, emitted above `impl`.
+    pub enum_definition: String,
+    /// The pre-write re-read (empty when no binding needs `previousState`).
+    pub pre_read: String,
+    /// The publish block (empty only when no plans exist, which never
+    /// reaches here).
+    pub publish_block: String,
 }
 
 pub struct CommandGenerator {
@@ -43,6 +62,8 @@ pub struct CommandGenerator {
     /// Push-covered entity refs ("domain.table") from the parsed
     /// extension-points config (issue #503).
     extension_covered: std::collections::HashSet<String>,
+    /// Events-producer plans (issue #820 slice b), when publishing is on.
+    producer_plans: Option<std::sync::Arc<crate::events::producer::ProducerPlanIndex>>,
 }
 
 impl CommandGenerator {
@@ -51,7 +72,17 @@ impl CommandGenerator {
             output_dir: output_dir.to_path_buf(),
             parent_candidates: Vec::new(),
             extension_covered: std::collections::HashSet::new(),
+            producer_plans: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_producer_plans(
+        mut self,
+        plans: Option<std::sync::Arc<crate::events::producer::ProducerPlanIndex>>,
+    ) -> Self {
+        self.producer_plans = plans;
+        self
     }
 
     pub fn with_parent_candidates(mut self, candidates: Vec<ParentCandidate>) -> Self {
@@ -126,6 +157,42 @@ impl EntityGenerator for CommandGenerator {
             return Ok(Vec::new());
         }
 
+        let plans = self
+            .producer_plans
+            .as_ref()
+            .map(|index| index.for_entity(&domain, schema_title).to_vec())
+            .unwrap_or_default();
+        let producer = if plans.is_empty() {
+            None
+        } else {
+            let auditable =
+                crate::api::handler::resolve_is_auditable(db, schema_title, config, &domain)
+                    .await
+                    .unwrap_or(false);
+            let domain_error = format!("{}Error", codegraph_naming::to_pascal_case(&domain));
+            Some(ProducerCommandContext {
+                enum_name: crate::events::producer::render::outgoing_enum_name(&entity_name),
+                enum_definition: crate::events::producer::render::render_outgoing_enum(
+                    &plans,
+                    &entity_name,
+                ),
+                pre_read: crate::events::producer::render::render_pre_read(
+                    &plans,
+                    &domain_error,
+                    auditable,
+                ),
+                publish_block: crate::events::producer::render::render_publish_block(
+                    &plans,
+                    &domain,
+                    &module_name,
+                    &entity_name,
+                    &domain_error,
+                    auditable,
+                    &module_name,
+                ),
+            })
+        };
+
         let ctx = CommandContext {
             has_create: operations.contains(&"create".to_string()),
             has_update: operations.contains(&"update".to_string()),
@@ -140,6 +207,7 @@ impl EntityGenerator for CommandGenerator {
             module_name: module_name.clone(),
             domain: domain.clone(),
             operations,
+            producer,
         };
 
         let content = render_template_with_project(tera, "ddd/command.tera", &ctx, project)?;

@@ -870,6 +870,42 @@ async fn consumers_and_emit_templates_render_cornucopia_shapes() {
     );
 }
 
+/// Issue #820 slice b: the producer flag adds the transaction-capable
+/// publish pair + the envelope identity fields on BOTH provider legs
+/// (the sea_orm leg is the compile-pinned one; this pins the cornucopia
+/// `GenericClient` shape the workers slice compiles).
+#[tokio::test]
+async fn producer_flag_emits_the_in_tx_publish_pair_on_both_legs() {
+    let db = db_with(Some(orders_evt_model())).await;
+
+    let mut project = project();
+    project.codegen.events_producer = true;
+    let files = generate_events(&db, &project).await;
+    let emit = content_of(&files, "emit.rs");
+    assert!(emit.contains("pub async fn publish_orders("), "{emit}");
+    assert!(
+        emit.contains("pub async fn publish_orders_in_tx(\n    db: &impl ConnectionTrait,"),
+        "the sea_orm transaction seam: {emit}"
+    );
+    assert!(
+        emit.contains("pub entity_table: Option<&'static str>,")
+            && emit.contains("\"entity_table\": ctx.entity_table,"),
+        "the producer envelope identity: {emit}"
+    );
+
+    project.database.persistence_provider = crate::profile::PersistenceProvider::Cornucopia;
+    let files = generate_events(&db, &project).await;
+    let emit = content_of(&files, "emit.rs");
+    assert!(
+        emit.contains("pub async fn publish_orders_in_tx(\n    client: &impl GenericClient,"),
+        "the cornucopia transaction seam: {emit}"
+    );
+    assert!(
+        emit.contains("publish_orders_in_tx(client, event, ctx).await"),
+        "the DbClient wrapper: {emit}"
+    );
+}
+
 // ── #505 Leg 2: events under the workers topology ───────────────────────
 
 fn generation_order_sales() -> Vec<crate::GenerationEntry> {

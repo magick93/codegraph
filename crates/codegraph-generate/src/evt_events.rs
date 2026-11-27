@@ -18,12 +18,15 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_naming::{escape_module_keyword, to_pascal_case, to_snake_case};
+use codegraph_naming::{escape_module_keyword, to_snake_case};
 use serde::Serialize;
 
 use crate::GenerationEntry;
 use crate::db::dialect::dialect_for_target;
 use crate::error::Result;
+use crate::events::naming::{
+    channel_enum_name, consumer_type_name, payload_struct_name, version_const_name,
+};
 use crate::events::placement::compute_placement;
 use crate::events::{EventArchitecture, EventDefinition, PublicationSource, Transport};
 use crate::render_template_with_project;
@@ -140,22 +143,6 @@ struct HandlerEventContext {
 }
 
 // ── naming helpers ─────────────────────────────────────────────────────
-
-fn payload_struct_name(event_name: &str) -> String {
-    format!("{event_name}Payload")
-}
-
-fn version_const_name(event_name: &str) -> String {
-    format!("{}_VERSION", to_snake_case(event_name).to_uppercase())
-}
-
-fn channel_enum_name(channel: &str) -> String {
-    format!("{}Event", to_pascal_case(channel))
-}
-
-fn consumer_type_name(consumer: &str) -> String {
-    to_pascal_case(consumer)
-}
 
 /// Rust types that need no import (scalars + the fully-qualified
 /// fallback), or whose import is decided structurally.

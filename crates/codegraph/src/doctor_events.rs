@@ -30,6 +30,7 @@ pub(crate) fn producer_lines(
     args: &crate::init::commands::DoctorArgs,
     config: Option<&DomainConfig>,
     cross: &UnionGather,
+    database_target: codegraph_generate::db::dialect::DatabaseTarget,
 ) -> Vec<String> {
     if !has_bound_emits(cross) {
         return Vec::new();
@@ -57,14 +58,14 @@ pub(crate) fn producer_lines(
     let classifier = args.classifier.clone();
     let config = config.clone();
 
-    std::thread::spawn(
-        move || match analyze(mox_paths, ddd, evt, config, classifier) {
+    std::thread::spawn(move || {
+        match analyze(mox_paths, ddd, evt, config, classifier, database_target) {
             Ok(lines) => lines,
             Err(reason) => vec![format!(
                 "INFO events producer — analysis skipped ({reason})"
             )],
-        },
-    )
+        }
+    })
     .join()
     .unwrap_or_else(|_| {
         vec!["INFO events producer — analysis skipped (worker thread panicked)".to_string()]
@@ -105,6 +106,7 @@ fn analyze(
     evt: Vec<PathBuf>,
     config: DomainConfig,
     classifier: Option<PathBuf>,
+    database_target: codegraph_generate::db::dialect::DatabaseTarget,
 ) -> Result<Vec<String>, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -176,9 +178,13 @@ fn analyze(
             .map_err(|e| e.to_string())?;
         }
 
-        let report =
-            codegraph_generate::events::producer::plan_for_graph(backend.querier(), &config, false)
-                .await?;
+        let report = codegraph_generate::events::producer::plan_for_graph(
+            backend.querier(),
+            &config,
+            false,
+            database_target,
+        )
+        .await?;
         let mut lines = Vec::with_capacity(report.refusals.len() + report.warnings.len());
         for refusal in &report.refusals {
             lines.push(refusal.doctor_line());
@@ -198,10 +204,11 @@ fn analyze(
 pub fn producer_diagnostics(
     args: &crate::init::commands::DoctorArgs,
     config: &DomainConfig,
+    database_target: codegraph_generate::db::dialect::DatabaseTarget,
 ) -> Vec<String> {
     let (cross, _) =
         crate::doctor_graph::gather_cross_surface(&args.ddd_files, &args.evt_files, &[], &[]);
-    producer_lines(args, Some(config), &cross)
+    producer_lines(args, Some(config), &cross, database_target)
 }
 
 /// Print the producer lines and return how many are WARNs (the doctor
@@ -211,8 +218,9 @@ pub(crate) fn report(
     args: &crate::init::commands::DoctorArgs,
     config: Option<&DomainConfig>,
     cross: &UnionGather,
+    database_target: codegraph_generate::db::dialect::DatabaseTarget,
 ) -> usize {
-    let lines = producer_lines(args, config, cross);
+    let lines = producer_lines(args, config, cross, database_target);
     for line in &lines {
         println!("{line}");
     }
@@ -220,4 +228,22 @@ pub(crate) fn report(
         .iter()
         .filter(|line| line.starts_with("WARN "))
         .count()
+}
+
+/// The doctor call-site wrapper: resolve the generation target from the
+/// loaded build plan and print the producer lines.
+pub(crate) fn report_for_run(
+    args: &crate::init::commands::DoctorArgs,
+    config: Option<&DomainConfig>,
+    cross: &UnionGather,
+    build_plan: Option<&crate::profile::BuildPlan>,
+) -> usize {
+    report(
+        args,
+        config,
+        cross,
+        build_plan
+            .map(|plan| plan.database_target())
+            .unwrap_or_default(),
+    )
 }

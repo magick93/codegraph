@@ -37,7 +37,17 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
         .and_then(|s| s.parse::<Uuid>().ok())
         .unwrap_or_else(Uuid::new_v4)
 }
-{% if has_create or has_update %}
+{% if has_producer_events %}
+/// The inbound W3C trace context, when the request supplies one (issue
+/// #820): publishing service ops carry it into the event envelope so the
+/// drain can propagate it to webhook POSTs and downstream hops.
+fn extract_traceparent(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("traceparent")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+}
+{% endif %}{% if has_create or has_update %}
 /// Map a `serde_path_to_error` failure onto the 422 envelope, naming the
 /// failing field: `path.to.field: cause` (#479 — axum's `Json` extractor
 /// used to reject bodies with an opaque "data did not match any variant").
