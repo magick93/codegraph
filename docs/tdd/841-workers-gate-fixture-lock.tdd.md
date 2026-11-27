@@ -164,7 +164,87 @@ The live gate (`mbx test -p codegraph --test workers_live_gate -- --ignored
 --nocapture`) is the acceptance proof that the refreshed lock is not just
 parseable but BUILDABLE: it regenerates, migrates, builds the 11-crate workers
 workspace, boots the gateway + 10 workers and runs the hurl contracts through
-the gateway. Its result is recorded in the PR.
+the gateway. With the lock refreshed AND #846's alias in place it is GREEN:
+`ALL 33 WORKERS TESTS PASSED`, inventory `[200, 201, 204, 401, 403, 404, 409,
+501]`, exit 0 (`/tmp/opencode/workers_live_gate3.log`). Before #846 it reached
+`15 passed, 1 failed` (32/33) on the cross-tenant contract only — see §4b.
+
+## 4b. The second blocker the live gate exposed (#846)
+
+Refreshing the lock carried the gate past regeneration and the whole
+11-crate build, and 32 of 33 suite checks passed — but exactly ONE contract
+failed, at hurl PARSE time, before any request:
+
+```text
+✗   FAIL 04_cross_tenant_404.hurl
+error: Undefined variable
+  --> generated-workers/hurl/04_cross_tenant_404.hurl:6:25
+   | Authorization: Bearer {{api_key_a}}
+   |                         ^^^^^^^^^ you must set the variable api_key_a
+```
+
+**Root cause.** The generated cross-tenant contract posts org A's row with
+`{{api_key_a}}` and reads it back with `{{api_key_b}}`
+(`hurl_contract/mod.rs`, `key_a_header`). The MONOLITH api suite passes that
+alias beside the default key — `suites/api/mod.rs`, "Alias matching the
+cross-tenant file vocabulary (`api_key_a`), so the same hurl file works in the
+main loop and in the RLS-isolation stage". The WORKERS hurl loop passed
+`base_url`, `api_key`, `api_key_b` and `api_key_limited` but NOT
+`api_key_a`. #828 emptied the fixture's skip list so the scope-denial and
+cross-tenant contracts run through the gateway, but only wired the two extra
+keys into the workers suite; the alias was missed, and the lock failure
+(§0) hid it — the 2026-11-25/26 nightlies died at regeneration, so
+`04_cross_tenant_404.hurl` had never actually run there.
+
+**Fix.** One `--variable api_key_a={api_key}` beside `api_key`, assembled by a
+new `gateway_hurl_variables(api_url, api_key, api_key_b, api_key_limited)` in
+`crates/codegraph-ops/src/suites/workers.rs` — the loop now feeds the whole
+variable set from that one builder (the optional keys are still added only
+when provisioned), so the vocabulary is data instead of four inline `arg`
+calls.
+
+**The pin (node-free, in-crate).**
+
+- `gateway_hurl_variables_carry_the_cross_tenant_key_alias` — exact variable
+  list `base_url`/`api_key`/`api_key_a` for the default key.
+- `gateway_hurl_variables_add_the_optional_keys_only_when_provisioned` — no
+  fabricated `api_key_b`/`api_key_limited`, and the alias survives their
+  addition.
+- `both_suites_pass_the_cross_tenant_alias` — the drift pin: the monolith
+  suite's source must still carry `api_key_a={key}` (read via
+  `include_str!("api/mod.rs")`, because its alias sits in a header-derived
+  block this module cannot call) AND the workers builder must emit it.
+
+Red/green (mutation: comment out the alias line in the builder):
+
+```text
+$ mbx test -p codegraph-ops --lib -- suites::workers::tests
+  pre-fix (alias removed):
+    gateway_hurl_variables_carry_the_cross_tenant_key_alias ... FAILED
+      left: ["base_url=…", "api_key=org-a-key"]
+      right: ["base_url=…", "api_key=org-a-key", "api_key_a=org-a-key"]
+    gateway_hurl_variables_add_the_optional_keys_only_when_provisioned ... FAILED
+      ["base_url=http://gw", "api_key=a", "api_key_b=b", "api_key_limited=ro"]
+    both_suites_pass_the_cross_tenant_alias ... FAILED
+      the workers suite must pass api_key_a too
+    0 passed; 3 failed
+  post-fix: 267 passed; 0 failed (whole crate), clippy --all-targets -D warnings clean
+```
+
+**Live result (one isolated run, `/tmp/opencode/workers_live_gate3.log`,
+exit 0, 149.93 s warm):**
+
+```text
+ALL 33 WORKERS TESTS PASSED
+  01_auth.hurl: [401, 401]
+  03_scope_denial_403.hurl: [200, 403]
+  04_cross_tenant_404.hurl: [201, 404]        <-- the contract that failed before
+  … per-entity contracts: [200, 201, 200, 404, 201, 204, 200, 404, 200, 200, 204, 404]
+  14_leave_leave_request_actions.hurl: [201, 501]
+  90_workflow_transition_409.hurl: [201, 200, 409, 200, 409, 409]
+served-status inventory: [200, 201, 204, 401, 403, 404, 409, 501]
+ALL GATE ASSERTIONS PASSED (workers topology over Supabase)
+```
 
 ## 5. The mutation proof
 
@@ -196,7 +276,14 @@ the suite to 2/2 green.
   resolution step; this pin closes the DETECTION gap, not the maintenance
   one. A future `init`-style helper that refreshes every committed fixture
   lock is not proposed here (one fixture exists, and the pin's message names
-  the command).
+  the command). `git ls-files` also lists
+  `crates/codegraph/target/events-runtime-harness/Cargo.lock` — that is the
+  tracked `crates/codegraph/target/**` debris already recorded under issue
+  #683, it carries no `phero`/`xstate` package, and the pin deliberately does
+  not adopt it.
 - `cargo metadata` in the fixture still fetches the git repos on a cold CARGO
   cache, so the PR-CI pin deliberately reads the locks as TEXT instead of
   shelling out to cargo.
+- Two live-gate runs must never overlap: they share the fixture workspace and
+  its `target/` (a concurrent run that wipes the dir mid-compile reads as
+  `No such file or directory` build errors, not as a product defect).
