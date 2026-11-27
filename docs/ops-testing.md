@@ -33,7 +33,7 @@ testkit api [--no-migrate] [--rebuild] [--regen] [--workers]
 | Stage | What it does |
 |-------|--------------|
 | 0. Fast doctor (api subset) | Cheap stage-0 gate: psql `SELECT 1`, hurl, python3 (if smoke configured), api port, disk headroom. Fails in seconds with a hint instead of after the build. Marker: `Fast doctor`. |
-| 0. Generate + build | Regenerate the app via the graph binary (hooks: `pre_generate`/`post_generate`), fail on generation errors unless `--allow-gen-errors`, generator-rev check, then `cargo build` in the generated app. Skipped by `--skip-build` (generation alone by `--skip-generate`). |
+| 0. Generate + build | Regenerate the app via the graph binary (hooks: `pre_generate`/`post_generate`), fail on generation errors unless `--allow-gen-errors`, generator-rev check, then `cargo build` in the generated app. Regeneration runs **from clean** (#796): the previous generation's `.codegraph-manifest.json` is snapshotted after the `pre_generate` hooks, and files it lists that the new generation did not write are removed (logged as `regen sweep: removed N stale file(s) … (roots: …)`). Hand-authored files are never in a manifest and are never touched; the ops manifest and `testkit/` are always kept. Skipped by `--skip-build` (generation alone by `--skip-generate`). |
 | 1. Preflight | Port preflight (take over or reuse a registry-known prior server), output-tree completeness. |
 | 2. Database | Reset + phased migration, app-role grant, API-key provisioning (main Bearer key; optional Org B key from `hurl.org_id_b`; optional read-only key when `hurl.limited_key = true`). Skipped with `--no-migrate`. |
 | 3. Server | Boot the axum binary, wait for `/health`. Skipped when `--reuse` found a live registry server. |

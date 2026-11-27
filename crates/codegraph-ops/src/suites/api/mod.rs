@@ -20,6 +20,7 @@ use crate::wait::wait_for_url;
 mod capture;
 mod regenerate;
 mod report;
+mod stale_sweep;
 
 use capture::{extract_json_field, parse_json, run_capture, run_capture_env, strip_ansi};
 use regenerate::{
@@ -321,8 +322,25 @@ async fn stage_generate_build(
                 (Some(graph), Some(_)) => {
                     hook_failures
                         .extend(run_hooks(config, "pre_generate", HookPolicy::PerHook).await?);
-                    let gen_output = regenerate(config, graph, args.release)
-                        .inspect_err(|e| output::fail(e.to_string()))?;
+                    // Issue #796: regenerate FROM CLEAN. Snapshot the previous
+                    // generation's ownership manifest (after any consumer
+                    // pre_generate wipe), let the regeneration write a fresh
+                    // one, then remove exactly the files the previous
+                    // generation wrote and this one did not.
+                    let prior = stale_sweep::PriorGeneration::take(&config.app_dir)?;
+                    let gen_output = match regenerate(config, graph, args.release) {
+                        Ok(out) => out,
+                        Err(e) => {
+                            output::fail(e.to_string());
+                            prior.restore()?;
+                            return Err(e);
+                        }
+                    };
+                    let swept = prior.sweep(&stale_sweep::protected_paths(
+                        &config.app_dir,
+                        &config.manifest_path,
+                    ))?;
+                    output::info(swept.summary());
                     if !args.allow_gen_errors {
                         assert_generation_clean(&gen_output)?;
                     }
