@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-{% if description %}/// {{ description }}
+{% if description %}/// {{ description | rust_doc(prefix="/// ") }}
 {% else %}/// {{ enum_name }} codelist values.
 {% endif -%}
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

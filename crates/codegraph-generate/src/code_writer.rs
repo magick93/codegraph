@@ -31,6 +31,14 @@ impl CodeWriter {
         self.buf.push_str(s);
     }
 
+    /// Appends model-authored prose as a comment block: every line of
+    /// `text` gets `prefix` (e.g. `"    /// "`), so a multi-line
+    /// description can never leave a bare continuation line in the
+    /// emitted source (issue #604). See [`doc_comment_lines`].
+    pub fn push_doc_lines(&mut self, prefix: &str, text: &str) {
+        self.push_line(&doc_comment_lines(prefix, text));
+    }
+
     pub fn as_str(&self) -> &str {
         &self.buf
     }
@@ -48,6 +56,30 @@ impl Default for CodeWriter {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Renders `text` as comment lines, each prefixed with `prefix` (e.g.
+/// `"    /// "`, `"//! "`, `"// "`), joined by `'\n'` with no trailing
+/// newline. Trailing `'\r'` is trimmed per line, and an empty line
+/// becomes the prefix with its trailing whitespace trimmed (`"    ///"`).
+///
+/// Single-line text renders exactly `{prefix}{text}` — byte-identical to
+/// the pre-#604 `format!("{prefix}{text}")` emission.
+pub fn doc_comment_lines(prefix: &str, text: &str) -> String {
+    if !text.contains('\n') {
+        return format!("{prefix}{text}");
+    }
+    text.split('\n')
+        .map(|line| {
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            if line.is_empty() {
+                prefix.trim_end().to_string()
+            } else {
+                format!("{prefix}{line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// `writeln!` into a [`CodeWriter`] — infallible by construction.
@@ -84,7 +116,28 @@ pub(crate) use wln;
 
 #[cfg(test)]
 mod tests {
-    use super::CodeWriter;
+    use super::{CodeWriter, doc_comment_lines};
+
+    #[test]
+    fn doc_lines_prefix_every_line() {
+        assert_eq!(
+            doc_comment_lines("    /// ", "first line\r\n\nthird line"),
+            "    /// first line\n    ///\n    /// third line"
+        );
+    }
+
+    #[test]
+    fn doc_lines_single_line_is_byte_identical() {
+        assert_eq!(doc_comment_lines("/// ", "one"), "/// one");
+        assert_eq!(doc_comment_lines("/// ", ""), "/// ");
+    }
+
+    #[test]
+    fn push_doc_lines_appends_a_trailing_newline() {
+        let mut w = CodeWriter::new();
+        w.push_doc_lines("// ", "a\nb");
+        assert_eq!(w.as_str(), "// a\n// b\n");
+    }
 
     #[test]
     fn literal_only_line() {

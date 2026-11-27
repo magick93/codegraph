@@ -34,6 +34,9 @@ class CandidateType {
     String candidateId
     String status
 
+    /// Length of the candidate id (issue #604 pin): this doc comment
+    /// spans several lines, and every continuation line must stay a
+    /// `///` line in the emitted plane or the crate fails to compile.
     op int idLength(String prefix) {
         rust { prefix.len() as i32 }
     }
@@ -399,6 +402,12 @@ async fn mox_plane_compiles_persistence_agnostic_native_and_wasm() {
     assert!(
         !plane_rs.contains("sea_orm") && !plane_rs.contains("crate::entity::"),
         "the mox plane must not depend on the SeaORM layer:\n{plane_rs}"
+    );
+
+    // Issue #604: a multi-line op doc comment keeps `///` on every line.
+    assert!(
+        plane_rs.contains("    /// spans several lines, and every continuation line must stay a\n"),
+        "every op doc line must carry the `///` prefix:\n{plane_rs}"
     );
 
     cargo_check_mox_plane(&domain_types_dir, None);

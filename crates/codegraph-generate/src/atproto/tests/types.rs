@@ -15,6 +15,7 @@ use crate::traits::EntityGenerator;
 
 fn make_types_tera() -> Tera {
     let mut tera = Tera::default();
+    crate::template_engine::register_filters(&mut tera);
     tera.add_raw_template(
         "atproto/rust_type.tera",
         include_str!("../../../templates/atproto/rust_type.tera"),

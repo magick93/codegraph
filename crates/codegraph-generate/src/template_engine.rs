@@ -17,7 +17,9 @@ pub fn project_template_rev() -> &'static str {
     env!("CODEGRAPH_TEMPLATE_REV")
 }
 
-pub(crate) fn register_filters(tera: &mut Tera) {
+/// Registers codegraph's custom Tera filters. Public so hand-assembled
+/// test `Tera` instances can render templates that use them.
+pub fn register_filters(tera: &mut Tera) {
     tera.register_filter("snake_case", snake_case_filter);
     tera.register_filter("upper_camel", upper_camel_filter);
     tera.register_filter("lower_camel", lower_camel_filter);
@@ -29,6 +31,7 @@ pub(crate) fn register_filters(tera: &mut Tera) {
     tera.register_filter("strip_pg_quotes", strip_pg_quotes_filter);
     tera.register_filter("quote_pg", quote_pg_filter);
     tera.register_filter("js_template_literal", js_template_literal_filter);
+    tera.register_filter("rust_doc", rust_doc_filter);
 }
 
 /// Initialize the Tera template engine with embedded templates.
@@ -305,6 +308,35 @@ fn js_template_literal_filter(
     Ok(tera::Value::from(out))
 }
 
+/// Keeps model-authored prose inside a comment when it spans lines (issue
+/// #604): `/// {{ x.description | rust_doc(prefix="/// ") }}`. The
+/// template's literal text before the expression is the FIRST line's
+/// prefix; `prefix` is written before every continuation line (an empty
+/// continuation line gets `prefix` with its trailing whitespace trimmed;
+/// trailing `'\r'` is trimmed). Single-line and non-string values pass
+/// through unchanged, so existing output is byte-identical. Works for any
+/// line-comment syntax (`///`, `//!`, `//` in Rust, proto, TS).
+fn rust_doc_filter(
+    value: &tera::Value,
+    kwargs: tera::Kwargs,
+    _state: &tera::State,
+) -> tera::TeraResult<tera::Value> {
+    let prefix: &str = kwargs.must_get("prefix")?;
+    // Non-strings (an absent `Option` renders as null) and single-line
+    // strings pass through untouched — rendering is exactly as before.
+    let Some(s) = value.as_str() else {
+        return Ok(value.clone());
+    };
+    if !s.contains('\n') {
+        return Ok(value.clone());
+    }
+    let mut lines = s.split('\n');
+    let first = lines.next().unwrap_or_default();
+    let first = first.strip_suffix('\r').unwrap_or(first);
+    let rest = crate::code_writer::doc_comment_lines(prefix, &lines.collect::<Vec<_>>().join("\n"));
+    Ok(tera::Value::from(format!("{first}\n{rest}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,6 +483,23 @@ mod tests {
         assert_eq!(
             out,
             "issued (\\`idNumber\\`, not \\`number\\`) — C:\\\\path and \\${interp} but $ alone stays"
+        );
+    }
+
+    #[test]
+    fn rust_doc_filter_prefixes_continuation_lines() {
+        let mut tera = Tera::default();
+        register_filters(&mut tera);
+        tera.add_raw_template("t", "    /// {{ d | rust_doc(prefix=\"    /// \") }}")
+            .unwrap();
+        let render = |d: &str| {
+            let ctx = tera::Context::from_serialize(&serde_json::json!({ "d": d })).unwrap();
+            tera.render("t", &ctx).unwrap()
+        };
+        assert_eq!(render("one line"), "    /// one line");
+        assert_eq!(
+            render("first\r\n\nthird"),
+            "    /// first\n    ///\n    /// third"
         );
     }
 

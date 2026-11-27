@@ -126,7 +126,7 @@ pub struct {{ entity_name }}CreateArgs {
 {% for field in fields %}
 {% if field.is_required %}
 
-    /// {{ field.description | default(value=field.name) }}
+    /// {{ field.description | default(value=field.name) | rust_doc(prefix="    /// ") }}
     #[arg(long)]
     pub {{ field.name }}: Option<String>,
 {% endif %}

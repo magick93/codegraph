@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-{% if description %}/// {{ description }}
+{% if description %}/// {{ description | rust_doc(prefix="/// ") }}
 {% else %}/// {{ enum_name }} codelist values (empty — no values defined in BIAN data).
 {% endif -%}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

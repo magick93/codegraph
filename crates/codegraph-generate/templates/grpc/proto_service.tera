@@ -2,7 +2,7 @@
 // ── {{ entity_name }} Service ──────────────────────────────────────────
 service {{ entity_name }}Service {
   {% for method in service_methods %}
-  // {{ method.description }}
+  // {{ method.description | rust_doc(prefix="  // ") }}
   rpc {{ method.name }}({{ method.input_type }}) returns ({{ method.output_type }});
   {% endfor %}
 }
