@@ -618,18 +618,38 @@ async fn resolve_fk_parents(
         if !prop.is_required || prop.is_array || prop.is_nullable {
             continue;
         }
-        let Some(target) = prop.ref_target.clone() else {
-            continue;
-        };
-        // Prefer the graph's resolved ref edge (title-accurate even when the
-        // filename and title differ); fall back to the string resolver for
-        // graphs that carry no edge.
-        let parent = match db.get_property_ref_target(&prop.name, &schema.title).await {
-            Ok(Some(parent)) => parent,
-            _ => match resolve_ref_target(db, type_suffix, &target).await {
-                Some(parent) => parent,
-                None => continue,
-            },
+        // The graph edge first (`$ref`/resolved ref target), then — for a
+        // `*_id` column with no edge at all — the shared name-convention
+        // resolver (issue #806: `vendor_id` on an entity whose model spells
+        // the reference as a plain column). One resolver, shared with the
+        // e2e fixture planes, so the contract and the UI seeds seed the same
+        // parent.
+        let parent = match prop.ref_target.clone() {
+            Some(target) => {
+                // Prefer the graph's resolved ref edge (title-accurate even
+                // when the filename and title differ); fall back to the string
+                // resolver for graphs that carry no edge.
+                match db.get_property_ref_target(&prop.name, &schema.title).await {
+                    Ok(Some(parent)) => parent,
+                    _ => match resolve_ref_target(db, type_suffix, &target).await {
+                        Some(parent) => parent,
+                        None => continue,
+                    },
+                }
+            }
+            None => {
+                match crate::fk_convention::resolve_convention_ref(
+                    db,
+                    &prop,
+                    Some(domain),
+                    &schema.title,
+                )
+                .await
+                {
+                    Some(parent) => parent,
+                    None => continue,
+                }
+            }
         };
         // Only a resolved ENTITY can be created by a preamble POST. Pure value
         // objects/codelists/wrappers have no route (and no `{name}_id` DTO
@@ -753,6 +773,20 @@ async fn payload_fields(
             continue;
         }
         if prop.is_nullable || !prop.is_required {
+            continue;
+        }
+        // A convention-resolved FK (issue #806) carries no `$ref`, so no kind
+        // arm below would emit it and the `_` arm would scaffold a literal
+        // uuid — which fails the FK it is supposed to satisfy. Wire the parent
+        // capture before the kind dispatch; every real FK arm below matches
+        // the same capture, so this is equivalent for them.
+        let fk_json_name = codegraph_core::types::ensure_id_suffix(name);
+        if let Some((_, capture)) = fk_captures.iter().find(|(n, _)| *n == fk_json_name) {
+            let value = "\"{{".to_string() + capture + "}}\"";
+            create.push(format!(r#"  "{fk_json_name}": {value}"#));
+            echo.push(format!(r#"jsonpath "$.data.{fk_json_name}" == {value}"#));
+            update.push(format!(r#"  "{fk_json_name}": {value}"#));
+            update_echo.push(format!(r#"jsonpath "$.data.{fk_json_name}" == {value}"#));
             continue;
         }
         match prop.effective_kind() {
@@ -1674,6 +1708,83 @@ entities = ["TaskType"]
             add.body
         );
     }
+    /// Issue #806: a required `*_id` column with NO `$ref`/graph edge (the
+    /// model spells the reference as a plain column) is a name-convention FK.
+    /// The contract must seed the parent through the shared resolver and carry
+    /// its capture — the pre-fix generator skipped it, the `_` arm scaffolded a
+    /// literal uuid, and the create 4xx'd on the FK.
+    #[tokio::test]
+    async fn required_convention_fk_seeds_the_parent_and_carries_the_capture() {
+        let mut order = task_schema();
+        order.title = "VendorOrderType".to_string();
+        order.schema_id = "vendors/json/VendorOrderType.json".to_string();
+        order.rel_path = "vendors/json/VendorOrderType.json".to_string();
+        order.pg_table_name = "vendor_order".to_string();
+        order.api_path_segment = "vendor-order".to_string();
+        order.rust_type_name = "VendorOrder".to_string();
+
+        let mut vendor = task_schema();
+        vendor.title = "VendorType".to_string();
+        vendor.schema_id = "vendors/json/VendorType.json".to_string();
+        vendor.rel_path = "vendors/json/VendorType.json".to_string();
+        vendor.pg_table_name = "vendor".to_string();
+        vendor.api_path_segment = "vendor".to_string();
+        vendor.rust_type_name = "Vendor".to_string();
+
+        // The FK as the model declares it: a plain required column, no `$ref`.
+        let mut vendor_ref = text_prop("vendorId", true);
+        vendor_ref.rust_field_type = "String".to_string();
+        vendor_ref.pg_column_type = "TEXT".to_string();
+        let mut title = text_prop("purpose", true);
+
+        let db = MockEngine::builder()
+            .with_schema(order.clone())
+            .with_schema(vendor)
+            .with_properties("VendorOrderType", vec![title.clone(), vendor_ref])
+            .with_properties("VendorType", vec![text_prop("label", true)])
+            .build();
+        let config = plain_config();
+
+        let parents = resolve_fk_parents(&db, &config, "work", &order, "v1", 0)
+            .await
+            .expect("fk parents");
+        assert_eq!(parents.len(), 1, "{parents:?}");
+        assert_eq!(parents[0].json_name, "vendor_id");
+        assert_eq!(parents[0].capture, "parent_vendor_id");
+        assert_eq!(parents[0].module, "vendor");
+
+        let captures = vec![("vendor_id".to_string(), "parent_vendor_id".to_string())];
+        let (create, _, _, _) = payload_fields(&db, &config, "work", &order, &captures, None)
+            .await
+            .expect("payload fields");
+        let body = create.join("\n");
+        assert!(
+            body.contains(r#""vendor_id": "{{parent_vendor_id}}""#),
+            "the FK must carry the parent capture: {body}"
+        );
+        assert!(
+            !body.contains("00000000-0000-0000-0000-000000000001"),
+            "a scaffolded uuid would fail the FK it must satisfy: {body}"
+        );
+        // The identity-shaped business field is NOT a convention FK (#479) —
+        // `purpose` has no `_id` stem, and a required `*Id` business value on
+        // the entity itself never resolves to its own carrier.
+        title.name = "vendorOrderId".to_string();
+        title.rust_field_name = "vendor_order_id".to_string();
+        title.pg_column_name = "vendor_order_id".to_string();
+        let own = MockEngine::builder()
+            .with_schema(order.clone())
+            .with_properties("VendorOrderType", vec![title])
+            .build();
+        let parents = resolve_fk_parents(&own, &config, "work", &order, "v1", 0)
+            .await
+            .expect("fk parents");
+        assert!(
+            parents.iter().all(|p| p.json_name != "vendor_order_id"),
+            "the entity's own natural-key field is never its own FK: {parents:?}"
+        );
+    }
+
     /// Issue #767 review: a create-shaped payload whose boundary carries a
     /// REQUIRED entity reference emits NO create leg (the contract cannot seed
     /// an arbitrary target row — the leg would post the nil uuid and 500).

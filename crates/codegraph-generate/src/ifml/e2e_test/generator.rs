@@ -82,6 +82,11 @@ pub struct IfmlE2eTestGenerator {
     /// The DTO wire-key casing (#539 follow-through): fixture POST bodies
     /// must match the create/update DTOs' serde contract.
     pub(super) dto_casing: DtoKeyCasing,
+    /// Required create-body fields the seed projection could not fill
+    /// (issue #806). Drained once per run into the run-path WARN and the
+    /// emitted `tests/ifml/omitted-specs.md`; interior mutability keeps the
+    /// `&self` assembly helpers signature-compatible.
+    pub(super) seed_gaps: std::sync::Mutex<Vec<super::fixtures::SeedGap>>,
 }
 
 /// Where the auth-bootstrap family lives, relative to the output root.
@@ -113,6 +118,7 @@ impl IfmlE2eTestGenerator {
             mappings: None,
             integrated: false,
             dto_casing: DtoKeyCasing::default(),
+            seed_gaps: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -162,6 +168,132 @@ impl IfmlE2eTestGenerator {
     ) -> ComponentSelectors {
         ComponentSelectors::for_component(self.mappings.as_ref(), &vc.name, c)
     }
+
+    /// Drop every spec whose seed fixture cannot complete (issue #806): a
+    /// required create-body field with no seed value/target means the record
+    /// cannot be created, so the spec that would open it is omitted — never
+    /// emitted as a guaranteed 4xx. The dropped gaps join the run's gap sink
+    /// and land in `omitted-specs.md`.
+    fn drop_unseedable(&self, families: &mut SpecFamilies<'_>, journeys: &mut JourneySet) {
+        fn note(
+            gaps: &[super::fixtures::SeedGap],
+            sink: &mut Vec<super::fixtures::SeedGap>,
+        ) -> bool {
+            sink.extend(gaps.iter().cloned());
+            gaps.is_empty()
+        }
+        let mut dropped: Vec<super::fixtures::SeedGap> = Vec::new();
+        for spec in &mut families.specs {
+            spec.click_throughs
+                .retain(|test| note(&test.fixture.gaps, &mut dropped));
+            spec.round_trips
+                .retain(|test| note(&test.fixture.gaps, &mut dropped));
+        }
+        families.workflow_specs.retain_mut(|(_, tests)| {
+            tests.retain(|test| note(&test.fixture.gaps, &mut dropped));
+            !tests.is_empty()
+        });
+        families
+            .ux_specs
+            .retain(|(_, test)| note(&test.fixture.gaps, &mut dropped));
+        families.action_specs.retain_mut(|spec| {
+            spec.tests
+                .retain(|test| note(&test.fixture.gaps, &mut dropped));
+            !spec.tests.is_empty()
+        });
+        journeys.workflow_journeys.retain(|journey| {
+            journey.gaps.is_empty() || {
+                dropped.extend(journey.gaps.iter().cloned());
+                false
+            }
+        });
+        journeys.view_journeys.retain(|journey| {
+            let mut gaps: Vec<super::fixtures::SeedGap> = Vec::new();
+            gaps.extend(
+                journey
+                    .open_seed
+                    .iter()
+                    .flat_map(|seed| seed.gaps.iter().cloned()),
+            );
+            gaps.extend(
+                journey
+                    .seeds
+                    .iter()
+                    .flat_map(|seed| seed.gaps.iter().cloned()),
+            );
+            gaps.is_empty() || {
+                dropped.extend(gaps);
+                false
+            }
+        });
+        if !dropped.is_empty()
+            && let Ok(mut sink) = self.seed_gaps.lock()
+        {
+            sink.extend(dropped);
+        }
+    }
+
+    /// Drain, dedupe and report the run's unseedable required fields.
+    fn take_seed_gaps(&self) -> Vec<super::fixtures::SeedGap> {
+        let mut gaps = self
+            .seed_gaps
+            .lock()
+            .map(|mut sink| std::mem::take(&mut *sink))
+            .unwrap_or_default();
+        gaps.sort();
+        gaps.dedup();
+        for gap in &gaps {
+            eprintln!("warning: ifml e2e: seed gap — {gap}");
+        }
+        gaps
+    }
+
+    /// The omission manifest: guarded detail/edit views with no seedable
+    /// component AND the required create-body fields no seed could fill. It
+    /// is written rather than silently dropping the specs.
+    fn emit_omitted_specs(
+        &self,
+        auth: &AuthSpecSet,
+        gaps: &[super::fixtures::SeedGap],
+        files: &mut Vec<GeneratedFile>,
+    ) {
+        if auth.omitted.is_empty() && gaps.is_empty() {
+            return;
+        }
+        let mut manifest = String::from("# Omitted IFML specs\n\n");
+        if !auth.omitted.is_empty() {
+            manifest.push_str(
+                "The following guarded detail/edit views emit no auth spec because\n\
+                 no schema-backed component could seed the record the id route\n\
+                 requires. They are listed here rather than silently dropped.\n\n",
+            );
+            for (view, reason) in &auth.omitted {
+                manifest.push_str(&format!("- `{view}` — {reason}\n"));
+            }
+            manifest.push('\n');
+        }
+        if !gaps.is_empty() {
+            manifest.push_str(
+                "The following required create-body fields have no fixture value, so\n\
+                 the specs that seed the affected entity are omitted (issue #806).\n\
+                 Each line names the entity, the create-DTO field and the reason.\n\n",
+            );
+            for gap in gaps {
+                manifest.push_str(&format!(
+                    "- `{}` / `{}` — {}\n",
+                    gap.entity, gap.field, gap.reason
+                ));
+            }
+        }
+        files.push(GeneratedFile {
+            path: self
+                .output_dir
+                .join("tests")
+                .join("ifml")
+                .join("omitted-specs.md"),
+            content: manifest,
+        });
+    }
 }
 
 #[async_trait]
@@ -181,6 +313,11 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         if self.framework != "svelte" {
             return Ok(vec![]);
         }
+        // A generator instance is rebuilt per run, but a caller may generate
+        // twice on one instance (tests): never leak gaps across runs.
+        if let Ok(mut gaps) = self.seed_gaps.lock() {
+            gaps.clear();
+        }
 
         let querier = IfmlGraphQuerier::new(db);
         let model = querier
@@ -197,23 +334,13 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         }
 
         // Flags + per-family payload assembly (issue #751 split).
-        let families = self
+        let mut families = self
             .assemble_spec_families(db, config, project, &model)
             .await?;
 
-        let spec_by_view: HashMap<&str, &ViewTestSpec> = families
-            .specs
-            .iter()
-            .map(|spec| (spec.view_name.as_str(), spec))
-            .collect();
         if self.nothing_to_emit(&families, &model) {
             return Ok(vec![]);
         }
-
-        // Remove stale per-view spec files, workflow/ux/auth/action specs,
-        // POM page classes, and journeys for views no longer in the model
-        // (issue #751 split — the sweep passes moved verbatim).
-        self.sweep_stale_outputs(&families, &spec_by_view, &model);
 
         // The journeys (issue #463): workflow handoffs + the shell nav
         // walk, plus the per-view navigate() walks and the journey hops
@@ -221,6 +348,23 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         let mut journeys = self
             .build_journey_set(db, config, project, &model, &families.personas)
             .await;
+
+        // Issue #806: a fixture with a seed gap cannot create its record, so
+        // the specs that depend on it are omitted here (recorded below in
+        // `omitted-specs.md` via the generator's gap sink). Runs before the
+        // per-view borrow is taken.
+        self.drop_unseedable(&mut families, &mut journeys);
+
+        let spec_by_view: HashMap<&str, &ViewTestSpec> = families
+            .specs
+            .iter()
+            .map(|spec| (spec.view_name.as_str(), spec))
+            .collect();
+
+        // Remove stale per-view spec files, workflow/ux/auth/action specs,
+        // POM page classes, and journeys for views no longer in the model
+        // (issue #751 split — the sweep passes moved verbatim).
+        self.sweep_stale_outputs(&families, &spec_by_view, &model);
 
         // The POM plans (built once — the auth-spec assembly reads the same
         // plan the page classes render from).
@@ -247,10 +391,16 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             .build_auth_specs(db, config, project, &model, &families, &pom_by_view)
             .await;
 
+        // Issue #806: the run's unseedable required fields — the auth seed
+        // path records them while `build_auth_specs` runs, so the sink is
+        // drained only now.
+        let gaps = self.take_seed_gaps();
+
         // Per-family spec emission (issue #751 split).
         let mut files = self.emit_spec_files(&families, &model, &auth);
         self.emit_journey_files(&families, &journeys, &mut files);
         self.emit_pom_and_harness(&families, &pom_plans, &mut files);
+        self.emit_omitted_specs(&auth, &gaps, &mut files);
 
         Ok(files)
     }
@@ -912,26 +1062,6 @@ impl IfmlE2eTestGenerator {
                     to_kebab_case(&auth_spec.view_name)
                 )),
                 content: super::auth::render_auth_spec(auth_spec, self.support().personas_import),
-            });
-        }
-
-        if !auth.omitted.is_empty() {
-            let mut manifest = String::from(
-                "# Omitted IFML auth specs\n\n\
-                 The following guarded detail/edit views emit no auth spec because\n\
-                 no schema-backed component could seed the record the id route\n\
-                 requires. They are listed here rather than silently dropped.\n\n",
-            );
-            for (view, reason) in &auth.omitted {
-                manifest.push_str(&format!("- `{view}` — {reason}\n"));
-            }
-            files.push(GeneratedFile {
-                path: self
-                    .output_dir
-                    .join("tests")
-                    .join("ifml")
-                    .join("omitted-specs.md"),
-                content: manifest,
             });
         }
 

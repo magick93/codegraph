@@ -643,10 +643,13 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
             // If-absent emission: inside an existing ui tree every skeleton
             // file is already scaffolded, so this is a no-op; in an ifml-only
             // plan it still builds the standalone SvelteKit skeleton.
-            global_gens.push(
-                Box::new(ifml::skeleton::IfmlSkeletonGenerator::new(&fw_output, fw))
-                    as Box<dyn GlobalGenerator>,
-            );
+            let mut skeleton = ifml::skeleton::IfmlSkeletonGenerator::new(&fw_output, fw);
+            if integrated {
+                // The hydration layout is group-scoped: a ROOT layout inside
+                // the entity ui tree would wrap the `(app)` routes.
+                skeleton = skeleton.with_route_root(ifml::route_generator::ROUTE_GROUP);
+            }
+            global_gens.push(Box::new(skeleton) as Box<dyn GlobalGenerator>);
         }
         if ctx.build_plan.is_none() || ctx.plan_has_global(&format!("ifml_route_{}", fw)) {
             let mut route_gen = ifml::route_generator::IfmlRouteGenerator::new(&fw_output, fw)

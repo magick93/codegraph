@@ -26,7 +26,43 @@ pub struct FixtureDep {
     pub id_var: String,
 }
 
-#[derive(Debug, Clone)]
+/// A required create-body field the generator could NOT seed (issue #806):
+/// a required entity reference whose target has no creatable API surface, a
+/// cycle, or a required scalar with no type-valid sample. A gap is reported
+/// (a run-path WARN + the emitted `tests/ifml/omitted-specs.md`) and the
+/// spec that would have opened the unseeded record is OMITTED — the plane
+/// never emits a seed it knows will 4xx.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SeedGap {
+    /// The entity whose create body cannot be completed.
+    pub entity: String,
+    /// The create-DTO field that cannot be seeded.
+    pub field: String,
+    /// Why (names the target / the cycle) — never a bare "could not".
+    pub reason: String,
+}
+
+impl SeedGap {
+    pub(crate) fn new(
+        entity: impl Into<String>,
+        field: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            entity: entity.into(),
+            field: field.into(),
+            reason: reason.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for SeedGap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {} ({})", self.entity, self.field, self.reason)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct Fixture {
     pub base_path: String,
     pub entries: Vec<(String, String)>,
@@ -38,6 +74,17 @@ pub struct Fixture {
     /// Required-FK parent seeds, created before this fixture and wired into
     /// `entries` by `id_var`.
     pub deps: Vec<FixtureDep>,
+    /// Required create-body fields this fixture could not seed (issue #806).
+    /// Non-empty ⇒ the seeded record cannot be created, so the family that
+    /// seeds it omits its spec (see [`SeedGap`]).
+    pub gaps: Vec<SeedGap>,
+}
+
+impl Fixture {
+    /// The first unseedable required field, when the body is incomplete.
+    pub(crate) fn unseedable(&self) -> Option<&SeedGap> {
+        self.gaps.first()
+    }
 }
 
 impl Fixture {
@@ -102,6 +149,7 @@ impl Fixture {
                 entries: dep.entries.clone(),
                 casing: dep.casing,
                 deps: Vec::new(),
+                gaps: Vec::new(),
             };
             let dep_id = format!("{var}_{}", dep.id_var);
             out.push_str(&format!(
@@ -150,6 +198,7 @@ impl Fixture {
                 entries: dep.entries.clone(),
                 casing: dep.casing,
                 deps: Vec::new(),
+                gaps: Vec::new(),
             };
             let dep_id = format!("{var}_{}", dep.id_var);
             out.push_str(&format!(
@@ -404,7 +453,7 @@ pub(crate) fn js_value_for_type(field: &str, rust_type: &str) -> String {
 
 /// Resolve the schema title a required entity-ref points at (`$ref` leaf
 /// stem, then `+Type`).
-async fn ref_target_title(db: &dyn GraphQuerier, prop: &PropertyNode) -> Option<String> {
+pub(super) async fn ref_target_title(db: &dyn GraphQuerier, prop: &PropertyNode) -> Option<String> {
     let target = prop.ref_target.as_deref()?;
     let leaf = target.rsplit('/').next().unwrap_or(target);
     let leaf = leaf.rsplit("::").next().unwrap_or(leaf);
@@ -630,9 +679,14 @@ pub(crate) async fn with_required_entries(
     let props = db.get_properties(&schema.title).await.unwrap_or_default();
     let mut out = entries;
     for prop in &props {
-        if !prop.is_required || prop.is_id {
+        // The surrogate `id` is server-generated (the create DTO skips it).
+        // Every OTHER required column is a required create-body member —
+        // identity / natural-key parts included (issue #806: a composite
+        // `id` feature has no serde default, so skipping it 422s the seed).
+        if !prop.is_required || prop.rust_field_name == "id" {
             continue;
         }
+
         let field_def = resolve_field(prop);
         let key = &field_def.rust_field_name;
         if present.contains(key)
@@ -680,7 +734,7 @@ pub(crate) async fn with_required_entries(
 
 /// A required structured wrapper's nested object literal, seeded with its
 /// required members (codelists use their first enum value).
-async fn structured_wrapper_value(
+pub(super) async fn structured_wrapper_value(
     db: &dyn GraphQuerier,
     prop: &PropertyNode,
     casing: DtoKeyCasing,
@@ -776,9 +830,12 @@ async fn plan_required_refs_inner(
         .map(|(field, _)| codegraph_naming::to_snake_case(field))
         .collect();
     for prop in &props {
-        if !prop.is_required || prop.is_id {
+        if !prop.is_required {
             continue;
         }
+        // A reference is an FK column whether or not it is also an identity
+        // feature (a natural-key part that IS a reference). Non-reference
+        // identity columns are seeded by the required-value pass.
         if !matches!(
             prop.effective_kind(),
             Some(RefClassificationKind::EntityReference)
@@ -789,8 +846,24 @@ async fn plan_required_refs_inner(
         if present.contains(&fk_field) {
             continue;
         }
-        let Some(target_title) = ref_target_title(db, prop).await else {
-            continue;
+        // The graph edge first, then the shared name-convention resolver
+        // (`vendor_id` with no `$ref`/edge) — the same rule the entity e2e
+        // plane seeds its dependencies with (issue #806).
+        let target_title = match ref_target_title(db, prop).await {
+            Some(title) => title,
+            None => {
+                let Some(target) = crate::fk_convention::resolve_convention_ref(
+                    db,
+                    prop,
+                    schema.domain.as_deref(),
+                    &schema.title,
+                )
+                .await
+                else {
+                    continue;
+                };
+                target.title
+            }
         };
         if stack.iter().any(|s| s == &target_title) {
             continue;
@@ -859,12 +932,58 @@ pub(crate) async fn add_required_refs(
     fixture
 }
 
-struct MachineInfo {
-    field: Option<String>,
-    initial: Option<String>,
+/// Build a complete seed fixture (issue #806): the create body projected onto
+/// the DTO plane's own create surface, required members sampled, required
+/// references dep-seeded, unseedable required fields recorded as
+/// [`SeedGap`]s.
+///
+/// This is the ONE entry point every seeded spec family uses. It prefers the
+/// DTO-authority planner ([`super::body::plan_seed`]); when the DTO surface
+/// cannot be resolved (no schema/owning domain — the ifml-only shape) it
+/// falls back to the historical prop-driven pass, so nothing regresses.
+pub(crate) async fn seed(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    api_version: &str,
+    entity: Option<&str>,
+    dsl_entries: Vec<(String, String)>,
+    casing: DtoKeyCasing,
+    base_path: String,
+) -> Fixture {
+    if let Some(plan) =
+        super::body::plan_seed(db, config, api_version, entity, dsl_entries.clone(), casing).await
+    {
+        return Fixture {
+            base_path,
+            entries: plan.entries,
+            casing,
+            deps: plan.deps,
+            gaps: plan.gaps,
+        };
+    }
+    let entries = with_required_entries(db, config, entity, dsl_entries, casing).await;
+    add_required_refs(
+        db,
+        config,
+        api_version,
+        entity,
+        Fixture {
+            base_path,
+            entries,
+            casing,
+            deps: Vec::new(),
+            gaps: Vec::new(),
+        },
+    )
+    .await
 }
 
-async fn machine_info(db: &dyn GraphQuerier, schema_title: &str) -> MachineInfo {
+pub(super) struct MachineInfo {
+    pub(super) field: Option<String>,
+    pub(super) initial: Option<String>,
+}
+
+pub(super) async fn machine_info(db: &dyn GraphQuerier, schema_title: &str) -> MachineInfo {
     let Some(surface) = DddDesignSurface::from_graph(db).await.ok() else {
         return MachineInfo {
             field: None,
@@ -887,7 +1006,7 @@ async fn machine_info(db: &dyn GraphQuerier, schema_title: &str) -> MachineInfo 
 /// enum value (or the machine's initial state), wrapped-datatype format
 /// samples, name heuristics for the crewbase wrappers, pattern samples,
 /// then the pg/rust type sentinel.
-async fn property_fixture_value(
+pub(super) async fn property_fixture_value(
     db: &dyn GraphQuerier,
     prop: &PropertyNode,
     machine_field: Option<&str>,
@@ -937,7 +1056,24 @@ fn primitive_fixture_value(prop: &PropertyNode) -> String {
     if let Some(sample) = pattern_sample(prop.pattern.as_deref()) {
         return sample.to_string();
     }
-    match prop.rust_field_type.as_str() {
+    let mut sample = sample_for_column(&prop.rust_field_name, &prop.rust_field_type);
+    if sample == format!("'Test {}'", prop.rust_field_name)
+        && prop.pg_column_type.to_uppercase().starts_with("NUMERIC")
+    {
+        // A DECIMAL column takes a numeric literal, not prose.
+        sample = "'4200'".to_string();
+    }
+    sample
+}
+
+/// A type-valid JS literal for one column that has no graph property of its
+/// own (a composite-wrapper column, issue #806): the name heuristics, then the
+/// Rust-type sentinel. Mirrors [`primitive_fixture_value`]'s tail.
+pub(super) fn sample_for_column(field: &str, rust_type: &str) -> String {
+    if let Some(sample) = name_sample(field, rust_type) {
+        return sample;
+    }
+    match rust_type {
         "bool" => "true".to_string(),
         "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
         | "isize" => "42".to_string(),
@@ -948,10 +1084,10 @@ fn primitive_fixture_value(prop: &PropertyNode) -> String {
         "Uuid" | "uuid::Uuid" => uuid_literal(),
         "serde_json::Value" => "{}".to_string(),
         _ => {
-            if prop.pg_column_type.to_uppercase().starts_with("NUMERIC") {
+            if rust_type.to_uppercase().starts_with("NUMERIC") {
                 "'4200'".to_string()
             } else {
-                format!("'Test {}'", prop.rust_field_name)
+                format!("'Test {field}'")
             }
         }
     }
@@ -1343,6 +1479,7 @@ entities = ["GroupType", "ChildType"]
                 entries: vec![("title".to_string(), "'Test title'".to_string())],
                 casing: DtoKeyCasing::Snake,
                 deps: Vec::new(),
+                gaps: Vec::new(),
             },
         )
         .await;
@@ -1600,6 +1737,7 @@ entities = ["GroupType", "ChildType", "PositionType"]
                 entries,
                 casing: DtoKeyCasing::Snake,
                 deps: Vec::new(),
+                gaps: Vec::new(),
             },
         )
         .await;
@@ -1641,6 +1779,7 @@ entities = ["GroupType", "ChildType", "PositionType"]
             entries: vec![("group_id".to_string(), "dep_0_id".to_string())],
             casing: DtoKeyCasing::Snake,
             deps: vec![dep],
+            gaps: Vec::new(),
         };
 
         let json = fixture.setup_js_json("created", "");

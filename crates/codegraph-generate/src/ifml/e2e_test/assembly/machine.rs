@@ -13,7 +13,7 @@ use super::super::super::context::{IfmlComponent, IfmlViewContainer};
 use super::super::super::route_generator::workflow_for_entity;
 use super::super::super::selectors::{is_details, is_form};
 use super::super::fixtures::{
-    Fixture, codelist_fixture_value, fixture_entries, js_string, schema_backed_api,
+    codelist_fixture_value, fixture_entries, js_string, schema_backed_api,
 };
 use super::super::generator::IfmlE2eTestGenerator;
 
@@ -132,15 +132,6 @@ impl IfmlE2eTestGenerator {
                 *value = format!("'{}'", js_string(&code));
             }
         }
-        let entries = super::super::fixtures::with_required_entries(
-            db,
-            config,
-            Some(entity),
-            entries,
-            self.dto_casing,
-        )
-        .await;
-
         Some(MachineTest {
             component_name: c.name.clone(),
             id_param: id_param.map(str::to_string),
@@ -148,20 +139,17 @@ impl IfmlE2eTestGenerator {
             initial_state: initial,
             transition,
             conflict_target,
-            // The required-FK closure rides the SAME seeder the workflow
-            // specs use — the specs must drive the entity through the API.
+            // The required members + the reference closure ride the SAME
+            // seed projection the other families use (issue #806) — the
+            // spec must drive the entity through the API.
             fixture: self
-                .attach_required_refs(
+                .seed_fixture(
                     db,
                     config,
                     api_version,
                     Some(entity),
-                    Fixture {
-                        casing: self.dto_casing,
-                        base_path: api.base_path,
-                        entries,
-                        deps: Vec::new(),
-                    },
+                    api.base_path,
+                    entries,
                 )
                 .await,
         })

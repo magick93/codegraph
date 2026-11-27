@@ -5,6 +5,10 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{PropertyNode, SchemaNode};
 
 use crate::api::api_model::resolve_path_segment_with_config;
+// The name-convention FK shape is shared with the IFML fixture plane
+// (`ifml::e2e_test::body`) so the two e2e surfaces cannot seed different
+// parents for the same column.
+use crate::fk_convention::{is_convention_shape, resolve_convention_ref};
 
 use super::page::UiField;
 
@@ -66,89 +70,6 @@ pub(super) async fn resolve_ref_schema(
         resolved = Some(same_domain.clone());
     }
     resolved
-}
-
-/// Normalize an identifier for convention matching: keep only lowercase
-/// alphanumerics, so `case`, `Case`, and `case_id`'s stem all collapse to
-/// `case` (and `CaseType` would become `casetype`, which does not match).
-fn normalize_convention_stem(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .flat_map(|c| c.to_lowercase())
-        .collect()
-}
-
-/// The name-convention FK shape: a required, non-array scalar column with no
-/// `$ref`/graph edge, whose `_id`-suffixed name claims an entity. The pg type
-/// is deliberately NOT checked here — the model may declare the FK as a plain
-/// string (`mox: String workerId` → pg TEXT, no `format: uuid`) and the
-/// convention is name-derived. Identity columns (`is_id`) are never FKs.
-fn is_convention_shape(prop: &PropertyNode) -> bool {
-    if prop.is_array || !prop.is_required || prop.ref_target.is_some() || prop.is_id {
-        return false;
-    }
-    let field = prop
-        .rust_field_name
-        .strip_prefix("r#")
-        .unwrap_or(&prop.rust_field_name);
-    field
-        .strip_suffix("_id")
-        .is_some_and(|stem| !stem.is_empty())
-}
-
-/// Resolve a required scalar FK column with no `$ref`/graph edge (e.g.
-/// `case_id`) to its entity by naming convention: strip the `_id` suffix,
-/// normalize, and find the unique `is_entity` schema whose normalized
-/// `pg_table_name` or `rust_type_name` equals the stem. On multiple matches,
-/// prefer a same-domain schema; return `None` if still ambiguous. The
-/// subject entity itself is never a convention target (#479): a required
-/// business field merely NAMED `*_id` on its own entity (e.g. VendorOrder's
-/// `String vendorOrderId`) would otherwise resolve to its carrier, get
-/// deferred to dep-setup, never emitted, and 422 every create. True
-/// self-FKs are explicit `refers` edges (they arrive via `ref_target`,
-/// not this path).
-async fn resolve_convention_ref(
-    db: &dyn GraphQuerier,
-    prop: &PropertyNode,
-    current_domain: Option<&str>,
-    subject_title: &str,
-) -> Option<SchemaNode> {
-    if !is_convention_shape(prop) {
-        return None;
-    }
-    let field = prop
-        .rust_field_name
-        .strip_prefix("r#")
-        .unwrap_or(&prop.rust_field_name);
-    let stem = field.strip_suffix("_id")?;
-    let stem_norm = normalize_convention_stem(stem);
-    let matches: Vec<SchemaNode> = db
-        .list_schemas(None)
-        .await
-        .ok()?
-        .into_iter()
-        .filter(|s| {
-            s.is_entity
-                && s.title != subject_title
-                && (normalize_convention_stem(&s.pg_table_name) == stem_norm
-                    || normalize_convention_stem(&s.rust_type_name) == stem_norm)
-        })
-        .collect();
-    match matches.len() {
-        0 => None,
-        1 => matches.into_iter().next(),
-        _ => {
-            let same_domain: Vec<SchemaNode> = matches
-                .into_iter()
-                .filter(|s| s.domain.as_deref() == current_domain)
-                .collect();
-            if same_domain.len() == 1 {
-                same_domain.into_iter().next()
-            } else {
-                None
-            }
-        }
-    }
 }
 
 /// One convention-resolved entity ref: the marked field and its target.

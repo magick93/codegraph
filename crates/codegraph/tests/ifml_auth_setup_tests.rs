@@ -49,6 +49,23 @@ class Request {
     /// Lifecycle status.
     RequestStatus status
 }
+
+/// Issue #806: a COMPOSITE NATURAL KEY (two `id` features — required
+/// create-body members with no serde default) plus a name-convention FK
+/// (`vendorId`: required, no `refers` edge).
+class LedgerEntryType {
+    id String entryCode
+    id String period
+    String vendorId
+    int amount
+}
+
+/// The convention FK target (`vendor`) — its own required fields are seeded
+/// before the child's create.
+class VendorType {
+    String label
+    String code
+}
 "#;
 
 const PORTAL_ACTOR: &str = r#"import "portal.mox"
@@ -208,6 +225,22 @@ view "RequestWizard" {
     }
 }
 
+// Issue #806: a GUARDED id view over the composite-natural-key entity — the
+// auth family's `beforeAll` seed is the end-to-end proof that the identity
+// members and the name-convention FK are seeded (a 422 would surface the
+// endpoint/status/body through the loud seed assert).
+view "GuardedLedgerEntry" {
+    params { id: Uuid };
+    label "Ledger Entry";
+    requires: [ApproveRequest];
+
+    component "ledger_info" {
+        type: details;
+        data: LedgerEntry;
+        fields: [entryCode, period, vendorId, amount];
+    }
+}
+
 view "AgentBoard" {
     label "Agent Board";
     roles: [agent];
@@ -230,7 +263,7 @@ api_version = "v1"
 label = "Portal"
 schema_dir = "portal"
 postgres_schema = "portal"
-entities = ["Request"]
+entities = ["Request", "LedgerEntryType", "VendorType"]
 
 [domains.portal.entity_config.Request]
 role = "root"
@@ -783,5 +816,51 @@ async fn persona_seeding_matches_snake_case_role_guards() {
     assert!(
         board.contains("test.describe('Agent Board gated from admin'"),
         "the owner-tier persona must be gated from the member-tier view:\n{board}"
+    );
+}
+
+/// Issue #806: a seeded spec's create body is the DTO plane's create surface.
+/// The pre-fix body came from the component's DSL `fields` alone, so:
+/// - composite natural-key parts (`id` features) were omitted and the create
+///   422'd `missing field` (they have no serde default);
+/// - a name-convention FK (`vendorId`, no `refers` edge) was posted as a
+///   random uuid and failed the FK constraint.
+///
+/// This pins the emitted `beforeAll` seed end to end (the mox front door, the
+/// real DTO context) for a guarded id view over such an entity.
+#[tokio::test]
+async fn seeded_auth_specs_carry_identity_members_and_convention_fks() {
+    let (_fixture, ui) = generate_fixture().await;
+    let spec = read(&ui, "tests/ifml/guarded-ledger-entry.auth.spec.ts");
+
+    // The composite natural key rides the body with type-valid values.
+    assert!(
+        spec.contains("'entry_code': 'Test entryCode'"),
+        "the natural-key part must be seeded (with the DSL value when the\
+         component declares it):\n{spec}"
+    );
+    assert!(
+        spec.contains("'period': 'Test period'"),
+        "the second natural-key part must be seeded:\n{spec}"
+    );
+
+    // The convention FK is dep-seeded: a parent POST precedes the child and
+    // the created id is wired in — never a random uuid.
+    assert!(
+        spec.contains("apiUrl('/api/v1/portal/vendor')"),
+        "the convention FK target must be seeded first:\n{spec}"
+    );
+    assert!(
+        spec.contains("'vendor_id': seeded_resp_dep_0_id"),
+        "the FK must carry the created parent id:\n{spec}"
+    );
+    assert!(
+        !spec.contains("'vendor_id': `00000000-0000-4000-8000-"),
+        "a random uuid must never be posted as an FK:\n{spec}"
+    );
+    // The parent seed carries its OWN required fields.
+    assert!(
+        spec.contains("'label': 'Test label'"),
+        "the parent's required fields must be seeded:\n{spec}"
     );
 }

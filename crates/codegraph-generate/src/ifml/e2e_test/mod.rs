@@ -4,6 +4,7 @@
 
 mod assembly;
 mod auth;
+mod body;
 mod fixtures;
 mod generator;
 mod kernel;

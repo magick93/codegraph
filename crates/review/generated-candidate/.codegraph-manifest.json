@@ -522,6 +522,7 @@
     "svelte/package.json",
     "svelte/src/app.d.ts",
     "svelte/src/app.html",
+    "svelte/src/routes/+layout.svelte",
     "svelte/svelte.config.js",
     "svelte/tsconfig.json",
     "svelte/vite.config.ts",
