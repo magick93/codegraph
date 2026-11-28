@@ -1420,8 +1420,8 @@ async fn child_execution(
 ///
 /// Fail closed, the #663 refusal posture: the plan resolves the parent's
 /// query slot AT GENERATION TIME with the exact rule the query plane uses
-/// to emit `find_by_id` (`has_create or (has_read and not parent_ref)` —
-/// the `uses_find_by_id` computation in `templates/ddd/query.tera`). A
+/// to emit `find_by_id` (`ddd::loaders::QueryLoaders`, issue #869 — the
+/// derivation `templates/ddd/query.tera` renders from). A
 /// parent whose resolved op set exposes no plain by-id load, and a
 /// cross-domain parent (child ops are same-domain by construction), are
 /// NAMED generation errors — never a handler that references a method the
@@ -1483,16 +1483,19 @@ async fn child_parent_load(
         db,
     )
     .await;
-    let has_find_by_id = parent_ops.iter().any(|o| o == "create")
-        || (parent_ops.iter().any(|o| o == "read") && parent_ref.is_none());
+    // The query plane's own loader rule (issue #869) — never a hand-copied
+    // mirror of the template gate.
+    let has_find_by_id =
+        crate::ddd::loaders::QueryLoaders::for_operations(&parent_ops, parent_ref.is_some())
+            .find_by_id;
     if !has_find_by_id {
         return Err(format!(
             "child operation `{op_name}`: the collection add loads the parent aggregate \
              `{}` before its create (a bogus or foreign-org parent must answer 404, never \
              a 500), but the parent `{parent_title}`'s query plane exposes no plain \
-             `find_by_id` — it emits only when the parent resolves `create`, or `read` \
-             without a parent-scoped FK. Declare `findById` (or `save`) on the parent's \
-             repository",
+             `find_by_id` — it emits only when the parent resolves `create` or `update`, \
+             or `read`/`delete` without a parent-scoped FK. Declare `findById` (or `save`) \
+             on the parent's repository",
             parent_schema.rust_type_name
         ));
     }

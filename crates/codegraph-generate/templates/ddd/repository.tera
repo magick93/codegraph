@@ -33,7 +33,7 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
     ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>>;
 {% endif %}
 
-{% if has_create or (has_read and not parent_ref) or has_fts or has_embeddings %}
+{% if has_find_by_id %}
     async fn find_by_id(
         &self,
         db: &C,
@@ -43,8 +43,8 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
 {% endif %}
     ) -> Result<Option<{{ entity_name }}Response>, Box<dyn std::error::Error + Send + Sync>>;
 {% endif %}
-{% if has_read %}
-{% if parent_ref %}
+{% if has_read or has_find_by_id_scoped %}
+{% if has_find_by_id_scoped %}
 
     /// Find by ID scoped to a parent entity (verifies ownership).
     async fn find_by_id_scoped(

@@ -19,9 +19,13 @@
 // under `PositionOpeningType` in domains.toml. Its query plane loads
 // through `find_by_id_scoped`, and the read model now does too.
 //
-// Shape 4 (issue #827, negative) — a machine-bearing child with no
-// repository (`InterviewNoteType`): an empty op set, no `read` op, no
-// loader; the read model stays withheld with a Warning.
+// Shape 4 (issues #827 + #869) — a machine-bearing child whose repository
+// saves but never reads (`InterviewNoteType`): no `read` op, so the read
+// model stays withheld with a Warning, while the query handler still
+// carries the loaders its create/update/ownership handlers call.
+//
+// Shape 5 (issue #869) — a root that saves and deletes but never reads
+// (`ReferralType`).
 package nz.example.recruiting
 
 enum ApplicationDisposition {
@@ -72,4 +76,9 @@ class InterviewType {
 class InterviewNoteType {
     String noteId
     InterviewNoteStatus noteStatus
+}
+
+class ReferralType {
+    String referralCode
+    String [0..1] notes
 }

@@ -55,13 +55,25 @@ application Recruiting {
             terminal Held;
             terminal Cancelled;
         }
-        // Shape 4 (issue #827, negative): a parent-scoped member with no
-        // repository — an empty op set, so no `read` op and no loader.
-        entity InterviewNoteType
+        // Shape 4 (issues #827 + #869): a parent-scoped member whose
+        // repository saves but never reads — no `read` op, so no machine
+        // read model, but the create/update re-reads and the ownership
+        // check still need the query loaders (#869: they used to be
+        // emitted only under `read`, E0599).
+        entity InterviewNoteType scaffold repository InterviewNoteRepository {
+            findAll;
+            save;
+        }
         machine noteStatus: InterviewNoteStatus {
             initial Draft;
             Draft -> Filed via File;
             terminal Filed;
+        }
+        // Shape 5 (issue #869): a ROOT that saves and deletes but never
+        // reads — the create/update re-reads still need `find_by_id`.
+        entity ReferralType scaffold repository ReferralRepository {
+            save;
+            delete;
         }
     }
 }

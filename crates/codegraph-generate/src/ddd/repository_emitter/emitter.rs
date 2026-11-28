@@ -441,17 +441,14 @@ impl RepositoryImplEmitter {
         // find_by_id is only referenced when the query handler emits it
         // (create bulk path, or read without a parent) or when FTS/embedding
         // search hydrates results through it.
-        let needs_find_by_id = tree.has_create
-            || (tree.has_read && tree.parent_ref.is_none())
-            || tree.has_fts
-            || tree.has_embeddings;
+        let loaders = tree.query_loaders();
+        let needs_find_by_id = loaders.repository_find_by_id(tree.has_fts, tree.has_embeddings);
         if needs_find_by_id {
             self.emit_find_by_id_fn(&tree, &mut code);
         }
-        // The trait declares the scoped loader only for an entity with a
-        // `read` op (repository.tera) — an empty op set (a design without a
-        // repository) must not emit an impl method the trait lacks (E0407).
-        if tree.has_read && tree.parent_ref.is_some() {
+        // The trait's own gate (issue #869, `ddd::loaders`) — never an impl
+        // method the trait lacks (E0407), never a trait method the impl lacks.
+        if loaders.find_by_id_scoped {
             self.emit_find_by_id_scoped_fn(&tree, &mut code);
         }
         if tree.has_update {

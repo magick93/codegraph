@@ -561,3 +561,61 @@ async fn nested_member_read_model_loads_through_the_scoped_loader() {
     assert!(root.contains("_queries.find_by_id(id"), "{root}");
     assert!(!root.contains("parent_id"), "{root}");
 }
+
+// ── 8. The query loaders exist wherever a handler calls them (#869) ────────
+
+/// A design that saves (create + update) or deletes without `findById` still
+/// has handlers that read rows back through the query handler: the create
+/// and update re-reads (`find_by_id`, both roles) and the child ownership
+/// checks (`find_by_id_scoped`). The query plane used to emit both loaders
+/// only under `read`, so these handlers called methods that did not exist
+/// (E0599). One derivation (`ddd::loaders::QueryLoaders`) now feeds the
+/// query handler, the repository trait and both impls.
+#[tokio::test]
+async fn query_loaders_exist_wherever_a_handler_calls_them() {
+    let fixture = write_fixture();
+    let output = generate(&fixture, "default").await;
+    let tree = tree(&output);
+
+    // The child that saves but never reads.
+    let note_query = read(&tree, "src/domain/recruiting/interview_note/query.rs");
+    assert!(
+        note_query.contains("pub async fn find_by_id("),
+        "the create/update re-read loader:\n{note_query}"
+    );
+    assert!(
+        note_query.contains("pub async fn find_by_id_scoped("),
+        "the child update ownership loader:\n{note_query}"
+    );
+    let note_handler = read(&tree, "src/api/recruiting/interview_note_handler.rs");
+    assert!(
+        note_handler.contains("_queries.find_by_id("),
+        "{note_handler}"
+    );
+    assert!(
+        note_handler.contains("_queries.find_by_id_scoped("),
+        "{note_handler}"
+    );
+    // No `read` op: no GET route, and still no machine read model.
+    assert!(
+        files_mentioning(&tree, "interview_note_machine").is_empty(),
+        "{:?}",
+        files_mentioning(&tree, "interview_note_machine")
+    );
+
+    // The root that saves and deletes but never reads: unscoped only.
+    let referral_query = read(&tree, "src/domain/recruiting/referral/query.rs");
+    assert!(
+        referral_query.contains("pub async fn find_by_id("),
+        "{referral_query}"
+    );
+    assert!(
+        !referral_query.contains("find_by_id_scoped"),
+        "a root has no scoped loader:\n{referral_query}"
+    );
+    let referral_handler = read(&tree, "src/api/recruiting/referral_handler.rs");
+    assert!(
+        referral_handler.contains("_queries.find_by_id("),
+        "{referral_handler}"
+    );
+}

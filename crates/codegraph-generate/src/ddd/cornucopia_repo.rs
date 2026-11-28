@@ -289,18 +289,16 @@ fn emit_adapter(
     }
 
     // ── find_by_id ──────────────────────────────────────────────────────
-    let needs_find_by_id = tree.has_create
-        || (tree.has_read && tree.parent_ref.is_none())
-        || tree.has_fts
-        || tree.has_embeddings;
+    let loaders = tree.query_loaders();
+    let needs_find_by_id = loaders.repository_find_by_id(tree.has_fts, tree.has_embeddings);
     if needs_find_by_id {
         emit_adapter_find_by_id(tree, &mut code);
     }
 
     // ── find_by_id_scoped ───────────────────────────────────────────────
-    // Gated like the trait method (repository.tera: `has_read` and a
-    // parent reference) — never an impl method the trait lacks (E0407).
-    if tree.has_read && tree.parent_ref.is_some() {
+    // Gated like the trait method (issue #869, `ddd::loaders`) — never an
+    // impl method the trait lacks (E0407).
+    if loaders.find_by_id_scoped {
         emit_adapter_find_by_id_scoped(tree, &mut code);
     }
 

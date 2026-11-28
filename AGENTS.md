@@ -7327,17 +7327,32 @@ spelling).
   parent-scoped member on a FLAT route stays withheld with a Warning naming
   the fix (`role = "child"` + `parent`/`parent_ref`). Roots are
   byte-identical. Fixture: `InterviewType` (served, scoped) +
-  `InterviewNoteType` (no repository, withheld) in
+  `InterviewNoteType` (no `read`, withheld) in
   `tests/fixtures/machine_read_shapes`.
-- **Repository gate (found by the #827 compile pin)**: both repository
-  impls (SeaORM `repository_emitter/emitter.rs`, cornucopia
-  `cornucopia_repo.rs`) emit `find_by_id_scoped` only when the entity has a
-  `read` op AND a parent reference — the trait's own gate
-  (`repository.tera`). A parent-scoped design without a repository used to
-  emit an impl method its trait lacked (E0407), the #449 empty-op-set
-  invariant again. Recorded gap (not fixed): a parent-scoped design whose
-  repository declares `save` but no `findById` still does not compile (its
-  handler/command planes call `find_by_id`).
+- **The query loaders follow the handlers, not `read` (issue #869, found
+  by the #827 compile pin)**: the create and update re-reads, the child
+  update/delete ownership checks and the guarded root delete all call the
+  query handler's `find_by_id` / `find_by_id_scoped`, so the loaders are
+  NOT a `read`-op surface. ONE derivation —
+  `ddd::loaders::QueryLoaders::for_ops` (`find_by_id = create || update ||
+  (!parent_ref && (read || delete))`, `find_by_id_scoped = parent_ref &&
+  (read || update || delete)`; `repository_find_by_id` adds the FTS /
+  embedding hydration) — feeds `query.tera` (`has_find_by_id` /
+  `has_find_by_id_scoped`, incl. the hooks field), the repository trait
+  (`repository.tera`), both impls (`EntityTree::query_loaders`), the
+  scaffold's `QueryHandler::new` arity (`has_query_hooks`, now from the
+  graph-resolved parent ref) and `child_parent_load`. A design that saves
+  or deletes without `findById` used to emit handlers calling loaders that
+  did not exist (E0599) and a trait-less scoped impl (E0407). The list
+  handler likewise renders only with `list` (it sat under `has_list or
+  is_auditable` while its filter allow-list sat under `has_list`). Every
+  `read`-bearing tree is byte-identical (the wrapper tags keep their
+  lines). Fixture: `InterviewNoteType` (`{ findAll; save; }` child) +
+  `ReferralType` (`{ save; delete; }` root); pin
+  `machine_read_shape_tests::query_loaders_exist_wherever_a_handler_calls_them`
+  + the `generated_app_with_machine_read_shapes_compiles` compile gate.
+  Recorded: `workflow_action/transition.tera` and `handler/mox.tera` call
+  `find_by_id` with no op gate (both need `read` in practice).
 - **Deferred**: mounting `/machine` under the workers topology (the UI
   emits the read-model contract while the route is monolith-only — the
   #703 posture, unchanged here).
