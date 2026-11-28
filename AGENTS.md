@@ -4871,6 +4871,29 @@ targets — a 294 GB target dir and hours of linking). Per-crate runs
 (e.g. `cargo test -p codegraph-generate --lib mox_expr`) are cheap
 either way; the flag matters for workspace-wide builds.
 
+## Driver layout (issue #780)
+
+`crates/codegraph/src/driver.rs` is a public FACADE only (`pub use` of
+`RunArgs`, `IfmlGenerateArgs`, `RunOutcome`, `ClassifyFormat`, `run`,
+`run_with_graph_cache`, `ifml_generate`, `generate`, `classify`,
+`check_generated_output`, `run_args_field_names`, the model-source notices)
+— `codegraph::driver::*` paths and the wrapper template are unchanged.
+Implementation lives in `driver/`: `workflows/{run,ifml,generate,classify}.rs`
+orchestrate; each stage has one home — `config_files` (domains.toml,
+classifier.toml, sibling config, ext-points/manifests), `graph_cache`,
+`profile` (run + IFML-only plan/ProjectConfig resolution, the rev chain),
+`ingestion/{models,designs,ifml,classification}`, `generation`,
+`validation`, `post_generation`, `diagnostics`. Shared-behaviour rule: IFML
+ingestion (`ingestion::ifml::ingest_ifml_files`) and entity classification
+(`ingestion::classification::{classify_domains,
+apply_entity_classification}`) have exactly ONE implementation each — `run`,
+`ifml_generate` and the `classify` report all call them (`classify` runs the
+same domain-plane passes as `run`, with `PassLog::Quiet` so its stdout stays
+the report). A new DSL adds its pass to the right `ingestion` module and its
+inputs to `sources`/the graph-cache hash; it never re-implements a stage in a
+workflow. Not done here (recorded on #780): grouping `RunArgs` (a public
+wrapper API) and replacing the `Debug`-parse in `run_args_field_names`.
+
 ## Pipeline commands
 
 ```bash
