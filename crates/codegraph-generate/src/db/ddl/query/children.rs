@@ -4,6 +4,7 @@ use codegraph_core::types::CompositionNode;
 
 use crate::db::ddl::types::{ChildTableDef, ColumnDef};
 
+use super::artifacts::{GeneratedTables, retain_generated_fks};
 use super::columns::{child_parent_fk_column, column_info_to_ddl};
 
 /// Recursively ensure every child table (and nested child) carries the
@@ -24,7 +25,7 @@ pub(in crate::db::ddl) fn composition_node_to_child_table(
     parent_table_name: &str,
     parent_schema_name: &str,
     parent_display_name: &str,
-    generated_tables: &HashSet<(String, String)>,
+    generated_tables: &GeneratedTables,
 ) -> ChildTableDef {
     let child_table_name = codegraph_naming::child_table_name(parent_table_name, &node.field_name);
     let child_display_name = format!("{} {}", parent_display_name, node.field_name);
@@ -85,11 +86,7 @@ pub(in crate::db::ddl) fn composition_node_to_child_table(
 
     // Filter FK constraints: only keep FKs whose target table belongs to a
     // generated entity (same logic as the parent table FK filter).
-    foreign_keys.retain(|fk| {
-        fk.is_codelist
-            || generated_tables
-                .contains(&(fk.references_schema.clone(), fk.references_table.clone()))
-    });
+    retain_generated_fks(&mut foreign_keys, generated_tables);
 
     // Recursively convert nested children
     let nested_children: Vec<ChildTableDef> = node

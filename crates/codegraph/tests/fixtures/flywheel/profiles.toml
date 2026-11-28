@@ -58,7 +58,7 @@ scripts.post_gen = []
 generators = [
     # Entity
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
-    "playwright-entity", "ui_descriptor", "ui-shell",
+    "playwright-entity", "ui_descriptor",
     # Domain
     "ui-domain-layout",
     # Global

@@ -293,8 +293,8 @@ async fn fresh_generation_emits_only_declared_surfaces() {
         .await
         .unwrap();
 
-    // The profile carries cornucopia_queries, cli_command, lifecycle_trait,
-    // and ui-shell, so all four surfaces are live for this fixture.
+    // The profile carries cornucopia_queries, cli_command and
+    // lifecycle_trait, so those surfaces are live for this fixture.
     assert!(
         output.join("queries").is_dir(),
         "queries plane is in the plan"

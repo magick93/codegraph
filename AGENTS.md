@@ -4973,8 +4973,14 @@ non-crewbase project could `pnpm install` the generated UI.
   or not named `@{scope}/…`.
 - **Not covered by #18** (recorded follow-ups): the generated `ui/` ships no
   `tsconfig.json`, the shadcn primitives remain the documented
-  `PRIMITIVES.md` consumer step, and the `ui-shell` plan-name mismatch means
-  profile runs emit `descriptor.ts` but no shell pages.
+  `PRIMITIVES.md` consumer step (#858). The `ui-shell` plan-name mismatch is
+  FIXED (#859): `ui-shell` is retired from every profile (its top-level route
+  tree conflicts with `(app)`; plan-less runs still emit it), and generator
+  names compare `-`/`_`-insensitively in `BuildPlan::has_*_gen`
+  (`profile::plan::same_generator`) — the mismatch had also silently dropped
+  `playwright-entity`, `playwright-global` and `ui-domain-layout` from every
+  profile run. Pinned by `registry.rs::charts_capability_audit` (every
+  Entity/Domain/Global capability, listed by its VERBATIM name, is built).
 - Gates: `cargo test -p codegraph --test ui_package_scope_tests` (vendoring,
   the import→export parity pin over a real init+generate tree, the override,
   the invalid-scope refusal, the doctor WARN) + `entity_codegen_gate`
@@ -7520,6 +7526,37 @@ When a ValueObject type extends an entity via allOf (e.g., `RemoteWorkType` allO
 correctly produces both outputs. The DDL generator must also produce both
 (FK column + child table). `dedup_fields()` with independent HashSets
 preserves both.
+
+### FK targets + ON DELETE (issues #322, #57)
+
+- **FK target schema (#322)**: an FK names the schema its target table is
+  EMITTED in, not the domain the target was declared in. `GeneratedTables`
+  (`db/ddl/query/artifacts.rs`, built from `compute_generation_order`) carries
+  the emitted `(schema, table)` universe plus each table's single emitted
+  schema; `retain_generated_fks` (the ONE filter — `children.rs` calls it too)
+  re-points an FK whose declared schema is not emitted when exactly one schema
+  emits the table, and drops it otherwise (an ambiguous table name is never
+  guessed). Pre-#322 a title re-claimed by another domain's explicit
+  `entities` entry lost its FK silently. Codelist FKs stay `common`.
+- **ON DELETE (#57)**: a scalar entity reference's action comes from ONE
+  function, `codegraph_core::types::entity_ref_on_delete(required)` — required
+  (`NOT NULL`) ⇒ `RESTRICT`, optional ⇒ `SET NULL` (Grafeo composition + the
+  mock engine both read it). A parent delete with live required children is
+  refused by the FK (`23503` → 422 since #828) instead of failing on the NOT
+  NULL violation SET NULL caused. VO→entity synthetic FKs (always nullable),
+  parent/junction CASCADE and hierarchy SET NULL are unchanged.
+- Gates: `cargo test -p codegraph --test ddl_fk_target_tests` + the in-crate
+  `db::ddl::tests` remap KATs.
+
+### Support-matrix doctor check (issue #862)
+
+`codegraph doctor` warns (`WARN support matrix — <feature> under workers:
+…`, +1 soft warning each) when the resolved plan selects a combination the v1
+matrix (#849 §3) does not claim: `[media]`, gRPC generators, `rules`, and
+`events_producer = true` under `deployment_topology = "workers"`.
+`init/support_matrix.rs::unsupported_combinations` keys on the plan + parsed
+`domains.toml` only; graph-dependent cells stay run-path warnings. Gate: the
+in-crate `init::support_matrix` KATs.
 
 ### Child-table projection contract (issue #460)
 

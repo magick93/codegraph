@@ -615,18 +615,29 @@ impl BuildPlan {
     }
 
     /// Returns true if the named entity generator is in the plan.
+    ///
+    /// Names compare with `-` and `_` treated as equal (issue #859): profiles
+    /// list some generators hyphenated (`playwright-entity`) while the run
+    /// path asks for the underscored form, and a verbatim comparison silently
+    /// dropped every hyphenated generator from profile runs.
     pub fn has_entity_gen(&self, name: &str) -> bool {
-        self.entity_generators.iter().any(|g| g == name)
+        self.entity_generators
+            .iter()
+            .any(|g| same_generator(g, name))
     }
 
     /// Returns true if the named domain generator is in the plan.
     pub fn has_domain_gen(&self, name: &str) -> bool {
-        self.domain_generators.iter().any(|g| g == name)
+        self.domain_generators
+            .iter()
+            .any(|g| same_generator(g, name))
     }
 
     /// Returns true if the named global generator is in the plan.
     pub fn has_global_gen(&self, name: &str) -> bool {
-        self.global_generators.iter().any(|g| g == name)
+        self.global_generators
+            .iter()
+            .any(|g| same_generator(g, name))
     }
 
     /// Returns the database target dialect for this build plan.
@@ -659,4 +670,13 @@ impl BuildPlan {
             .map(|p| p.as_path())
             .collect()
     }
+}
+
+/// Whether two generator names denote the same generator: `-` and `_` are
+/// interchangeable (issue #859).
+pub(crate) fn same_generator(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .all(|(x, y)| x == y || (matches!(x, b'-' | b'_') && matches!(y, b'-' | b'_')))
 }

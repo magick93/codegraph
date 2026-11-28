@@ -4,6 +4,7 @@ pub mod commands;
 pub mod context;
 pub mod model_starter;
 pub mod rosetta_model;
+pub mod support_matrix;
 pub mod ui_packages;
 pub mod wrapper_drift;
 

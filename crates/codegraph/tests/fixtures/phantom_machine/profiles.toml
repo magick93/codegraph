@@ -6,11 +6,8 @@
 # the per-entity artifact families the #807 stale sweep covers (queries/,
 # cli/src/commands/, src/generated/) are topology-independent.
 #
-# Note: `ui-shell` is deliberately NOT listed — the plan filter normalizes
-# the dash spelling the capability registry validates (`plan_has_entity`
-# queries `ui_shell` against the verbatim profile entry), so a listed
-# ui-shell validates but silently never runs; sweeping its route tree is a
-# recorded follow-up behind that spelling bug, not part of this lane.
+# `ui-shell` is retired from every profile (issue #859): its top-level
+# route tree conflicts with the `(app)` route group.
 
 [profiles.default.meta]
 name = "default"

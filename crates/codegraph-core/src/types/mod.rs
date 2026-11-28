@@ -48,7 +48,9 @@ pub use authorization::{
 pub use chart::{ChartDefinitionNode, ChartKind, ChartPropertyBinding};
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
-pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};
+pub use composition::{
+    ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget, entity_ref_on_delete,
+};
 pub use condition::{ConditionKind, ConditionNode};
 pub use ddd::{
     DddAggregateBoundary, DddAggregateMembership, DddAggregateOrigin, DddApplicationNode,

@@ -295,7 +295,7 @@ fn build_mock_node(
                     schema: mock_ref_schema(rt),
                     table: mock_ref_table(rt),
                     column: "id".to_string(),
-                    on_delete: "SET NULL".to_string(),
+                    on_delete: crate::types::entity_ref_on_delete(p.is_required).to_string(),
                 })
             }
             _ => None,
