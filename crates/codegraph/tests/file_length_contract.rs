@@ -117,10 +117,6 @@ const ALLOWED_TEMPLATES_OVER_LIMIT: &[(&str, &str)] = &[
         "crates/codegraph-generate/templates/webhook/dispatch_worker.tera",
         "cornucopia worker dispatcher; split drain/deliver",
     ),
-    (
-        "crates/codegraph/templates/emdash/admin_ts.tera",
-        "init-scaffold copy of the emdash admin UI; split per panel",
-    ),
 ];
 
 /// `CARGO_MANIFEST_DIR` for this test is `crates/codegraph`; the

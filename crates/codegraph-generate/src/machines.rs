@@ -643,13 +643,15 @@ pub async fn machine_surface_for_entity(
     first
 }
 
-/// Whether the machine read model has a LOADER (issue #824). The read
-/// model reads the status column off the row the query handler's UNSCOPED
-/// `find_by_id` returns — the method `ddd/query.tera` emits exactly for an
-/// entity with a `read` op and no parent reference. A parent-scoped member
-/// gets `find_by_id_scoped` instead (it loads through its aggregate, a
-/// different route shape — the recorded follow-up), and a design without a
-/// repository resolves to an EMPTY op set with no loader at all.
+/// Whether the machine read model has a LOADER (issues #824 + #827). The
+/// read model reads the status column off the row the query handler
+/// returns. `ddd/query.tera` emits the unscoped `find_by_id` for an entity
+/// with a `read` op and no parent reference, and `find_by_id_scoped(id,
+/// parent_id)` for a parent-scoped member — which the read model uses when
+/// the member's route is nested under its parent (the handler then has the
+/// parent id). A parent-scoped member on a flat route has neither loader
+/// it can call, and a design without a repository resolves to an EMPTY op
+/// set with no loader at all.
 /// `machine_read.tera` used to render for every machine-bearing design
 /// regardless, and both shapes failed a consumer's build (`E0599`: no
 /// method named `find_by_id`).
@@ -659,8 +661,12 @@ pub async fn machine_surface_for_entity(
 /// withheld, and the run says so
 /// ([`machine_read_model_withheld_warnings`]).
 #[must_use]
-pub const fn machine_read_model_has_loader(has_read: bool, has_parent_ref: bool) -> bool {
-    has_read && !has_parent_ref
+pub const fn machine_read_model_has_loader(
+    has_read: bool,
+    has_parent_ref: bool,
+    nested_route: bool,
+) -> bool {
+    has_read && (!has_parent_ref || nested_route)
 }
 
 /// The machine read-model surface of `title` (issues #817 + #824):
@@ -686,9 +692,7 @@ pub async fn machine_read_model_surface_for_entity(
     let surface = machine_surface_for_entity(db, title, workflow_status_field).await?;
     if machine_read_model_loader_facts(db, config, domain, title)
         .await
-        .is_some_and(|(has_read, has_parent_ref)| {
-            machine_read_model_has_loader(has_read, has_parent_ref)
-        })
+        .is_some_and(LoaderFacts::servable)
     {
         Some(surface)
     } else {
@@ -722,9 +726,7 @@ pub async fn machine_read_model_titles(
         if let Some(domain) = schema_domain(db, &title).await
             && machine_read_model_loader_facts(db, config, &domain, &title)
                 .await
-                .is_some_and(|(has_read, has_parent_ref)| {
-                    machine_read_model_has_loader(has_read, has_parent_ref)
-                })
+                .is_some_and(LoaderFacts::servable)
         {
             titles.insert(title);
         }
@@ -751,30 +753,27 @@ pub async fn machine_read_model_withheld_warnings(
         };
         let (servable, reason) = match facts {
             None => (false, "resolves to no schema".to_string()),
-            Some((has_read, has_parent_ref)) => {
+            Some(facts) => {
                 // The SAME predicate the emitters withhold by — the Warning
                 // cannot disagree with the emission.
-                let reason = if !has_read {
+                let reason = if !facts.has_read {
                     [
                         "its query plane serves no `read` op (a design without a repository",
                         "resolves to an empty op set), so there is no `find_by_id` for the read",
                         "model to load through",
                     ]
                     .join(" ")
-                } else if has_parent_ref {
+                } else if facts.has_parent_ref && !facts.nested_route {
                     [
-                        "it is a parent-scoped member: its query handler loads through",
-                        "`find_by_id_scoped`, and the read model has no scoped loader yet (the",
-                        "scoped loader is the recorded follow-up)",
+                        "it is a parent-scoped member on a route that is not nested under",
+                        "its parent, so the handler has no parent id for `find_by_id_scoped`",
+                        "(declare `role = \"child\"` with `parent`/`parent_ref` to nest it)",
                     ]
                     .join(" ")
                 } else {
                     String::new()
                 };
-                (
-                    machine_read_model_has_loader(has_read, has_parent_ref),
-                    reason,
-                )
+                (facts.servable(), reason)
             }
         };
         if servable {
@@ -797,17 +796,23 @@ async fn schema_domain(db: &dyn GraphQuerier, title: &str) -> Option<String> {
         .and_then(|schema| schema.domain)
 }
 
-/// The loader facts resolved from the graph — the same two facts
-/// `ddd/query.tera` reads: the op set the query plane serves (the `read`
-/// op gates `find_by_id`) and the parent reference (which switches the
-/// handler to the scoped loader). `None` when the graph carries no schema
-/// for the title in `domain`.
+/// The loader facts resolved from the graph (issues #824 + #827).
+///
+/// `has_read` and `has_parent_ref` are the two facts `ddd/query.tera`
+/// reads: the op set the query plane serves (the `read` op gates both
+/// loaders) and the parent reference (which emits `find_by_id_scoped`).
+/// `nested_route` is the route fact: the workflow and read-model planes
+/// mount the entity under its parent, so the handler has the parent id the
+/// scoped loader needs. It comes from the workflow plane's own
+/// [`crate::api::workflow_action::resolve_route_role`], so the loader
+/// decision and the emitted route shape cannot disagree. `None` when the
+/// graph carries no schema for the title in `domain`.
 async fn machine_read_model_loader_facts(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
     domain: &str,
     machine_title: &str,
-) -> Option<(bool, bool)> {
+) -> Option<LoaderFacts> {
     let schema = db
         .get_schema_in_domain(machine_title, domain)
         .await
@@ -830,7 +835,7 @@ async fn machine_read_model_loader_facts(
     .any(|op| op == "read");
     if !has_read {
         // No loader either way; the parent-candidate read is not needed.
-        return Some((false, false));
+        return Some(LoaderFacts::default());
     }
     let entity_cfg = config
         .domains
@@ -847,7 +852,70 @@ async fn machine_read_model_loader_facts(
     )
     .await
     .is_some();
-    Some((has_read, has_parent_ref))
+    let route_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(machine_title));
+    let nested_route = has_parent_ref
+        && crate::api::workflow_action::resolve_route_role(
+            db,
+            config,
+            domain,
+            machine_title,
+            route_cfg,
+            &parent_candidates,
+        )
+        .await
+            == "child";
+    Some(LoaderFacts {
+        has_read,
+        has_parent_ref,
+        nested_route,
+    })
+}
+
+/// The three loader facts (see [`machine_read_model_loader_facts`]).
+#[derive(Debug, Clone, Copy, Default)]
+struct LoaderFacts {
+    has_read: bool,
+    has_parent_ref: bool,
+    nested_route: bool,
+}
+
+impl LoaderFacts {
+    fn servable(self) -> bool {
+        machine_read_model_has_loader(self.has_read, self.has_parent_ref, self.nested_route)
+    }
+}
+
+/// How the machine read model loads its row (issue #827): through the
+/// query handler's unscoped `find_by_id`, or — for a parent-scoped member
+/// mounted under its parent — through `find_by_id_scoped(id, parent_id)`,
+/// which is also the ownership check (a member of another parent is a 404).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MachineReadLoader {
+    Unscoped,
+    Scoped,
+}
+
+/// The loader the read model of `title` reads through, or `None` when it
+/// has none (the read model is withheld). The same facts
+/// [`machine_read_model_surface_for_entity`] decides by.
+pub async fn machine_read_model_loader(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    title: &str,
+) -> Option<MachineReadLoader> {
+    let facts = machine_read_model_loader_facts(db, config, domain, title).await?;
+    if !facts.servable() {
+        return None;
+    }
+    Some(if facts.has_parent_ref {
+        MachineReadLoader::Scoped
+    } else {
+        MachineReadLoader::Unscoped
+    })
 }
 
 /// FNV-1a 64-bit lowercase hex — the inline digest every plane uses (the

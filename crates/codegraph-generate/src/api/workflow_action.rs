@@ -33,6 +33,9 @@ pub struct WorkflowActionContext {
     /// dual entities merge the read model into `/workflow`, machine-only
     /// entities get the `machine_read.tera` route module.
     pub machine: Option<MachineReadModelContext>,
+    /// `machine.scoped_load`, flattened so the `/workflow` extractor can
+    /// bind the parent id without a null check (issue #827).
+    pub machine_scoped_load: bool,
     /// Whether transition guards are defined (non-empty transitions map).
     pub has_transition_guards: bool,
     /// Dual-status guard entries (status requires approval state).
@@ -76,6 +79,10 @@ pub struct MachineReadModelContext {
     pub machine_id: String,
     pub status_field_rust: String,
     pub status_field_optional: bool,
+    /// The read model loads through `find_by_id_scoped(id, parent_id)`
+    /// (issue #827): a parent-scoped member mounted under its parent. The
+    /// scoped load is also the ownership check.
+    pub scoped_load: bool,
 }
 
 /// A dual-status guard entry.
@@ -191,6 +198,14 @@ impl EntityGenerator for WorkflowActionGenerator {
                 status_field_rust: status_field_rust(db, schema_title, &m.status_field).await,
                 status_field_optional: status_field_is_optional(db, schema_title, &m.status_field)
                     .await,
+                scoped_load: crate::machines::machine_read_model_loader(
+                    db,
+                    config,
+                    &domain,
+                    schema_title,
+                )
+                .await
+                    == Some(crate::machines::MachineReadLoader::Scoped),
             }),
             None => None,
         };
@@ -230,44 +245,15 @@ impl EntityGenerator for WorkflowActionGenerator {
         // Determine role and ancestor_path_params (same logic as handler generator)
         let stripped_title =
             super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
-        let mut resolved_role = entity_cfg
-            .and_then(|ec| ec.role.clone())
-            .unwrap_or_else(|| "root".into());
-
-        // Check manual config for child role
-        if entity_cfg
-            .map(|ec| ec.role.as_deref() == Some("child"))
-            .unwrap_or(false)
-        {
-            resolved_role = "child".to_string();
-        }
-
-        // Fall back to graph parent_candidates (only if entity is NOT root,
-        // i.e. explicitly configured as child — matching handler.rs behavior)
-        if resolved_role != "root" {
-            for pc in &self.parent_candidates {
-                let child_name =
-                    super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
-                if child_name == stripped_title {
-                    let parent_in_domain = config
-                        .domains
-                        .get(&domain)
-                        .map(|d| d.entities.contains(&pc.parent_title))
-                        .unwrap_or(false)
-                        || db
-                            .get_schema_in_domain(&pc.parent_title, &domain)
-                            .await
-                            .ok()
-                            .flatten()
-                            .and_then(|s| s.domain.as_ref().map(|d| d == &domain))
-                            .unwrap_or(false);
-                    if parent_in_domain {
-                        resolved_role = "child".to_string();
-                    }
-                    break;
-                }
-            }
-        }
+        let resolved_role = resolve_route_role(
+            db,
+            config,
+            &domain,
+            schema_title,
+            entity_cfg,
+            &self.parent_candidates,
+        )
+        .await;
 
         let ancestor_path_params = if resolved_role == "child" {
             // Check if the parent is itself a child (depth-2)
@@ -383,6 +369,7 @@ impl EntityGenerator for WorkflowActionGenerator {
                 terminal_states: wf.terminal_states.clone(),
                 states: wf.states.clone(),
                 machine: machine_ctx.clone(),
+                machine_scoped_load: machine_ctx.as_ref().is_some_and(|m| m.scoped_load),
                 transitions: transitions.clone(),
                 has_transition_guards,
                 dual_status_guards: dual_status_guards.clone(),
@@ -426,6 +413,7 @@ impl EntityGenerator for WorkflowActionGenerator {
                 machine_id: machine.machine_id.clone(),
                 status_field_rust: machine.status_field_rust.clone(),
                 status_field_optional: machine.status_field_optional,
+                scoped_load: machine.scoped_load,
                 role: resolved_role.clone(),
                 ancestor_path_params,
                 param_name,
@@ -465,6 +453,8 @@ pub struct MachineReadContext {
     pub machine_id: String,
     pub status_field_rust: String,
     pub status_field_optional: bool,
+    /// See [`MachineReadModelContext::scoped_load`].
+    pub scoped_load: bool,
     pub role: String,
     pub ancestor_path_params: usize,
     pub param_name: String,
@@ -520,4 +510,59 @@ async fn status_field_is_optional(
                 .any(|p| !p.is_required || p.is_nullable)
         })
         .unwrap_or(false)
+}
+
+/// The route role the workflow and machine read-model planes mount an
+/// entity under: `"child"` when the route is nested under a parent (so the
+/// handler extracts the parent id), else the configured role (default
+/// `"root"`). One function, so the machine read model's scoped-loader
+/// decision (issue #827) and the emitted route shape cannot disagree.
+pub(crate) async fn resolve_route_role(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    schema_title: &str,
+    entity_cfg: Option<&codegraph_config::EntityConfig>,
+    parent_candidates: &[codegraph_core::types::ParentCandidate],
+) -> String {
+    let stripped_title = super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
+    let mut resolved_role = entity_cfg
+        .and_then(|ec| ec.role.clone())
+        .unwrap_or_else(|| "root".into());
+
+    // Check manual config for child role
+    if entity_cfg
+        .map(|ec| ec.role.as_deref() == Some("child"))
+        .unwrap_or(false)
+    {
+        resolved_role = "child".to_string();
+    }
+
+    // Fall back to graph parent_candidates (only if entity is NOT root,
+    // i.e. explicitly configured as child — matching handler.rs behavior)
+    if resolved_role != "root" {
+        for pc in parent_candidates {
+            let child_name =
+                super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
+            if child_name == stripped_title {
+                let parent_in_domain = config
+                    .domains
+                    .get(domain)
+                    .map(|d| d.entities.contains(&pc.parent_title))
+                    .unwrap_or(false)
+                    || db
+                        .get_schema_in_domain(&pc.parent_title, domain)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|s| s.domain.as_ref().map(|d| d == domain))
+                        .unwrap_or(false);
+                if parent_in_domain {
+                    resolved_role = "child".to_string();
+                }
+                break;
+            }
+        }
+    }
+    resolved_role
 }

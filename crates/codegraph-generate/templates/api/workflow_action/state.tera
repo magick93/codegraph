@@ -23,9 +23,9 @@ pub async fn get_workflow_state(
     headers: HeaderMap,
 {% if role == "child" %}
 {% if ancestor_path_params >= 2 %}
-    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
+    Path((_grandparent_id, {% if not machine_scoped_load %}_{% endif %}parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
 {% else %}
-    Path((_parent_id, id)): Path<(Uuid, Uuid)>,
+    Path(({% if not machine_scoped_load %}_{% endif %}parent_id, id)): Path<(Uuid, Uuid)>,
 {% endif %}
 {% else %}
     Path(id): Path<Uuid>,
@@ -48,7 +48,7 @@ pub async fn get_workflow_state(
         .get_state(api_key_info.organization_id, "{{ domain }}", "{{ module_name }}", id)
         .await
         .ok();
-    let machine = super::{{ module_name }}_machine::machine_read_model(&state, &api_key_info, id)
+    let machine = super::{{ module_name }}_machine::machine_read_model(&state, &api_key_info, {% if machine_scoped_load %}parent_id, {% endif %}id)
         .await
         .map_err(|e| e.with_correlation_id(correlation_id))?;
     let response = match ws {

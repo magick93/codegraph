@@ -1,0 +1,17 @@
+{% raw %}<!-- Labelled input primitive for generated forms (issue #860). Vendored by `codegraph init`; consumer-owned. -->
+<script lang="ts">
+	import type { HTMLInputAttributes } from 'svelte/elements';
+
+	let {
+		label,
+		value = $bindable(''),
+		type = 'text',
+		...rest
+	}: Omit<HTMLInputAttributes, 'value'> & { label: string; value?: unknown } = $props();
+</script>
+
+<label class="block">
+	<span class="text-sm font-medium">{label}</span>
+	<input {type} bind:value {...rest} />
+</label>
+{% endraw %}

@@ -8,3 +8,14 @@ api_version = "v1"
 label = "Recruiting"
 schema_dir = "recruiting"
 postgres_schema = "recruiting"
+
+# Shapes 3 + 4 (issue #827): parent-scoped machine-bearing members.
+[domains.recruiting.entity_config.InterviewType]
+role = "child"
+parent = "PositionOpeningType"
+parent_ref = "position_opening_id"
+
+[domains.recruiting.entity_config.InterviewNoteType]
+role = "child"
+parent = "PositionOpeningType"
+parent_ref = "position_opening_id"

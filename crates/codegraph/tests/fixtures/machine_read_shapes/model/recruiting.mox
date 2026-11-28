@@ -13,6 +13,15 @@
 // name's snake_case instead (E0609: no field `approval_status_code`).
 //
 // Both are the reporting consumer's recruiting shapes, reduced.
+//
+// Shape 3 (issue #827) — a machine-bearing CHILD (`InterviewType`): a
+// refers-linked member with its own repository, declared `role = "child"`
+// under `PositionOpeningType` in domains.toml. Its query plane loads
+// through `find_by_id_scoped`, and the read model now does too.
+//
+// Shape 4 (issue #827, negative) — a machine-bearing child whose design
+// exposes no `findById` (`InterviewNoteType`): no `read` op, no loader,
+// the read model stays withheld with a Warning.
 package nz.example.recruiting
 
 enum ApplicationDisposition {
@@ -26,6 +35,12 @@ enum PositionOpeningApprovalStatus {
     Incomplete as "I" = 0
     InReview as "R" = 1
     Approved as "A" = 2
+}
+
+enum InterviewStatus {
+    Scheduled = 0
+    Held = 1
+    Cancelled = 2
 }
 
 class CandidateType {
@@ -42,4 +57,14 @@ class Application {
 class PositionOpeningType {
     String title
     PositionOpeningApprovalStatus approvalStatusCode
+}
+
+class InterviewType {
+    String interviewId
+    InterviewStatus interviewStatus
+}
+
+class InterviewNoteType {
+    String noteId
+    InterviewStatus noteStatus
 }

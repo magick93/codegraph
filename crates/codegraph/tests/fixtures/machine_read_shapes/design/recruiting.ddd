@@ -39,5 +39,32 @@ application Recruiting {
             InReview -> Approved via Approve;
             terminal Approved;
         }
+        // Shape 3 (issue #827): a parent-scoped member (`role = "child"`
+        // under PositionOpeningType) — its read model loads through
+        // `find_by_id_scoped(id, parent_id)`.
+        entity InterviewType scaffold repository InterviewRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        machine interviewStatus: InterviewStatus {
+            initial Scheduled;
+            Scheduled -> Held via Hold;
+            Scheduled -> Cancelled via Cancel;
+            terminal Held;
+            terminal Cancelled;
+        }
+        // Shape 4 (issue #827, negative): a parent-scoped member whose
+        // design exposes no `findById` — no `read` op, no loader.
+        entity InterviewNoteType scaffold repository InterviewNoteRepository {
+            findAll;
+            save;
+        }
+        machine noteStatus: InterviewStatus {
+            initial Scheduled;
+            Scheduled -> Held via Hold;
+            terminal Held;
+        }
     }
 }
