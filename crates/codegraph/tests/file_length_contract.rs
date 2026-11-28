@@ -46,10 +46,6 @@ const ALLOWED_OVER_LIMIT: &[(&str, &str)] = &[
         "init/doctor/add-domain command surface; split per subcommand",
     ),
     (
-        "crates/codegraph/src/driver.rs",
-        "driver::run pipeline; split per pass",
-    ),
-    (
         "crates/codegraph-generate/src/ddd/body_lower.rs",
         "#662 statement-body lowering; split stmt/expr lowering",
     ),
