@@ -93,6 +93,7 @@ pub struct UiNavField {
 /// component set is documented and one command away instead of inferred
 /// from page imports.
 pub const SHADCN_PRIMITIVES: &[&str] = &[
+    "alert",
     "alert-dialog",
     "avatar",
     "badge",
@@ -104,16 +105,35 @@ pub const SHADCN_PRIMITIVES: &[&str] = &[
     "dialog",
     "dropdown-menu",
     "empty",
+    "field",
     "input",
     "label",
+    "native-select",
     "popover",
     "select",
     "separator",
     "sheet",
     "sidebar",
     "sonner",
+    "spinner",
+    "switch",
     "table",
+    "tabs",
+    "textarea",
     "tooltip",
+];
+
+/// The `#lib/components/ui/<name>` components the generator EMITS itself
+/// (they are not shadcn primitives, so `PRIMITIVES.md` does not list them).
+/// Together with [`SHADCN_PRIMITIVES`] this is the complete set the
+/// generated pages may import — pinned by
+/// `every_template_ui_import_is_a_primitive_or_codegraph_owned` (issue #858).
+pub const CODEGRAPH_OWNED_COMPONENTS: &[&str] = &[
+    "SearchInput",
+    "WorkflowPanel",
+    "array-field",
+    "date-range-field",
+    "structured-wrapper-field",
 ];
 
 pub struct UiScaffoldGenerator {
@@ -308,6 +328,22 @@ impl GlobalGenerator for UiScaffoldGenerator {
         // regeneration; `$lib/server/**` is SvelteKit's server-only
         // convention (a client import is a build error), the structural
         // guardrail keeping credentials server-side.
+        // The root tsconfig (issue #858): `package.json`'s `check` script
+        // and the shadcn-svelte CLI both require one. Emitted if-absent so a
+        // consumer's edits survive regeneration.
+        let tsconfig = ui.join("tsconfig.json");
+        if !tsconfig.exists() {
+            files.push(GeneratedFile {
+                path: tsconfig,
+                content: render_template_with_project(
+                    tera,
+                    "ui/scaffold/tsconfig.tera",
+                    &ctx,
+                    project,
+                )?,
+            });
+        }
+
         let server_api = lib.join("server").join("api.ts");
         if !server_api.exists() {
             files.push(GeneratedFile {
@@ -581,6 +617,34 @@ fn core_scaffold_templates(ui: &Path, src: &Path, lib: &Path) -> Vec<(&'static s
                 .join("index.ts"),
         ),
         (
+            "ui/scaffold/array_field.tera",
+            lib.join("components")
+                .join("ui")
+                .join("array-field")
+                .join("ArrayField.svelte"),
+        ),
+        (
+            "ui/scaffold/array_field_index.tera",
+            lib.join("components")
+                .join("ui")
+                .join("array-field")
+                .join("index.ts"),
+        ),
+        (
+            "ui/scaffold/date_range_field.tera",
+            lib.join("components")
+                .join("ui")
+                .join("date-range-field")
+                .join("DateRangeField.svelte"),
+        ),
+        (
+            "ui/scaffold/date_range_field_index.tera",
+            lib.join("components")
+                .join("ui")
+                .join("date-range-field")
+                .join("index.ts"),
+        ),
+        (
             "ui/scaffold/error_page.tera",
             src.join("routes").join("+error.svelte"),
         ),
@@ -814,7 +878,80 @@ mod tests {
             );
         }
         // Pre-existing primitives stay declared (no duplicates).
+        for owned in CODEGRAPH_OWNED_COMPONENTS {
+            assert!(
+                !SHADCN_PRIMITIVES.contains(owned),
+                "{owned} is owned, not a primitive"
+            );
+        }
         let unique: std::collections::HashSet<_> = SHADCN_PRIMITIVES.iter().collect();
         assert_eq!(unique.len(), SHADCN_PRIMITIVES.len());
+    }
+
+    /// Issue #858: `PRIMITIVES.md` is the install surface, so every
+    /// `#lib/components/ui/<name>` a template imports must be either a listed
+    /// shadcn primitive or a component this generator emits. Scans the template
+    /// tree on disk, so a new import cannot ship without its install entry.
+    #[test]
+    fn every_template_ui_import_is_a_primitive_or_codegraph_owned() {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).expect("templates dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    walk(&path, out);
+                } else if path.extension().is_some_and(|e| e == "tera") {
+                    out.push(path);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates/ui");
+        let mut files = Vec::new();
+        walk(&root, &mut files);
+        let needle = "#lib/components/ui/";
+        let mut missing = std::collections::BTreeSet::new();
+        for file in files {
+            let text = std::fs::read_to_string(&file).expect("template");
+            for (at, _) in text.match_indices(needle) {
+                let name: String = text[at + needle.len()..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                    .collect();
+                // `PRIMITIVES.md` names the prefix in prose, with no component.
+                if !name.is_empty()
+                    && !SHADCN_PRIMITIVES.contains(&name.as_str())
+                    && !CODEGRAPH_OWNED_COMPONENTS.contains(&name.as_str())
+                {
+                    missing.insert(format!(
+                        "{name} ({})",
+                        file.strip_prefix(&root).unwrap_or(&file).display()
+                    ));
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "templates import components neither listed in SHADCN_PRIMITIVES nor emitted: {missing:?}"
+        );
+    }
+
+    /// Issue #858: every codegraph-owned component the pages import has an
+    /// emission site in the scaffold.
+    #[test]
+    fn codegraph_owned_components_are_emitted() {
+        let ui = std::path::Path::new("ui");
+        let src = ui.join("src");
+        let lib = src.join("lib");
+        let emitted: Vec<String> = core_scaffold_templates(ui, &src, &lib)
+            .into_iter()
+            .map(|(_, p)| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        for owned in CODEGRAPH_OWNED_COMPONENTS {
+            assert!(
+                emitted
+                    .iter()
+                    .any(|p| p.contains(&format!("components/ui/{owned}"))),
+                "{owned} is imported by the pages but never emitted: {emitted:?}"
+            );
+        }
     }
 }

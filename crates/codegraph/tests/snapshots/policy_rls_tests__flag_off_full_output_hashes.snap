@@ -2,7 +2,7 @@
 source: crates/codegraph/tests/policy_rls_tests.rs
 expression: hashes
 ---
-".codegraph-manifest.json": 23e20b4cdfe54df87a9dd107ac6c417748ec047520e5756e6a7a456a0e992413
+".codegraph-manifest.json": 8c41dc8c7f55a0cfee045c36d6faa20cbdce2ab4cba6ac7c2f40043dd8c335b9
 Cargo.toml: 6d3d65a3376cf58cefb2436d8e548a6159223e598c9b7de5b6e953d5e3ce37c8
 build.rs: 25da040c54e009a2032a4298979b8b6e10bd6b3f56eb8df24d37085cee99b597
 cli/Cargo.toml: 1d82304e59334d0a2c1c7ea35573f1061a86594bad032b7e6c09fd05af5ece33
@@ -673,6 +673,10 @@ ui/src/lib/components/forms/RsvpForm.svelte: d25b4a4fa9024c3888929af7faf9613fc72
 ui/src/lib/components/forms/StringTypeArrayForm.svelte: 40d7571184e8f472f8d2ab516ce54479b593fbfdd8bbb761de99b1e764114070
 ui/src/lib/components/ui/SearchInput.svelte: 73a8204c92e51e208a9d62d339bb5336cae6c87160f7b2af4849bf92b40fe572
 ui/src/lib/components/ui/WorkflowPanel.svelte: 0d07e6a94982a8d4f1aa9a68c9cd91be80f7479f3857bebb9d90a71d2e3dd818
+ui/src/lib/components/ui/array-field/ArrayField.svelte: 8008a6e43ca6cdbd315eed3258bbda0b7aa1db735e2dfad4ac97d9c3eb1efe65
+ui/src/lib/components/ui/array-field/index.ts: 0a5964583851c542d731efeddd20ab60cb2747c8699424ade02975112e81126e
+ui/src/lib/components/ui/date-range-field/DateRangeField.svelte: 7f1424ba8d80cdfa6e47a421935e2010c376c9b2efbc67204bcfd515ade20a1e
+ui/src/lib/components/ui/date-range-field/index.ts: 77cb8f7dbf24cfc76315b25eca8bd1e542efdff81ff1a0922c49f6010279a345
 ui/src/lib/components/ui/structured-wrapper-field/StructuredWrapperField.svelte: 30ad7c119129ed6f3648190e295d304bfd2f9996165fe56f39d0534a49d6cd53
 ui/src/lib/components/ui/structured-wrapper-field/index.ts: 86aae3cf6b6f1d20f3ff04a6a430292c5f2924297e13fdffca0eb94ccb207ffc
 ui/src/lib/format.ts: ec668ead51d88bb21fe1307f12f4389486309516aa2859438b5149cbc5cb0d03
@@ -1046,4 +1050,5 @@ ui/tests/generated/rsvp/rsvp.manager.team.test.ts: b57f90512e08e9163ac578f446e70
 ui/tests/generated/rsvp/rsvp.owner.crud.test.ts: 9256c1f70b6992931e8f460d5530792bb26001a0f3ff3d24ed460844fc899ad2
 ui/tests/generated/rsvp/rsvp.page.ts: 3ea0e2315bb5b438e5e75b2700a2eb3c561278e692de6068d2212b3cb80f8fa8
 ui/tests/generated/rsvp/rsvp.validation.test.ts: 23755f6d852aa4d02d98994e8fa172f15675a079f45d2d8ded549ad80fbcf2a4
+ui/tsconfig.json: 647e13a56c66c2ec870f75ee84375dd8d93568f82b274f549c5b6734eefa9a5b
 ui/vite.config.ts: de0752ab5836a8db89286fff1aac0778a5adf19b5aaabe3c2406da230472ac6f

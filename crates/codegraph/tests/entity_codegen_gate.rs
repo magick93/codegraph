@@ -384,10 +384,8 @@ fn write_shadcn_barrel_stubs() -> Result<(), String> {
         ("table", &["Body", "Cell", "Head", "Header", "Root", "Row"]),
     ];
     let named: &[(&str, &str)] = &[
-        ("array-field", "ArrayField"),
         ("badge", "Badge"),
         ("button", "Button"),
-        ("date-range-field", "DateRangeField"),
         ("input", "Input"),
         ("label", "Label"),
         ("separator", "Separator"),
@@ -442,10 +440,13 @@ fn write_shadcn_barrel_stubs() -> Result<(), String> {
     Ok(())
 }
 
-/// The root tsconfig is consumer-monorepo-owned; the gate supplies the
-/// ifml-skeleton's shape so svelte-check has an entry point. Written AFTER
-/// the first `svelte-kit sync` (it extends the generated
-/// `.svelte-kit/tsconfig.json`).
+/// The scaffold emits `ui/tsconfig.json` if-absent (issue #858); the gate
+/// writes its own twin because the committed fixture also carries
+/// consumer-authored files under `src/forms` that are not held to the
+/// generated-path typecheck, so they are excluded here. Written AFTER the
+/// first `svelte-kit sync` (it extends the kit-generated `$app/tsconfig`).
+/// `array-field` / `date-range-field` are NOT stubbed: the scaffold emits
+/// them, and the gate typechecks the real components.
 fn write_gate_tsconfig() -> Result<(), String> {
     fs::write(
         ui_dir().join("tsconfig.json"),

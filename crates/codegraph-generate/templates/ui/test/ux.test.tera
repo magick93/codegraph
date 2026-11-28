@@ -29,6 +29,9 @@ import { {{ entity_name }}Page } from './{{ path_segment }}.page';
 {% if parent.grandparent %}
 const GRANDPARENT_API_PATH = '/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}';
 let PARENT_API_PATH: string;
+// The depth-2 UI route carries the grandparent hop (issue #323) — the API
+// base path does not.
+let UI_PATH: string;
 {% else %}
 const PARENT_API_PATH = '/{{ parent.domain }}/{{ parent.path_segment }}';
 {% endif %}
@@ -120,6 +123,9 @@ test.describe('{{ entity_name }} UX list rendering', () => {
     const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { {{ parent_test_data_json }} });
     parentId = parentEntity['id'] as string;
     BASE_PATH = `${PARENT_API_PATH}/${parentId}/{{ path_segment }}`;
+{% if parent.grandparent %}
+    UI_PATH = `/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}/${gpId}/{{ parent.path_segment }}/${parentId}/{{ path_segment }}`;
+{% endif %}
 {% endif %}
 {% set dep_section = "before_all" %}
 {% include "ui/test/_dep_setup.tera" %}
@@ -142,7 +148,7 @@ test.describe('{{ entity_name }} UX list rendering', () => {
 
 {% if ux_spec.has_table %}
   test('list renders the ux table contract', async ({ ownerPage: page, orgContext }) => {
-    const ui = {% if parent %}new {{ entity_name }}Page(page, BASE_PATH){% else %}new {{ entity_name }}Page(page){% endif %};
+    const ui = {% if parent %}new {{ entity_name }}Page(page, {% if parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %}){% else %}new {{ entity_name }}Page(page){% endif %};
     await createUxFixture(orgContext);
     await ui.openList();
     await expect(ui.tableRoot()).toBeVisible();
@@ -164,7 +170,7 @@ test.describe('{{ entity_name }} UX list rendering', () => {
 
 {% if ux_spec.chip_checks | length > 0 %}
   test('status chips render with the expected labels', async ({ ownerPage: page, orgContext }) => {
-    const ui = {% if parent %}new {{ entity_name }}Page(page, BASE_PATH){% else %}new {{ entity_name }}Page(page){% endif %};
+    const ui = {% if parent %}new {{ entity_name }}Page(page, {% if parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %}){% else %}new {{ entity_name }}Page(page){% endif %};
     await createUxFixture(orgContext);
     await ui.openList();
 {% for chip in ux_spec.chip_checks %}
@@ -179,7 +185,7 @@ test.describe('{{ entity_name }} UX list rendering', () => {
 
 {% if ux_spec.align_checks | length > 0 or ux_spec.format_checks | length > 0 %}
   test('numeric columns right-align and format through Intl', async ({ ownerPage: page, orgContext }) => {
-    const ui = {% if parent %}new {{ entity_name }}Page(page, BASE_PATH){% else %}new {{ entity_name }}Page(page){% endif %};
+    const ui = {% if parent %}new {{ entity_name }}Page(page, {% if parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %}){% else %}new {{ entity_name }}Page(page){% endif %};
     await createUxFixture(orgContext);
     await ui.openList();
 {% for col in ux_spec.align_checks %}
@@ -196,7 +202,7 @@ test.describe('{{ entity_name }} UX list rendering', () => {
 
 {% if ux_spec.copy_check %}
   test('copy-chip copies the identifier and surfaces a tooltip', async ({ ownerPage: page, orgContext }) => {
-    const ui = {% if parent %}new {{ entity_name }}Page(page, BASE_PATH){% else %}new {{ entity_name }}Page(page){% endif %};
+    const ui = {% if parent %}new {{ entity_name }}Page(page, {% if parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %}){% else %}new {{ entity_name }}Page(page){% endif %};
     const createdId = await createUxFixture(orgContext);
     await ui.openList();
     // The copy cell truncates, so scope to the row carrying the fixture
@@ -217,7 +223,7 @@ test.describe('{{ entity_name }} UX list rendering', () => {
 
 {% if ux_spec.actions %}
   test('row actions open the overflow menu', async ({ ownerPage: page, orgContext }) => {
-    const ui = {% if parent %}new {{ entity_name }}Page(page, BASE_PATH){% else %}new {{ entity_name }}Page(page){% endif %};
+    const ui = {% if parent %}new {{ entity_name }}Page(page, {% if parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %}){% else %}new {{ entity_name }}Page(page){% endif %};
     await createUxFixture(orgContext);
     await ui.openList();
     await ui.openActions();
@@ -237,7 +243,7 @@ test.describe('{{ entity_name }} UX list rendering', () => {
 
 {% if ux_spec.timeline %}
   test('timeline renders entries newest-first', async ({ ownerPage: page, orgContext }) => {
-    const ui = {% if parent %}new {{ entity_name }}Page(page, BASE_PATH){% else %}new {{ entity_name }}Page(page){% endif %};
+    const ui = {% if parent %}new {{ entity_name }}Page(page, {% if parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %}){% else %}new {{ entity_name }}Page(page){% endif %};
     await createUxFixture(orgContext);
     await createUxFixture(orgContext);
     await ui.openList();
@@ -277,7 +283,7 @@ test.describe('{{ entity_name }} UX list rendering', () => {
     // Three full sort navigations over potentially large seeded tables —
     // the 45s project default is too tight under parallel workers.
     test.setTimeout(120_000);
-    const ui = {% if parent %}new {{ entity_name }}Page(page, BASE_PATH){% else %}new {{ entity_name }}Page(page){% endif %};
+    const ui = {% if parent %}new {{ entity_name }}Page(page, {% if parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %}){% else %}new {{ entity_name }}Page(page){% endif %};
     await createUxFixture(orgContext);
     await ui.openList();
 {% for key in ux_spec.sort.fields %}
@@ -341,7 +347,7 @@ test.describe('{{ entity_name }} UX list rendering', () => {
 
 {% if ux_spec.has_table and ux_spec.zebra %}
   test('rows keep zebra shading and hover/focus feedback', async ({ ownerPage: page, orgContext }) => {
-    const ui = {% if parent %}new {{ entity_name }}Page(page, BASE_PATH){% else %}new {{ entity_name }}Page(page){% endif %};
+    const ui = {% if parent %}new {{ entity_name }}Page(page, {% if parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %}){% else %}new {{ entity_name }}Page(page){% endif %};
     await createUxFixture(orgContext);
     await createUxFixture(orgContext);
     await ui.openList();

@@ -326,6 +326,64 @@ async fn plan_seed_inner(
     Some(plan)
 }
 
+/// The entity plane's create-body supplement (issue #324).
+///
+/// The entity ux spec renders its fixture body in Tera from the ui field set
+/// (`collect_ui_fields`), which can miss create-DTO members (the W3C-credential
+/// `issuance_date`/`issuer`/`type` shape). This runs the SAME seed planner the
+/// IFML plane uses — the create DTO's own surface via `build_dto_context` —
+/// and returns, for every required field the ui body does NOT already carry
+/// (`covered`, snake spellings):
+///
+/// - `entries`: a type-valid JS literal per uncovered required scalar/array;
+/// - `gaps`: every uncovered required field the entity spec cannot seed (no
+///   sample, an unseedable reference, or a reference the entity plane's own
+///   dependency setup does not wire — those must come from `covered`).
+///
+/// `None` when the DTO surface is unavailable (no schema/domain/context).
+pub(crate) async fn create_body_supplement(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    api_version: &str,
+    entity: &str,
+    covered: &HashSet<String>,
+) -> Option<(Vec<(String, String)>, Vec<SeedGap>)> {
+    let plan = plan_seed(
+        db,
+        config,
+        api_version,
+        Some(entity),
+        Vec::new(),
+        DtoKeyCasing::Snake,
+    )
+    .await?;
+    let is_covered = |name: &str| covered.contains(&codegraph_naming::to_snake_case(name));
+    let dep_vars: HashSet<&str> = plan.deps.iter().map(|d| d.id_var.as_str()).collect();
+    let mut entries = Vec::new();
+    let mut gaps: Vec<SeedGap> = plan
+        .gaps
+        .into_iter()
+        .filter(|gap| !is_covered(&gap.field))
+        .collect();
+    for (name, value) in plan.entries {
+        if is_covered(&name) {
+            continue;
+        }
+        if dep_vars.contains(value.as_str()) {
+            // A required reference the entity plane's dependency setup does
+            // not wire: the spec has no seeded id to post.
+            gaps.push(SeedGap::new(
+                entity,
+                name,
+                "required reference the entity spec's dependency setup does not seed",
+            ));
+            continue;
+        }
+        entries.push((name, value));
+    }
+    Some((entries, gaps))
+}
+
 /// Project the DSL entries onto the create surface: composite wrappers
 /// expand to their collapsed columns, a reference's literal placeholder is
 /// dropped (the required-ref pass seeds the parent), and a key the create DTO

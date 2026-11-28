@@ -1739,3 +1739,120 @@ entities = ["CustomerType"]
         "flag-off IFML pipeline must not emit ux specs: {specs:?}"
     );
 }
+
+/// Append a raw `domains.toml` fragment to the fixture.
+fn append_domains(project: &Path, fragment: &str) {
+    let domains_path = project.join("domains.toml");
+    let mut domains = fs::read_to_string(&domains_path).unwrap();
+    domains.push_str(fragment);
+    fs::write(&domains_path, domains).unwrap();
+}
+
+fn run_fixture(project: &Path, mox: PathBuf) {
+    FixtureRun {
+        config: project.join("domains.toml"),
+        output: project.join("generated"),
+        profiles: project.join("profiles.toml"),
+        mox_files: vec![mox],
+    }
+    .run(None);
+}
+
+/// Issue #324: the fixture body comes from the ui field set, which drops
+/// `immutable_fields` — but the create DTO still requires them, so every
+/// create 422'd. The body is supplemented from the create DTO's own surface,
+/// in every family that posts a fixture.
+#[test]
+fn fixture_body_covers_required_create_dto_fields_the_ui_set_drops() {
+    let dir = TempDir::new().unwrap();
+    let (project, mox) = fixture(&dir);
+    append_domains(
+        &project,
+        "\n[domains.common.entity_config.TaskType.dto]\nimmutable_fields = [\"name\"]\n",
+    );
+    run_fixture(&project, mox);
+
+    let tests = project.join("generated/ui/tests/generated/common");
+    for family in ["task.ux.test.ts", "task.api.crud.test.ts"] {
+        let spec = fs::read_to_string(tests.join(family))
+            .unwrap_or_else(|e| panic!("{family} must be emitted: {e}"));
+        assert!(
+            spec.contains(
+                "// required by the create DTO, absent from the ui field set (issue #324)"
+            ) && spec.contains("'name': "),
+            "{family} must supplement the immutable required `name`:\n{spec}"
+        );
+    }
+}
+
+/// The supplement is empty when the ui field set covers the create DTO, so
+/// the bodies are unchanged.
+#[test]
+fn fixture_body_carries_no_supplement_when_the_ui_set_covers_the_dto() {
+    let dir = TempDir::new().unwrap();
+    let (project, mox) = fixture(&dir);
+    run_fixture(&project, mox);
+    let spec =
+        fs::read_to_string(project.join("generated/ui/tests/generated/common/task.ux.test.ts"))
+            .unwrap();
+    assert!(!spec.contains("issue #324"), "{spec}");
+}
+
+/// Issue #323: a nested child's ux spec drives ITS OWN route — the fixture
+/// posts under the parent's collection and the page object opens the same
+/// nested route, with the module/columns of the child.
+#[test]
+fn nested_child_ux_spec_resolves_from_the_child_alone() {
+    let dir = TempDir::new().unwrap();
+    let (project, mox) = fixture(&dir);
+    add_child_config(&project);
+    run_fixture(&project, mox);
+
+    let tests = project.join("generated/ui/tests/generated/common");
+    let spec_name = fs::read_dir(&tests)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .find(|n| n.starts_with("sub") && n.ends_with(".ux.test.ts"))
+        .expect("the nested child must emit its ux spec");
+    let spec = fs::read_to_string(tests.join(&spec_name)).unwrap();
+    let segment = spec_name.trim_end_matches(".ux.test.ts");
+    assert!(
+        spec.contains("const PARENT_API_PATH = '/common/task';"),
+        "{spec}"
+    );
+    assert!(
+        spec.contains(&format!(
+            "BASE_PATH = `${{PARENT_API_PATH}}/${{parentId}}/{segment}`;"
+        )),
+        "{spec}"
+    );
+    assert!(spec.contains("new SubTaskPage(page, BASE_PATH)"), "{spec}");
+    assert!(!spec.contains("new TaskPage("), "{spec}");
+    let page = fs::read_to_string(tests.join(format!("{segment}.page.ts"))).unwrap();
+    assert!(page.contains("readonly module = 'sub_task'"), "{page}");
+}
+
+/// Issue #323: when two entities resolve to the same list route, a ux spec
+/// would assert one entity's columns against the other's page. Neither spec
+/// is emitted (the run warns naming both); the crud specs are untouched.
+#[test]
+fn ux_spec_is_withheld_when_two_entities_share_a_list_route() {
+    let dir = TempDir::new().unwrap();
+    let (project, mox) = fixture(&dir);
+    append_domains(
+        &project,
+        "\n[domains.common.entity_config.SubTaskType]\npath_segment = \"task\"\n",
+    );
+    run_fixture(&project, mox);
+
+    let tests = project.join("generated/ui/tests/generated/common");
+    let ux: Vec<String> = fs::read_dir(&tests)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n == "task.ux.test.ts" || n.starts_with("sub"))
+        .filter(|n| n.ends_with(".ux.test.ts"))
+        .collect();
+    assert!(ux.is_empty(), "no ux spec may drive a shared route: {ux:?}");
+}

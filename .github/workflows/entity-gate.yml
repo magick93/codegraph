@@ -74,6 +74,14 @@ jobs:
         run: npx --yes playwright@1.62.0 install --with-deps chromium
       - name: Run entity codegen gate (build + typecheck + sessionless spec lane)
         run: cargo test -p codegraph --test entity_codegen_gate -- --ignored --nocapture
+      - name: Install pnpm
+        run: npm install -g pnpm@10
+      # Issue #858: the stub-free lane — `codegraph init` → generate →
+      # `pnpm install` → the PRIMITIVES.md shadcn-svelte install → vite
+      # build. No barrel or tsconfig stubs; catches a primitive the pages
+      # import that the install command does not name.
+      - name: Run fresh-init UI lane (no stubs)
+        run: cargo test -p codegraph --test fresh_init_ui_gate -- --ignored --nocapture
       - name: Upload gate logs on failure
         if: failure()
         uses: actions/upload-artifact@v7
