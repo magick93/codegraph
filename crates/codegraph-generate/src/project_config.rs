@@ -594,6 +594,7 @@ mod tests {
             ("entity_form", serde_json::json!(false)),
             ("ifml_tanstack_forms", serde_json::json!(false)),
             ("ui_live_queries", serde_json::json!(false)),
+            ("ui_package_scope", serde_json::json!("app")),
             ("testid_module", serde_json::json!(false)),
             ("structural_gates", serde_json::json!(false)),
             ("api_key_mode", serde_json::json!("bypass")),

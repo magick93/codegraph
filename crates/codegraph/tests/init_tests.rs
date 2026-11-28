@@ -62,12 +62,13 @@ fn assert_scaffold_files_exist(project: &Path, domains: &[&str]) {
         features(),
     );
     let mut expected = ctx.file_tree();
-    // 15 template entries minus the per-domain model expansion: 14 fixed
-    // outputs + one model/<domain>.mox per domain.
+    // 14 project outputs + the vendored UI package workspace (issue #18:
+    // pnpm-workspace.yaml + 19 packages/** files) + one model/<domain>.mox
+    // per domain.
     assert_eq!(
         expected.len(),
-        14 + domains.len(),
-        "file tree should be 14 fixed outputs + one model file per domain"
+        34 + domains.len(),
+        "file tree should be 34 fixed outputs + one model file per domain"
     );
     expected.sort();
     for rel in &expected {
