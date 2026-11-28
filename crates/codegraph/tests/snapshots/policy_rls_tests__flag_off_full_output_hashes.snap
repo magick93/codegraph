@@ -2,7 +2,7 @@
 source: crates/codegraph/tests/policy_rls_tests.rs
 expression: hashes
 ---
-".codegraph-manifest.json": 2ae12173f9c4d274c81aa9d0ea8cf00a3e686569a2d94ebc532fad19368b68d3
+".codegraph-manifest.json": 23e20b4cdfe54df87a9dd107ac6c417748ec047520e5756e6a7a456a0e992413
 Cargo.toml: 6d3d65a3376cf58cefb2436d8e548a6159223e598c9b7de5b6e953d5e3ce37c8
 build.rs: 25da040c54e009a2032a4298979b8b6e10bd6b3f56eb8df24d37085cee99b597
 cli/Cargo.toml: 1d82304e59334d0a2c1c7ea35573f1061a86594bad032b7e6c09fd05af5ece33
@@ -703,6 +703,7 @@ ui/src/lib/supabase.ts: 75208634f1fdcfd55a68426988782a0a0cae2ffc6f9d4c850e20453e
 ui/src/lib/utils.ts: ce5a95bfbc2eea99955bc60b56f0f89027fe62a74ba1fc55915adb4978d3340c
 ui/src/routes/(app)/+layout.server.ts: be823f31a5b56399894f752daea5de86613d5c1834e9e8fa568e9abdbca208f9
 ui/src/routes/(app)/+layout.svelte: 4cf039d1a1b0d67aec1a8fcd65056a5ffb8279d2040148a3745c8a6bc4f8dd61
+ui/src/routes/(app)/common/+layout.svelte: 9dd8baf146cfc45583683520a76f22f267b9b320efaebfa243e390acb33bca3b
 ui/src/routes/(app)/common/amount/+page.server.ts: e21387ae2c51bf34e27c78160538aaab4289965a21a09959b17d0158dc465d1e
 ui/src/routes/(app)/common/amount/+page.svelte: 995395cceb33116bbea4d814ed5915ebcc50242a9ff39bac08a53841b54d0dbd
 "ui/src/routes/(app)/common/amount/[amount_id]/+page.server.ts": d986f1aac557c31c7d044e79a3d7d94004a42c7c0940b34cc07be36ba652ccff
@@ -815,6 +816,7 @@ ui/src/routes/(app)/common/string-type-array/+page.svelte: 46a40543b1bf3743d412d
 "ui/src/routes/(app)/common/string-type-array/[string_type_array_id]/edit/+page.server.ts": 9ac0860fd8d65f09a8cc84a8a5a21965c6fbddbae10f7665832cf8c3d204ddd2
 "ui/src/routes/(app)/common/string-type-array/[string_type_array_id]/edit/+page.svelte": 33323de0285d361dcaa6e9c03c2d892c2a21db5686a590379d5c21dfaf64251b
 ui/src/routes/(app)/common/string-type-array/new/+page.svelte: 8ff3fa5084aed15d890739399fcf8f5ac2a2dcadf54725add93fb7c2fa4c3e8f
+ui/src/routes/(app)/compensation/+layout.svelte: 7bbf21b36daa906399d2df9471bfc71cf025d63963d5d1660b6087bbf8a868af
 ui/src/routes/(app)/compensation/pay-runs/+page.server.ts: 6480ee4216378331aaff14a8336026264815397c16102ae69692236e1e06c834
 ui/src/routes/(app)/compensation/pay-runs/+page.svelte: 3a8474b6b4afcc88c66a6eb3f51aeeb57e09977cf74b8e8b1a7375d0a83bfc2f
 "ui/src/routes/(app)/compensation/pay-runs/[pay_run_id]/+page.server.ts": ec3c34d1e48bc3985f72152239c95c06e104f0af89161c64b77f6f7128596ab2
@@ -823,6 +825,7 @@ ui/src/routes/(app)/compensation/pay-runs/+page.svelte: 3a8474b6b4afcc88c66a6eb3
 "ui/src/routes/(app)/compensation/pay-runs/[pay_run_id]/edit/+page.svelte": 5f67ae4f876f06c88685af9808f1240bd3dadc644b098175688587d634adcf02
 ui/src/routes/(app)/compensation/pay-runs/new/+page.svelte: 285ba905ea07ffea0493076576317e06e5ba7b6e17825e2a362bfd9d6639298b
 ui/src/routes/(app)/dashboard/+page.svelte: fc713e58f574c0d743de6fac49c4c18ba8fa49a786d0f2c720e0b451595e8430
+ui/src/routes/(app)/events/+layout.svelte: 6676781680783956c386aa78e204461c36b1dc9217d4c31d945858c3c8537017
 ui/src/routes/(app)/events/public-event/+page.server.ts: d07101d3279b3b9a9a12c269af0dfe80e9ad9c08be7ea49f82adb596f297496d
 ui/src/routes/(app)/events/public-event/+page.svelte: 3b89691bc621e82a670737a646779e6f6d507008e843bc10a4828027d1d9c1de
 "ui/src/routes/(app)/events/public-event/[public_event_id]/+page.server.ts": 9344d529c969c3b0ceb1a1d2aa25f474b0f8da97cac76acbc7291271a006333a
@@ -830,6 +833,7 @@ ui/src/routes/(app)/events/public-event/+page.svelte: 3b89691bc621e82a670737a646
 "ui/src/routes/(app)/events/public-event/[public_event_id]/edit/+page.server.ts": 2e1169883d9a2359b1e2b303ef876e5ea785481b957d22edf7dcefd05f54aa92
 "ui/src/routes/(app)/events/public-event/[public_event_id]/edit/+page.svelte": fba1dbcd4b2a3182378de79fb67c1b6c4fd247699d63ebab97fd34b829c70bb4
 ui/src/routes/(app)/events/public-event/new/+page.svelte: 22b43098abf6a928b53229cb071c9daa0e1539ef8aff91029dd2988e54b8a390
+ui/src/routes/(app)/recruiting/+layout.svelte: 7db0b280967620b8a42993e7e592a27083b3ea337b8e84e4876335e82139243d
 ui/src/routes/(app)/recruiting/applications/+page.server.ts: eecd9caed74c6d7fe24c4d389585435eedbddc01607ceffe04acd8f37cc25c5f
 ui/src/routes/(app)/recruiting/applications/+page.svelte: 951df4ac615ad66f7034a4c65061cfa8b7a95e3b41db85675005f8dbaf517238
 "ui/src/routes/(app)/recruiting/applications/[application_id]/+page.server.ts": 61cd4fc2f903e93dcf33a768513ba7f4b5bc0d23049c74a8ae46d98df3fc2bb5
@@ -844,6 +848,7 @@ ui/src/routes/(app)/recruiting/candidate/+page.svelte: 0caa590226261e94b0b1b72ec
 "ui/src/routes/(app)/recruiting/candidate/[candidate_id]/edit/+page.server.ts": 8f412d11826625a1e6e756d2fa983f49c0b7bb3e6bd0a604cb2e8ac37642eb5b
 "ui/src/routes/(app)/recruiting/candidate/[candidate_id]/edit/+page.svelte": 2e22369e62f3071f5d86d89ba54bd774a63528745ad0be8d8c7d0755221c1ffb
 ui/src/routes/(app)/recruiting/candidate/new/+page.svelte: c2ae8894f4ef4c64236f2d5ed64220f509d28872f0a71c762e101ef22b0e5cf4
+ui/src/routes/(app)/rsvp/+layout.svelte: f6026b6dc05b23cf27764e3dedd8b9fd6656d78ab733475e2e163dedaeda3206
 ui/src/routes/(app)/rsvp/rsvp/+page.server.ts: 691feedfc70e87df3a32e4175c2a74d6de81ff64ab8ad7e8d9a6895cfb10a835
 ui/src/routes/(app)/rsvp/rsvp/+page.svelte: 15ed9dc05628baff175036d85e2f00e9050cca460f4b885783ecff16db89dc29
 "ui/src/routes/(app)/rsvp/rsvp/[rsvp_id]/+page.server.ts": 53120978881d9d404fe492f239a4873514b12d17383b198e929cabc0923a87b5
