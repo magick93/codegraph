@@ -250,9 +250,9 @@ ifml_e2e_auth = false
 [profiles.default.ui]
 generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
-    "playwright-entity", "ui_descriptor",
+    "ui_descriptor",
     "ui-domain-layout",
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts",
     "ifml_skeleton", "ifml_route", "ifml_navigation", "ifml_e2e_test",
 ]
 output = "review/generated-candidate/"
@@ -269,9 +269,9 @@ ifml_e2e_auth = true
 [profiles.default.ui]
 generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
-    "playwright-entity", "ui_descriptor",
+    "ui_descriptor",
     "ui-domain-layout",
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts",
     "ifml_skeleton", "ifml_route", "ifml_navigation", "ifml_e2e_test",
 ]
 output = "review/generated-candidate/"

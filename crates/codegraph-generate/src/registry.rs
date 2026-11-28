@@ -886,9 +886,17 @@ mod charts_capability_audit {
             );
         }
 
+        // Capabilities whose generators are constructed OUTSIDE the
+        // registry builders, independent of the plan filter.
+        const BUILT_ELSEWHERE: &[&str] = &[
+            // `pipeline.rs::run_codelist_generators` runs every codelist
+            // generator unconditionally (codelists are not entities).
+            "codelist",
+        ];
         let missing_of = |kind: GeneratorKind, built: &std::collections::HashSet<String>| {
             caps.values()
                 .filter(|c| c.kind == kind && !built.contains(&c.name.replace('-', "_")))
+                .filter(|c| !BUILT_ELSEWHERE.contains(&c.name.as_str()))
                 .map(|c| c.name.clone())
                 .collect::<std::collections::BTreeSet<_>>()
         };

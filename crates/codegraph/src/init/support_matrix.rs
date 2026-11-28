@@ -136,6 +136,7 @@ mod tests {
                 r#"[profiles.default.meta]
 name = "default"
 version = "1.0.0"
+description = "support-matrix KAT"
 app_name = "matrix-app"
 
 [profiles.default.features]

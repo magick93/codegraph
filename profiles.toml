@@ -181,11 +181,11 @@ scripts.post_gen = ["echo post-gen check skipped"]
 generators = [
     # Entity
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
-    "playwright-entity", "ui_descriptor",
+    "ui_descriptor",
     # Domain
     "ui-domain-layout",
     # Global
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts",
     # IFML
     "ifml_skeleton", "ifml_route", "ifml_navigation", "ifml_e2e_test",
 ]
@@ -259,9 +259,9 @@ ux_rules = true
 [profiles.ui.ui]
 generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
-    "playwright-entity", "ui_descriptor",
+    "ui_descriptor",
     "ui-domain-layout",
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts",
 ]
 output = "review/generated-candidate/"
 scripts.post_gen = []
@@ -321,9 +321,9 @@ scripts.post_gen = ["echo post-gen check skipped"]
 [profiles.fullstack.ui]
 generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
-    "playwright-entity", "ui_descriptor",
+    "ui_descriptor",
     "ui-domain-layout",
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts",
 ]
 output = "review/generated-candidate/"
 scripts.post_gen = []
@@ -347,9 +347,9 @@ scripts.post_gen = ["echo post-gen check skipped"]
 [profiles.fullstack.variants.enterprise.ui]
 generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
-    "playwright-entity", "ui_descriptor",
+    "ui_descriptor",
     "ui-domain-layout",
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts",
 ]
 [profiles.fullstack.variants.enterprise.features]
 audit_trail = true
@@ -435,9 +435,9 @@ scripts.post_gen = ["echo post-gen check skipped"]
 [profiles.ci.ui]
 generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
-    "playwright-entity", "ui_descriptor",
+    "ui_descriptor",
     "ui-domain-layout",
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts",
 ]
 scripts.post_gen = []
 

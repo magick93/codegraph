@@ -4979,8 +4979,15 @@ non-crewbase project could `pnpm install` the generated UI.
   names compare `-`/`_`-insensitively in `BuildPlan::has_*_gen`
   (`profile::plan::same_generator`) — the mismatch had also silently dropped
   `playwright-entity`, `playwright-global` and `ui-domain-layout` from every
-  profile run. Pinned by `registry.rs::charts_capability_audit` (every
-  Entity/Domain/Global capability, listed by its VERBATIM name, is built).
+  profile run. `ui-domain-layout` now runs; the `playwright-entity` /
+  `playwright-global` pair (the Rust POM fixture crate) is ALSO retired from
+  the profiles: migration sequence numbers are allocated per emitted entity
+  FILE (`pipeline.rs::write_entity_results`), so turning the entity half on
+  renumbered every later entity's migrations — an existing consumer's
+  `platform._migrations` would re-apply them. Re-enable once only migration
+  files advance the counter. Pinned by `registry.rs::charts_capability_audit`
+  (every Entity/Domain/Global capability, listed by its VERBATIM name, is
+  built).
 - Gates: `cargo test -p codegraph --test ui_package_scope_tests` (vendoring,
   the import→export parity pin over a real init+generate tree, the override,
   the invalid-scope refusal, the doctor WARN) + `entity_codegen_gate`
