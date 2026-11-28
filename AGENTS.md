@@ -6072,7 +6072,14 @@ native `cargo check` cannot see this class.
   emitted `integration_dispatch::verify_event_signature` (constant-time
   MAC check + 5-minute replay window, `EVENT_SIGNATURE_MAX_AGE_SECS`).
   Deliberately exceeds the webhook plane's precedent, whose timestamp
-  header is unsigned; the webhook plane is untouched.
+  header is unsigned; the webhook plane is untouched. Doctor's
+  unsigned-delivery advisory (it cannot see the database) is ON by default
+  and goes quiet only when the consumer asserts provisioning in
+  extension-points.toml (issue #566): `[push_plane]
+  signing_secret_provisioned = true` (a strict, reserved table — so
+  `push_plane` is not a usable extension-point id; a misspelled key is a
+  parse error). Gate: `init_tests ::
+  doctor_signing_advisory_is_silenced_only_by_an_explicit_provisioning_signal`.
 - Gate: `cargo test -p codegraph --test extension_points_tests` (7,
   node-free) + `doctor_validates_extension_points` in `init_tests`. The
   signing construction carries a computed known-answer vector (#518):

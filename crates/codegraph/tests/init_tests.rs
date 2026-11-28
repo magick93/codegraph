@@ -2084,6 +2084,75 @@ fn doctor_ext_points_advises_signing_secret_provisioning() {
     );
 }
 
+/// Doctor over the push plane with `ext_toml`; returns the summary.
+fn doctor_summary_with_ext_points(
+    ext_toml: &str,
+) -> Result<codegraph::init::commands::DoctorSummary, String> {
+    let dir = TempDir::new().unwrap();
+    cmd_init(&init_args(dir.path(), "demo-app", None, false)).unwrap();
+    let project = dir.path().join("demo-app");
+    let ext_path = project.join("extension-points.toml");
+    fs::write(&ext_path, ext_toml).unwrap();
+    cmd_doctor(&DoctorArgs {
+        config: project.join("domains.toml"),
+        schemas: None,
+        classifier: None,
+        profiles_config: Some(project.join("profiles.toml")),
+        mox_files: vec![project.join("model/common.mox")],
+        rosetta_files: vec![],
+        ddd_files: vec![],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![],
+        extension_points: Some(ext_path),
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// Issue #566: a consumer that HAS provisioned per-installation signing
+/// secrets asserts it declaratively (`[push_plane]
+/// signing_secret_provisioned = true` in extension-points.toml) and the #511
+/// advisory goes quiet — exactly one fewer soft warning than the default.
+/// The advisory stays ON by default and when the key is `false`.
+#[test]
+fn doctor_signing_advisory_is_silenced_only_by_an_explicit_provisioning_signal() {
+    let baseline = doctor_summary_with_ext_points(EXT_POINTS_HAPPY).unwrap();
+    let provisioned = doctor_summary_with_ext_points(&format!(
+        "[push_plane]\nsigning_secret_provisioned = true\n{EXT_POINTS_HAPPY}"
+    ))
+    .expect("the provisioning signal parses (no hard failure)");
+    let declined = doctor_summary_with_ext_points(&format!(
+        "[push_plane]\nsigning_secret_provisioned = false\n{EXT_POINTS_HAPPY}"
+    ))
+    .expect("the provisioning signal parses (no hard failure)");
+    assert_eq!(provisioned.hard_failures, 0, "the signal parses");
+    assert_eq!(declined.hard_failures, 0, "the signal parses");
+    assert_eq!(
+        provisioned.soft_warnings + 1,
+        baseline.soft_warnings,
+        "an explicit provisioning signal removes exactly the #511 advisory"
+    );
+    assert_eq!(
+        declined.soft_warnings, baseline.soft_warnings,
+        "`false` keeps the advisory ON"
+    );
+}
+
+/// Issue #566: the `[push_plane]` table is strict — a misspelled key is a
+/// parse error (hard), never a silently ignored signal.
+#[test]
+fn doctor_push_plane_table_rejects_unknown_keys() {
+    let err = doctor_summary_with_ext_points(&format!(
+        "[push_plane]\nsigning_secrets_provisioned = true\n{EXT_POINTS_HAPPY}"
+    ))
+    .expect_err("a typo must fail loudly");
+    assert!(err.contains("hard check"), "{err}");
+}
+
 const WORKERS_DEPLOY_NO_COMMON_COMPONENT: &str = concat!(
     "application Shop {\n",
     "    component api: api { replicas: 2 }\n",
