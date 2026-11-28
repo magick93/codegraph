@@ -1,0 +1,78 @@
+{% raw %}// Entity descriptor types — the shape every generated `descriptor.ts` emits
+// (codegraph `templates/ui/descriptor.tera`). Vendored by `codegraph init`.
+
+export type EntityOperation = 'create' | 'read' | 'update' | 'delete' | 'list' | 'search' | (string & {});
+
+export interface EntityFieldValidation {
+  maxLength?: number;
+  minLength?: number;
+  pattern?: string;
+  minimum?: number;
+  maximum?: number;
+  format?: string;
+}
+
+export interface EntityField {
+  name: string;
+  label: string;
+  /** Form input kind (`text`, `number`, `date`, `select`, `checkbox`, …). */
+  type: string;
+  tsType: string;
+  required?: boolean;
+  group?: string;
+  immutable?: boolean;
+  description?: string;
+  validation?: EntityFieldValidation;
+  list?: { visible: boolean; sortable?: boolean; badge?: boolean };
+  ref?: { entity: string; domain: string; displayField: string };
+  options?: {
+    source: string;
+    codelist?: string;
+    values?: { value: string; label: string }[];
+  };
+  overrides?: Record<string, string>;
+}
+
+export interface EntityGroup {
+  name: string;
+  label: string;
+  collapsible?: boolean;
+}
+
+export interface EntityChild {
+  name: string;
+  label: string;
+  entity: string;
+  relationship: string;
+  inline: boolean;
+  displayField: string;
+}
+
+export interface EntityWorkflow {
+  field: string;
+  transitions: { from: string; to: string; label: string; confirm?: boolean }[];
+}
+
+export interface EntityDescriptor {
+  name: string;
+  domain: string;
+  pathSegment: string;
+  operations: EntityOperation[];
+  search?: { enabled: boolean; placeholder?: string };
+  fields: EntityField[];
+  groups?: EntityGroup[];
+  children?: EntityChild[];
+  workflow?: EntityWorkflow;
+  wizard?: {
+    enabled: boolean;
+    steps: {
+      key: string;
+      label: string;
+      source: string;
+      groups?: string[];
+      child?: string;
+      cardinality?: string;
+    }[];
+  };
+}
+{% endraw %}

@@ -1,0 +1,15 @@
+// @{{ ui_package_scope }}/common — vendored by `codegraph init` (issue #18).
+// Consumer-owned: `codegraph init` never overwrites this file without --force.
+
+/** One selectable value of a code list (the generated `codelist/*.ts` data). */
+export interface CodelistOption {
+  value: string;
+  label: string;
+}
+
+/** A code list as the generated UI emits it (`src/lib/codelist/*.ts`). */
+export interface CodelistData {
+  title: string;
+  description?: string;
+  options: CodelistOption[];
+}

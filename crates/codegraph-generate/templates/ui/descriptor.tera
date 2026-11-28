@@ -1,4 +1,4 @@
-import type { EntityDescriptor } from '@crewbase/entities';
+import type { EntityDescriptor } from '@{{ project.ui_package_scope }}/entities';
 
 export const {{ entity_name }}Descriptor: EntityDescriptor = {
   name: '{{ entity_name }}',

@@ -36,8 +36,9 @@
     "cookie": "^1.0.2"
   },
   "dependencies": {
-    "@crewbase/ui": "workspace:*",
-    "@crewbase/entities": "workspace:*",
+    "@{{ project.ui_package_scope }}/ui": "workspace:*",
+    "@{{ project.ui_package_scope }}/entities": "workspace:*",
+    "@{{ project.ui_package_scope }}/common": "workspace:*",
     "@internationalized/date": "^3.8.0",
     "@lucide/svelte": "^1.0.0",
     "@supabase/supabase-js": "^2.49.0",

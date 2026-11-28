@@ -1,0 +1,15 @@
+{% raw %}// Prop types for the vendored UI components. Vendored by `codegraph init`.
+
+export interface DashboardEntity {
+  name: string;
+  path: string;
+  label: string;
+}
+
+export interface DashboardDomain {
+  name: string;
+  label: string;
+  entityCount: number;
+  entities: DashboardEntity[];
+}
+{% endraw %}

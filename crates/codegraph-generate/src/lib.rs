@@ -73,4 +73,5 @@ pub use project_config::{
     AtprotoConfig, CargoConfig, CodegenConfig, DatabaseConfig, DeploymentConfig, DtoKeyCasing,
     GenerationEntry, GeneratorOpts, IdentityConfig, IntegrationFlags, PathsConfig, ProjectConfig,
     UxConfig, namespace_dir_prefix, namespace_module_dir, namespace_rust_prefix,
+    validate_ui_package_scope,
 };

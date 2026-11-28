@@ -88,6 +88,13 @@ pub struct ProfileMeta {
     #[serde(default)]
     pub app_name: Option<String>,
 
+    /// npm scope (without `@`) of the generated UI's component packages
+    /// (`@{scope}/ui`, `@{scope}/entities`, `@{scope}/common`). Default: the
+    /// kebab-case of `app_name`. `codegraph init` vendors packages with these
+    /// names into `packages/` (issue #18).
+    #[serde(default)]
+    pub ui_package_scope: Option<String>,
+
     /// Override the generated domain types crate module name (default: "hr_domain_types").
     #[serde(default)]
     pub domain_types_crate: Option<String>,
@@ -263,6 +270,7 @@ pub(crate) fn resolve_profile(def: &ProfileDef, variant: Option<&str>) -> Result
         since: None,
         tags: vec![],
         app_name: None,
+        ui_package_scope: None,
         domain_types_crate: None,
         hooks_api_crate: None,
         api_title: None,

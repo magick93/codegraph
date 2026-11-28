@@ -2,7 +2,7 @@
 //! Media field validation + shared types (issue #630 PR-B). The fallback
 //! upload control is transport-agnostic: the PAGE supplies the `upload`
 //! callback (the generated page wires its data.remote.ts command; consumers
-//! override with their own uploader — the `@crewbase/ui/AvatarPicker`
+//! override with their own uploader — a vendored `@{{ project.ui_package_scope }}/ui` uploader
 //! contract, memo R6 tiering).
 
 export interface MediaFieldSpec {

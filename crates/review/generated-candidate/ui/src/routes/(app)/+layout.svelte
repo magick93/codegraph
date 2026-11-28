@@ -165,7 +165,7 @@
 	<Sidebar.Root>
 		<Sidebar.Header>
 			<a href="/dashboard" class="flex items-center px-2 py-1 no-underline">
-				<img src="/brand/crewbase-lockup-64h.png" alt="Crewbase" class="h-7" />
+				<span class="text-lg font-semibold">app</span>
 			</a>
 		</Sidebar.Header>
 

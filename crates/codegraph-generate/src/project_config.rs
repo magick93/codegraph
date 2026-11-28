@@ -54,20 +54,78 @@ impl DtoKeyCasing {
 }
 
 /// What the generated app is called: crate names, API title, generator tag.
-#[derive(Debug, Clone, serde::Serialize)]
+///
+/// Serialization is hand-written (below) so the `project` map templates see
+/// carries the RESOLVED `ui_package_scope` (issue #18): an explicit profile
+/// `meta.ui_package_scope`, else the kebab-case of `app_name`.
+#[derive(Debug, Clone)]
 pub struct IdentityConfig {
     pub app_name: String,
     /// Rust crate name of the generated library (the `[lib] name` in the
     /// generated Cargo.toml). Test templates reference the crate by this name.
-    #[serde(default)]
     pub lib_name: String,
     pub domain_types_crate: String,
     pub hooks_api_crate: String,
     pub api_title: String,
     pub generator_name: String,
     /// API version prefix used in URL path construction (e.g. "v1" → `/api/v1/...`).
-    #[serde(default)]
     pub api_version: String,
+    /// Explicit npm scope of the generated UI's component packages
+    /// (`@{scope}/ui`, `@{scope}/entities`, `@{scope}/common`; issue #18).
+    /// `None` derives the scope from `app_name` — see
+    /// [`IdentityConfig::ui_package_scope`].
+    pub ui_package_scope: Option<String>,
+}
+
+impl IdentityConfig {
+    /// The npm scope (without `@`) the generated UI imports its component
+    /// packages from: the explicit override, else the kebab-case of
+    /// `app_name`. `codegraph init` vendors packages with exactly these
+    /// names into `packages/` (issue #18).
+    pub fn ui_package_scope(&self) -> String {
+        match &self.ui_package_scope {
+            Some(scope) => scope.clone(),
+            None => codegraph_naming::to_kebab_case(&self.app_name),
+        }
+    }
+}
+
+/// Validate an npm package scope (without the leading `@`): lowercase
+/// letters, digits, `-`, `.`, `_`, starting with a letter or digit.
+pub fn validate_ui_package_scope(scope: &str) -> std::result::Result<(), String> {
+    let mut chars = scope.chars();
+    let valid_first = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    let valid_rest =
+        chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '.' | '_'));
+    if valid_first && valid_rest {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid ui_package_scope {scope:?}: an npm scope must be lowercase letters, \
+             digits, '-', '.' or '_', starting with a letter or digit (no leading '@')"
+        ))
+    }
+}
+
+impl serde::Serialize for IdentityConfig {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut st = serializer.serialize_struct("IdentityConfig", 8)?;
+        st.serialize_field("app_name", &self.app_name)?;
+        st.serialize_field("lib_name", &self.lib_name)?;
+        st.serialize_field("domain_types_crate", &self.domain_types_crate)?;
+        st.serialize_field("hooks_api_crate", &self.hooks_api_crate)?;
+        st.serialize_field("api_title", &self.api_title)?;
+        st.serialize_field("generator_name", &self.generator_name)?;
+        st.serialize_field("api_version", &self.api_version)?;
+        st.serialize_field("ui_package_scope", &self.ui_package_scope())?;
+        st.end()
+    }
 }
 
 impl Default for IdentityConfig {
@@ -80,6 +138,7 @@ impl Default for IdentityConfig {
             api_title: "HR Open API".into(),
             generator_name: "codegraph".into(),
             api_version: "v1".into(),
+            ui_package_scope: None,
         }
     }
 }

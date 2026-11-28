@@ -667,8 +667,8 @@ async fn ui_scaffold_generates_login_and_signup_pages() {
         "Login page should import LoginPage"
     );
     assert!(
-        login.content.contains("@crewbase/ui"),
-        "Login page should import from @crewbase/ui"
+        login.content.contains("@app/ui"),
+        "Login page should import from the project-scoped @app/ui (issue #18)"
     );
 
     let signup = files
@@ -683,8 +683,8 @@ async fn ui_scaffold_generates_login_and_signup_pages() {
         "Signup page should import SignupPage"
     );
     assert!(
-        signup.content.contains("@crewbase/ui"),
-        "Signup page should import from @crewbase/ui"
+        signup.content.contains("@app/ui"),
+        "Signup page should import from the project-scoped @app/ui (issue #18)"
     );
 }
 
@@ -719,8 +719,8 @@ async fn ui_scaffold_generates_dashboard_page() {
         "Dashboard page should import Dashboard"
     );
     assert!(
-        dashboard.content.contains("@crewbase/ui"),
-        "Dashboard page should import from @crewbase/ui"
+        dashboard.content.contains("@app/ui"),
+        "Dashboard page should import from the project-scoped @app/ui (issue #18)"
     );
     assert!(
         dashboard.content.contains("orgName"),
@@ -833,8 +833,18 @@ async fn ui_scaffold_package_json_has_supabase_deps() {
         .find(|f| f.path.to_string_lossy().contains("package.json"))
         .expect("Should have package.json");
     assert!(
-        pkg.content.contains("@crewbase/ui"),
-        "package.json should have @crewbase/ui dependency"
+        pkg.content.contains("@app/ui"),
+        "package.json should depend on the project-scoped @app/ui (issue #18)"
+    );
+    for dep in ["@app/ui", "@app/entities", "@app/common"] {
+        assert!(
+            pkg.content.contains(&format!("\"{dep}\": \"workspace:*\"")),
+            "package.json should depend on {dep} via workspace:*"
+        );
+    }
+    assert!(
+        !pkg.content.contains("@crewbase"),
+        "package.json must not hardcode the crewbase scope (issue #18)"
     );
     assert!(
         pkg.content.contains("@supabase/supabase-js"),

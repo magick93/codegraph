@@ -30,7 +30,25 @@ hurl/                 hurl contract tests
 crates/domain-types/  generated-into domain types crate
 crates/hooks-api/     generated-into hooks API crate
 ops/testkit/          ops harness test runner crate
+packages/             UI component packages the generated UI imports (yours to edit)
+pnpm-workspace.yaml   pnpm workspace: packages/* + generated/ui
 generated/            generated application code (gitignored)
+```
+
+## UI component packages
+
+The generated SvelteKit app (`generated/ui`) imports its login/signup,
+dashboard, team + API-key settings and entity list/detail/form components from
+`@{{ ui_package_scope }}/ui`, `@{{ ui_package_scope }}/entities` and
+`@{{ ui_package_scope }}/common`. `codegraph init` vendored starter versions of
+those packages under `packages/`; they are consumer-owned (init never
+overwrites them without `--force`), so restyle or replace them freely. The
+scope is `meta.ui_package_scope` in `profiles.toml`. After `just generate`,
+install once from the repo root:
+
+```sh
+pnpm install
+pnpm -C generated/ui build
 ```
 
 ## Codegraph pinning

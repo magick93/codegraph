@@ -10,6 +10,9 @@ name = "default"
 version = "0.1.0"
 description = "Default generation profile for {{ project_name }}"
 app_name = "{{ app_name }}"
+# npm scope of the UI component packages vendored under packages/ (issue #18):
+# the generated UI imports `@{{ ui_package_scope }}/ui`, `/entities` and `/common`.
+ui_package_scope = "{{ ui_package_scope }}"
 generator_name = "{{ graph_binary }}"
 api_title = "{{ api_title }}"
 domain_types_crate = "{{ app_name }}_domain_types"

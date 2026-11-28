@@ -1,0 +1,63 @@
+{% raw %}<!-- Team membership over the BaseJump account RPCs. Vendored by `codegraph init`; consumer-owned. -->
+<script lang="ts">
+	import type { SupabaseClient } from '@supabase/supabase-js';
+
+	let {
+		supabase,
+		organizationId,
+		organizationName,
+	}: { supabase: SupabaseClient; organizationId?: string; organizationName: string } = $props();
+
+	interface Member {
+		user_id: string;
+		account_role: string;
+		name?: string;
+		email?: string;
+	}
+
+	let members = $state<Member[]>([]);
+	let error = $state<string | null>(null);
+	let inviteLink = $state<string | null>(null);
+
+	$effect(() => {
+		if (!organizationId) return;
+		supabase
+			.rpc('get_account_members', { account_id: organizationId })
+			.then(({ data, error: rpcError }) => {
+				if (rpcError) error = rpcError.message;
+				else members = (data ?? []) as Member[];
+			});
+	});
+
+	async function invite() {
+		if (!organizationId) return;
+		const { data, error: rpcError } = await supabase.rpc('create_invitation', {
+			account_id: organizationId,
+			account_role: 'member',
+			invitation_type: 'one_time',
+		});
+		if (rpcError) {
+			error = rpcError.message;
+			return;
+		}
+		const token = (data as { token?: string } | null)?.token;
+		inviteLink = token ? `${window.location.origin}/invitation?token=${token}` : null;
+	}
+</script>
+
+<section data-testid="team-settings">
+	<h1 class="mb-4 text-xl font-semibold">{organizationName} — team</h1>
+	{#if error}
+		<p role="alert">{error}</p>
+	{/if}
+	<ul class="mb-4 space-y-1">
+		{#each members as member (member.user_id)}
+			<li>{member.name ?? member.email ?? member.user_id} <span class="text-sm">({member.account_role})</span></li>
+		{/each}
+	</ul>
+	<button type="button" onclick={invite} disabled={!organizationId}>Create invitation link</button>
+	{#if inviteLink}
+		<p class="mt-2 break-all text-sm" data-testid="team-invite-link">{inviteLink}</p>
+	{/if}
+</section>
+{% endraw %}

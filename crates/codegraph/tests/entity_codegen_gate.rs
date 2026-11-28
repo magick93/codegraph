@@ -2,12 +2,12 @@
 //! TYPECHECKS and BUILDS under the `entity_remote_functions` flag.
 //!
 //! Its absence is how the kit-3 `$app/env/public` break went unnoticed —
-//! the entity ui tree was never compiled anywhere in this repo (the
-//! @crewbase workspace deps only resolve in consumer monorepos), so
+//! the entity ui tree was never compiled anywhere in this repo, so
 //! template breaks shipped silently. The gate regenerates the review
-//! fixture in place (the same recipe `review_api_suite` uses), stubs the
-//! consumer-monorepo packages (`@crewbase/entities` / `@crewbase/ui` /
-//! `@crewbase/common`), builds the app (vite — which also compiles the
+//! fixture in place (the same recipe `review_api_suite` uses), installs the
+//! REAL `codegraph init`-vendored UI packages (`@app/{entities,ui,common}`,
+//! issue #18 — formerly hand-written `@crewbase/*` stubs), builds the app
+//! (vite — which also compiles the
 //! paraglide messages the pages import), then runs svelte-check against
 //! the generated paraglide output. Zero type errors is the bar.
 //!
@@ -124,128 +124,67 @@ async fn provision_fixture(gate: &review_api_suite_regen::FixtureGate) -> Result
 #[path = "review_api_suite_regen.rs"]
 mod review_api_suite_regen;
 
-fn stub_crewbase_packages() -> Result<(), String> {
+/// npm scope of the review fixture's UI packages: the fixture regenerates
+/// with `app_name = "app"` and no explicit `meta.ui_package_scope`, so the
+/// generated tree imports `@app/{ui,entities,common}` (issue #18).
+const FIXTURE_UI_SCOPE: &str = "app";
+
+/// Issue #18: install the REAL `codegraph init`-vendored UI packages — not
+/// hand-written stubs — so svelte-check and vite build hold the generated
+/// callers (auth/dashboard/settings pages, descriptors, shells, detail
+/// pages) to the packages a fresh project actually gets. A template that
+/// imports a name the package lacks, or passes a prop it does not declare,
+/// fails here.
+fn install_vendored_ui_packages() -> Result<(), String> {
     // The entity scaffold pins kit 3.0.0-next.24 while adapter-auto@4
     // declares a kit-^2 peer — consumer monorepos install with a lax
     // resolver; npm needs the escape hatch (gate-owned .npmrc).
     fs::write(ui_dir().join(".npmrc"), "legacy-peer-deps=true\n").map_err(|e| e.to_string())?;
 
-    // The consumer monorepo owns the real @crewbase packages; the gate
-    // stubs the surface the generated tree imports so the app compiles
-    // standalone. Gate-owned — regenerated every run.
     let stubs = ui_dir().join("stubs");
-    let entities = stubs.join("@crewbase").join("entities");
-    let ui = stubs.join("@crewbase").join("ui");
-    let common = stubs.join("@crewbase").join("common");
-    for dir in [&entities, &ui, &common] {
-        fs::create_dir_all(dir).map_err(|e| format!("stub dir {}: {e}", dir.display()))?;
+    let scope_dir = stubs.join(format!("@{FIXTURE_UI_SCOPE}"));
+    if scope_dir.exists() {
+        fs::remove_dir_all(&scope_dir).map_err(|e| e.to_string())?;
+    }
+    let tera = codegraph::generate::template_engine::create_tera_with_overrides(&[])
+        .map_err(|e| format!("template engine: {e}"))?;
+    let mut ctx = tera::Context::new();
+    ctx.insert("ui_package_scope", FIXTURE_UI_SCOPE);
+    ctx.insert("project_name", "app");
+    for (template, output) in codegraph::init::context::ui_package_templates() {
+        let rendered = tera
+            .render(template, &ctx)
+            .map_err(|e| format!("render {template}: {e}"))?;
+        // `packages/<pkg>/…` → `stubs/@<scope>/<pkg>/…`.
+        let rel = output
+            .strip_prefix("packages/")
+            .ok_or_else(|| format!("ui package template outside packages/: {output}"))?;
+        let dest = scope_dir.join(rel);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(&dest, rendered).map_err(|e| format!("write {}: {e}", dest.display()))?;
     }
 
-    fs::write(
-        entities.join("package.json"),
-        r#"{ "name": "@crewbase/entities", "version": "0.0.0", "main": "index.ts", "types": "index.ts" }"#,
-    )
-    .map_err(|e| e.to_string())?;
-    fs::write(
-        entities.join("index.ts"),
-        r#"// Gate-owned stub: the consumer monorepo owns the real package.
-// Runtime exports (the bundler resolves value imports against these).
-// Svelte COMPONENTS must be typed as `Component`: a plain function is not
-// assignable to `ConstructorOfATypedSvelteComponent | Component` (issue
-// #634 — the stub's shape was hiding 55 generated-plane diagnostics).
-import type { Component } from 'svelte';
-
-export class ApiError extends Error {}
-export interface EntityDescriptor {
-	entity: string;
-	label: string;
-	fields: { name: string; label: string; type?: string; tsType?: string }[];
-	[key: string]: unknown;
-}
-export interface CodelistData {
-	[key: string]: unknown;
-}
-export function createEntityApi(_descriptor: EntityDescriptor, _opts?: unknown) {
-	return {
-		list: async () => [],
-		get: async (_id: string) => ({}),
-		create: async (_data: unknown) => ({}),
-		update: async (_id: string, _data: unknown) => ({}),
-		remove: async (_id: string) => undefined,
-	};
-}
-// A Svelte component is a runtime VALUE as well as a `Component` type —
-// `export declare const` would erase the runtime export (the bundler then
-// reports MISSING_EXPORT) while a plain function is not assignable to
-// `Component`. A cast keeps both halves honest.
-export const TimeAgo = (() => {}) as unknown as Component<{ value?: string }>;
-export const EntityList = (() => {}) as unknown as Component<any>;
-export const EntityDetail = (() => {}) as unknown as Component<any>;
-export const EntityForm = (() => {}) as unknown as Component<any>;
-export function formatValue(_value: unknown): string {
-	return '';
-}
-"#,
-    )
-    .map_err(|e| e.to_string())?;
-
-    fs::write(
-        ui.join("package.json"),
-        r#"{ "name": "@crewbase/ui", "version": "0.0.0", "main": "index.ts", "types": "index.ts" }"#,
-    )
-    .map_err(|e| e.to_string())?;
-    fs::write(
-        ui.join("index.ts"),
-        r#"// Gate-owned stub: the consumer monorepo owns the real package.
-// The scaffold's settings/auth/dashboard routes delegate to these
-// components; they are Svelte COMPONENTS (`Component`, not a plain
-// function — see the @crewbase/entities stub note, issue #634).
-import type { Component } from 'svelte';
-
-export interface CrewbaseComponentProps {
-	[key: string]: unknown;
-}
-export const ApiKeySettings = (() => {}) as unknown as Component<any>;
-export const TeamSettings = (() => {}) as unknown as Component<any>;
-export const Dashboard = (() => {}) as unknown as Component<any>;
-export const LoginPage = (() => {}) as unknown as Component<any>;
-export const SignupPage = (() => {}) as unknown as Component<any>;
-"#,
-    )
-    .map_err(|e| e.to_string())?;
-
-    fs::write(
-        common.join("package.json"),
-        r#"{ "name": "@crewbase/common", "version": "0.0.0", "main": "index.ts", "types": "index.ts" }"#,
-    )
-    .map_err(|e| e.to_string())?;
-    fs::write(
-        common.join("index.ts"),
-        r#"// Gate-owned stub: the consumer monorepo owns the real package.
-export interface CodelistData {
-	[key: string]: unknown;
-}
-"#,
-    )
-    .map_err(|e| e.to_string())?;
-
-    // Point the workspace:* deps at the stubs so the install resolves.
+    // Point the workspace:* deps at the vendored copies so npm resolves
+    // them without a pnpm workspace.
     let pkg_path = ui_dir().join("package.json");
-    let pkg = fs::read_to_string(&pkg_path).map_err(|e| e.to_string())?;
-    let patched = pkg
-        .replace(
-            "\"@crewbase/ui\": \"workspace:*\"",
-            "\"@crewbase/ui\": \"file:stubs/@crewbase/ui\"",
-        )
-        .replace(
-            "\"@crewbase/entities\": \"workspace:*\"",
-            "\"@crewbase/entities\": \"file:stubs/@crewbase/entities\"",
-        )
-        .replace(
-            "\"@crewbase/common\": \"workspace:*\"",
-            "\"@crewbase/common\": \"file:stubs/@crewbase/common\"",
+    let mut pkg = fs::read_to_string(&pkg_path).map_err(|e| e.to_string())?;
+    for dir in ["ui", "entities", "common"] {
+        let name = format!("@{FIXTURE_UI_SCOPE}/{dir}");
+        let workspace = format!("\"{name}\": \"workspace:*\"");
+        if !pkg.contains(&workspace) {
+            return Err(format!(
+                "generated ui/package.json does not depend on {name} via workspace:* — \
+                 the fixture scope drifted from FIXTURE_UI_SCOPE"
+            ));
+        }
+        pkg = pkg.replace(
+            &workspace,
+            &format!("\"{name}\": \"file:stubs/@{FIXTURE_UI_SCOPE}/{dir}\""),
         );
-    fs::write(&pkg_path, patched).map_err(|e| e.to_string())?;
+    }
+    fs::write(&pkg_path, pkg).map_err(|e| e.to_string())?;
 
     // The fixture's hand-authored pages (ui/forms/*) import the consumer's
     // real design system and api module — stub them so the check resolves.
@@ -274,8 +213,8 @@ export interface CodelistData {
         )
     } else {
         pkg.replace(
-            "\"@crewbase/ui\": \"file:stubs/@crewbase/ui\"",
-            "\"@crewbase/ui\": \"file:stubs/@crewbase/ui\",\"@community-os/ui\": \"file:stubs/@community-os/ui\"",
+            "\"@app/ui\": \"file:stubs/@app/ui\"",
+            "\"@app/ui\": \"file:stubs/@app/ui\",\"@community-os/ui\": \"file:stubs/@community-os/ui\"",
         )
     };
     fs::write(&pkg_path, patched).map_err(|e| e.to_string())?;
@@ -294,7 +233,7 @@ export interface CodelistData {
     // AND the install-hash marker so npm re-copies the stubs even when
     // the package.json hash (ensure_install's gate) is unchanged.
     let node_modules = ui_dir().join("node_modules");
-    for scope in ["@crewbase", "@community-os"] {
+    for scope in ["@app", "@crewbase", "@community-os"] {
         let installed = node_modules.join(scope);
         if installed.is_dir() {
             fs::remove_dir_all(&installed).map_err(|e| e.to_string())?;
@@ -969,7 +908,7 @@ async fn entity_app_builds_and_typechecks() {
     let _guard = gate_lock().lock().await;
     let gate = review_api_suite_regen::FixtureGate::acquire().expect("acquire fixture gate");
     provision_fixture(&gate).await.unwrap();
-    stub_crewbase_packages().unwrap();
+    install_vendored_ui_packages().unwrap();
     stub_api_types().unwrap();
 
     // The ui-shell plane (descriptor-driven pages) emits a TOP-LEVEL route
@@ -1255,7 +1194,7 @@ async fn entity_specs_run_green() {
     let gate = review_api_suite_regen::FixtureGate::acquire().expect("acquire fixture gate");
 
     provision_fixture(&gate).await.unwrap();
-    stub_crewbase_packages().unwrap();
+    install_vendored_ui_packages().unwrap();
     stub_api_types().unwrap();
     // The shell-plane route conflict (see entity_app_builds_and_typechecks):
     // remove the shell tree before sync.

@@ -668,6 +668,7 @@ fn resolve_run_profile(
 
         // Build project config from profile meta (optional fields override defaults).
         let meta = &resolved.meta;
+        check_ui_package_scope(meta)?;
         let domain_types_base_path = meta.domain_types_base.as_ref().map(|p| output.join(p));
         let project_config = ProjectConfig {
             identity: IdentityConfig {
@@ -687,6 +688,7 @@ fn resolve_run_profile(
                     .clone()
                     .unwrap_or_else(|| "codegraph".into()),
                 api_version: domain_config.defaults.api_version.clone(),
+                ui_package_scope: meta.ui_package_scope.clone(),
             },
             paths: PathsConfig {
                 domain_types_base: meta.domain_types_base.clone().unwrap_or_default(),
@@ -1745,6 +1747,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         let plan = crate::profile::BuildPlan::from_profile(&resolved, &registry)?;
 
         let meta = &resolved.meta;
+        check_ui_package_scope(meta)?;
         project_config.identity.app_name = meta
             .app_name
             .clone()
@@ -1762,6 +1765,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
             .generator_name
             .clone()
             .unwrap_or(project_config.identity.generator_name);
+        project_config.identity.ui_package_scope = meta.ui_package_scope.clone();
         project_config.paths.domain_types_base = meta.domain_types_base.clone().unwrap_or_default();
         project_config.paths.hooks_api_base = meta.hooks_api_base.clone().unwrap_or_default();
         project_config.paths.extensions_base = meta.extensions_base.clone().unwrap_or_default();
@@ -2243,6 +2247,16 @@ fn codegraph_checkout_root() -> String {
         .and_then(Path::parent)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// An explicit profile `meta.ui_package_scope` must be a valid npm scope
+/// (issue #18) — a hard config error naming the value, before any tree is
+/// written.
+fn check_ui_package_scope(meta: &crate::profile::ProfileMeta) -> Result<()> {
+    if let Some(scope) = &meta.ui_package_scope {
+        crate::generate::validate_ui_package_scope(scope).map_err(crate::error::Error::Config)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

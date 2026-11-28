@@ -13,7 +13,7 @@ export default defineConfig({
 			// SvelteKit 3-next flattened the config — adapter/preprocess/alias
 			// are top-level plugin options (svelte.config.js is rejected).
 			// `$lib` was removed in favour of `#lib`; the generated routes and
-			// the @crewbase/ui design system still import via `$lib`, so the
+			// the vendored `@app/ui` package still import via `$lib`, so the
 			// documented compat alias stays until that migration lands.
 			alias: {
 				'$lib': 'src/lib',

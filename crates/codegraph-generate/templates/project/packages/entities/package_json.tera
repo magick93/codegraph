@@ -1,0 +1,19 @@
+{
+  "name": "@{{ ui_package_scope }}/entities",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Descriptor-driven entity list/detail/form components for the generated {{ project_name }} UI (vendored by codegraph init; consumer-owned).",
+  "type": "module",
+  "svelte": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "peerDependencies": {
+    "svelte": "^5.0.0"
+  }
+}

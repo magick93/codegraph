@@ -1713,6 +1713,65 @@ fn check_deploy_component_coverage(
     warnings
 }
 
+/// What the profiles.toml leg of doctor contributes.
+struct ProfilesCheck {
+    hard_failures: usize,
+    soft_warnings: usize,
+    plan: Option<crate::profile::BuildPlan>,
+    /// Issue #18: the resolved npm scope of the generated UI's component
+    /// packages (explicit `meta.ui_package_scope`, else kebab(app_name));
+    /// `None` when the plan builds no UI scaffold.
+    ui_package_scope: Option<String>,
+}
+
+/// Load + resolve profiles.toml into a BuildPlan (PASS/FAIL/WARN printed).
+fn check_profiles(args: &DoctorArgs) -> ProfilesCheck {
+    let mut out = ProfilesCheck {
+        hard_failures: 0,
+        soft_warnings: 0,
+        plan: None,
+        ui_package_scope: None,
+    };
+    let profiles_path = args
+        .profiles_config
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("profiles.toml"));
+    if !profiles_path.exists() {
+        out.soft_warnings += 1;
+        println!("WARN no profiles.toml — running all generators");
+        println!("     hint: run `codegraph init` to scaffold one");
+        return out;
+    }
+    match crate::profile::load_and_resolve_profile(&profiles_path, "default", None).and_then(
+        |resolved| {
+            let registry = crate::profile::CapabilityRegistry::new();
+            let plan = crate::profile::BuildPlan::from_profile(&resolved, &registry)?;
+            Ok((plan, resolved.meta))
+        },
+    ) {
+        Ok((plan, meta)) => {
+            report_profiles_pass(&plan);
+            match crate::init::ui_packages::resolve_doctor_scope(&plan, &meta) {
+                Ok(scope) => out.ui_package_scope = scope,
+                Err(e) => {
+                    out.hard_failures += 1;
+                    println!("FAIL profiles.toml — {e}");
+                }
+            }
+            out.plan = Some(plan);
+        }
+        Err(e) => {
+            out.hard_failures += 1;
+            println!("FAIL profiles.toml — {e}");
+            println!(
+                "     hint: fix profile config in {}",
+                profiles_path.display()
+            );
+        }
+    }
+    out
+}
+
 /// Validate an existing consumer project. Prints pass/fail checks and
 /// returns Err when any hard check fails; Ok carries the outcome counts.
 pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
@@ -1824,39 +1883,14 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
         }
     }
 
-    let profiles_path = args
-        .profiles_config
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("profiles.toml"));
     // The resolved plan feeds the deploy cross-checks below (profile
     // target vs topology); absent when profiles.toml is missing (nothing
-    // to cross-check against).
-    let mut build_plan: Option<crate::profile::BuildPlan> = None;
-    if profiles_path.exists() {
-        match crate::profile::load_and_resolve_profile(&profiles_path, "default", None).and_then(
-            |resolved| {
-                let registry = crate::profile::CapabilityRegistry::new();
-                crate::profile::BuildPlan::from_profile(&resolved, &registry)
-            },
-        ) {
-            Ok(plan) => {
-                report_profiles_pass(&plan);
-                build_plan = Some(plan);
-            }
-            Err(e) => {
-                hard_failures += 1;
-                println!("FAIL profiles.toml — {e}");
-                println!(
-                    "     hint: fix profile config in {}",
-                    profiles_path.display()
-                );
-            }
-        }
-    } else {
-        soft_warnings += 1;
-        println!("WARN no profiles.toml — running all generators");
-        println!("     hint: run `codegraph init` to scaffold one");
-    }
+    // to cross-check against). The ui-package scope is issue #18's.
+    let profiles = check_profiles(args);
+    hard_failures += profiles.hard_failures;
+    soft_warnings += profiles.soft_warnings;
+    let build_plan = profiles.plan;
+    let ui_package_scope = profiles.ui_package_scope;
 
     let mox_mode = !args.mox_files.is_empty();
     let rosetta_mode = !args.rosetta_files.is_empty();
@@ -2104,6 +2138,11 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
         .filter(|p| !p.as_os_str().is_empty())
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
+    // Vendored UI packages (issue #18) — one advisory WARN at most.
+    if let Some(scope) = &ui_package_scope {
+        soft_warnings += crate::init::ui_packages::report(&drift_scan_root, scope);
+    }
+
     for drift in crate::init::wrapper_drift::check_wrapper_drift(&drift_scan_root) {
         if !drift.is_drifted() {
             continue;

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { EntityDetail, createEntityApi } from '@crewbase/entities';
+	import { EntityDetail, createEntityApi } from '@app/entities';
 	import { ProcessHistoryDescriptor } from '../../descriptor';
 	import { apiClient } from '#lib/api/client.ts';
 

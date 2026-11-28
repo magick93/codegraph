@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { EntityList, createEntityApi } from '@crewbase/entities';
+	import { EntityList, createEntityApi } from '@app/entities';
 	import { PositionScheduleTypeCodeListDescriptor } from './descriptor';
 	import { apiClient } from '#lib/api/client.ts';
 
