@@ -185,7 +185,7 @@ pub(super) fn add_tree_columns(
 pub(super) async fn generated_table_set(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
-) -> Result<HashSet<(String, String)>> {
+) -> Result<GeneratedTables> {
     let order = crate::ordering::compute_generation_order(db, config).await?;
     let table_by_title: HashMap<String, String> = db
         .list_schemas(None)
@@ -195,24 +195,84 @@ pub(super) async fn generated_table_set(
         .filter(|s| !s.pg_table_name.is_empty())
         .map(|s| (s.title, s.pg_table_name))
         .collect();
-    Ok(order
-        .into_iter()
-        .filter_map(|entry| {
+    Ok(GeneratedTables::from_pairs(order.into_iter().filter_map(
+        |entry| {
             table_by_title
                 .get(&entry.schema_title)
                 .map(|table| (entry.domain, table.clone()))
-        })
-        .collect())
+        },
+    )))
 }
 
-pub(super) fn retain_generated_fks(
+/// The emitted table universe: every `(schema, table)` pair that has a
+/// migration, plus the schema each table name is emitted in when that is
+/// unambiguous (issue #322).
+///
+/// A graph FK edge carries the domain the reference target was DECLARED in,
+/// while the table is emitted in the domain that CLAIMED the title in
+/// [`compute_generation_order`] (a config `entities` entry re-claims a
+/// discovery-only title). The two disagree for a cross-domain-deduped
+/// target; [`retain_generated_fks`] re-points such an FK at the schema the
+/// table is actually emitted in instead of dropping it.
+#[derive(Debug, Clone, Default)]
+pub(in crate::db::ddl) struct GeneratedTables {
+    pairs: HashSet<(String, String)>,
+    /// table name → the single schema it is emitted in; `None` when the same
+    /// table name is emitted in more than one schema (no remap is guessed).
+    schema_by_table: HashMap<String, Option<String>>,
+}
+
+impl GeneratedTables {
+    pub(in crate::db::ddl) fn from_pairs(
+        pairs: impl IntoIterator<Item = (String, String)>,
+    ) -> Self {
+        let mut out = Self::default();
+        for (schema, table) in pairs {
+            match out.schema_by_table.get_mut(&table) {
+                None => {
+                    out.schema_by_table
+                        .insert(table.clone(), Some(schema.clone()));
+                }
+                Some(slot) => {
+                    if slot.as_deref() != Some(schema.as_str()) {
+                        *slot = None;
+                    }
+                }
+            }
+            out.pairs.insert((schema, table));
+        }
+        out
+    }
+
+    fn contains(&self, schema: &str, table: &str) -> bool {
+        self.pairs
+            .contains(&(schema.to_string(), table.to_string()))
+    }
+
+    /// The schema `table` is emitted in, when exactly one schema emits it.
+    fn emitted_schema(&self, table: &str) -> Option<&str> {
+        self.schema_by_table.get(table).and_then(|s| s.as_deref())
+    }
+}
+
+/// Keep only FKs whose target table is emitted, re-pointing an FK whose
+/// declared schema differs from the table's emitted schema (issue #322).
+/// Codelist FKs are kept unconditionally (codelists live in `common`).
+pub(in crate::db::ddl) fn retain_generated_fks(
     foreign_keys: &mut Vec<ForeignKeyDef>,
-    generated_tables: &HashSet<(String, String)>,
+    generated_tables: &GeneratedTables,
 ) {
+    for fk in foreign_keys.iter_mut() {
+        if fk.is_codelist || generated_tables.contains(&fk.references_schema, &fk.references_table)
+        {
+            continue;
+        }
+        if let Some(schema) = generated_tables.emitted_schema(&fk.references_table) {
+            fk.references_schema = schema.to_string();
+        }
+    }
     foreign_keys.retain(|fk| {
-        fk.is_codelist
-            || generated_tables
-                .contains(&(fk.references_schema.clone(), fk.references_table.clone()))
+        fk.is_codelist || generated_tables.contains(&fk.references_schema, &fk.references_table)
     });
 }
 
@@ -220,7 +280,7 @@ pub(super) async fn add_property_ref_columns(
     db: &dyn GraphQuerier,
     schema_title: &str,
     schema_name: &str,
-    generated_tables: &HashSet<(String, String)>,
+    generated_tables: &GeneratedTables,
     artifacts: &mut DdlAccumulators,
 ) {
     if let Ok(props) = db.get_properties(schema_title).await {

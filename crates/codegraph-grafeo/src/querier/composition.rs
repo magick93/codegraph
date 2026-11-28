@@ -950,7 +950,7 @@ impl GrafeoEngine {
                         default_schema,
                         prop.ref_target.as_deref(),
                         "id",
-                        "SET NULL",
+                        codegraph_core::types::entity_ref_on_delete(prop.is_required),
                         loadout,
                     )
                     .await
@@ -1052,7 +1052,9 @@ impl GrafeoEngine {
                                 default_schema,
                                 prop.ref_target.as_deref(),
                                 "id",
-                                "SET NULL",
+                                codegraph_core::types::entity_ref_on_delete(
+                                    !entity_col.is_optional,
+                                ),
                                 loadout,
                             )
                             .await;

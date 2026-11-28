@@ -26,6 +26,16 @@ pub struct FkTarget {
     pub on_delete: String,
 }
 
+/// The ON DELETE action for a scalar entity-reference FK (issue #57).
+///
+/// A required reference is a `NOT NULL` column, so `SET NULL` would
+/// contradict it (a parent delete fails on the NOT NULL violation instead of
+/// the FK): it gets `RESTRICT` — the parent delete is refused while children
+/// still need it. An optional reference keeps `SET NULL`.
+pub fn entity_ref_on_delete(required: bool) -> &'static str {
+    if required { "RESTRICT" } else { "SET NULL" }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnInfo {
     pub name: String,

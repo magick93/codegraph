@@ -29,8 +29,6 @@ use codegraph_core::types::{ColumnInfo, CompositionNode};
 use query::{
     apply_workflow_defaults, composition_node_to_child_table, detect_extensions_from_columns,
 };
-#[cfg(test)]
-use std::collections::HashSet;
 
 #[cfg(test)]
 mod tests;

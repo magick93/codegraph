@@ -134,7 +134,13 @@ fn child_table_dedupes_schema_derived_timestamps() {
         info_col("createdAt", "TIMESTAMPTZ"),
         info_col("note", "TEXT"),
     ]);
-    let def = composition_node_to_child_table(&node, "trust", "core", "Trust", &HashSet::new());
+    let def = composition_node_to_child_table(
+        &node,
+        "trust",
+        "core",
+        "Trust",
+        &query::GeneratedTables::default(),
+    );
     let names: Vec<&str> = def.columns.iter().map(|c| c.name.as_str()).collect();
     assert!(!names.contains(&"created_at"), "got {:?}", names);
     assert!(!names.contains(&"updated_at"), "got {:?}", names);
@@ -144,7 +150,13 @@ fn child_table_dedupes_schema_derived_timestamps() {
 #[test]
 fn child_table_timestamp_dedupe_is_case_insensitive() {
     let node = node_with_columns(vec![info_col("CreatedAt", "TIMESTAMPTZ")]);
-    let def = composition_node_to_child_table(&node, "trust", "core", "Trust", &HashSet::new());
+    let def = composition_node_to_child_table(
+        &node,
+        "trust",
+        "core",
+        "Trust",
+        &query::GeneratedTables::default(),
+    );
     assert!(def.columns.iter().all(|c| c.name != "CreatedAt"));
 }
 
@@ -156,7 +168,7 @@ fn child_table_parent_fk_single_suffix_for_id_named_parent() {
         "evidence_extracted_field_id",
         "compliance",
         "Evidence Extracted Field Id",
-        &HashSet::new(),
+        &query::GeneratedTables::default(),
     );
     assert_eq!(def.parent_fk_column, "evidence_extracted_field_id");
     assert!(
@@ -896,4 +908,54 @@ fn media_child_of_a_global_parent_indexes_in_the_table_migration() {
     assert!(!render_ddl_template("db/table.tera", &scoped).contains("UNIQUE INDEX"));
     global.child_tables = vec![trust_junction_child()];
     assert!(!render_ddl_template("db/table.tera", &global).contains("UNIQUE INDEX"));
+}
+
+fn fk_to(schema: &str, table: &str) -> ForeignKeyDef {
+    ForeignKeyDef {
+        column: "target_id".into(),
+        column_name: "target_id".into(),
+        references_schema: schema.into(),
+        references_table: table.into(),
+        references_column: "id".into(),
+        on_delete: "SET NULL".into(),
+        is_codelist: false,
+    }
+}
+
+/// Issue #322: an FK whose declared schema differs from the schema its
+/// target table is emitted in is re-pointed, never silently dropped.
+#[test]
+fn fk_to_a_reclaimed_table_is_repointed_at_its_emitted_schema() {
+    let universe = query::GeneratedTables::from_pairs([
+        ("recruiting".to_string(), "position".to_string()),
+        ("common".to_string(), "person".to_string()),
+    ]);
+    let mut fks = vec![fk_to("common", "position"), fk_to("common", "person")];
+    query::retain_generated_fks(&mut fks, &universe);
+    let targets: Vec<(&str, &str)> = fks
+        .iter()
+        .map(|f| (f.references_schema.as_str(), f.references_table.as_str()))
+        .collect();
+    assert_eq!(
+        targets,
+        vec![("recruiting", "position"), ("common", "person")]
+    );
+}
+
+/// A table name emitted in two schemas is ambiguous: no remap is guessed,
+/// and an FK naming neither is dropped (the pre-#322 rule).
+#[test]
+fn ambiguous_table_name_is_not_remapped() {
+    let universe = query::GeneratedTables::from_pairs([
+        ("a".to_string(), "item".to_string()),
+        ("b".to_string(), "item".to_string()),
+    ]);
+    let mut fks = vec![
+        fk_to("c", "item"),
+        fk_to("b", "item"),
+        fk_to("c", "missing"),
+    ];
+    query::retain_generated_fks(&mut fks, &universe);
+    assert_eq!(fks.len(), 1);
+    assert_eq!(fks[0].references_schema, "b");
 }

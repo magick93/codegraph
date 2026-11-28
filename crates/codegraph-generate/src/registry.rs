@@ -787,19 +787,26 @@ mod charts_capability_audit {
         let project = ProjectConfig::default();
 
         let caps = base_capabilities();
-        let global_names: Vec<String> = caps
-            .values()
-            .filter(|c| c.kind == GeneratorKind::Global)
-            .flat_map(|c| [c.name.clone(), c.name.replace('-', "_")])
-            .collect();
+        // VERBATIM capability spellings — exactly what a profile lists
+        // (issue #859: feeding both spellings hid that a hyphenated profile
+        // entry never matched the run-path lookup).
+        let names_of = |kind: GeneratorKind| -> Vec<String> {
+            caps.values()
+                .filter(|c| c.kind == kind)
+                .map(|c| c.name.clone())
+                .collect()
+        };
+        let global_names = names_of(GeneratorKind::Global);
+        let entity_names = names_of(GeneratorKind::Entity);
+        let domain_names = names_of(GeneratorKind::Domain);
 
         let ext_points: codegraph_ext_points::ExtensionPointsConfig =
             toml::from_str("").expect("empty ext points");
         let emdash_plugins = crate::emdash::EmdashPluginsConfig::default();
 
         let make_plan = |topology: DeploymentTopology| BuildPlan {
-            entity_generators: Vec::new(),
-            domain_generators: Vec::new(),
+            entity_generators: entity_names.clone(),
+            domain_generators: domain_names.clone(),
             global_generators: global_names.clone(),
             post_gen_scripts: Vec::new(),
             ifml_frameworks: Vec::new(),
@@ -835,6 +842,8 @@ mod charts_capability_audit {
         };
 
         let mut built: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut built_entity: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut built_domain: std::collections::HashSet<String> = std::collections::HashSet::new();
         for topology in [DeploymentTopology::Monolith, DeploymentTopology::Workers] {
             let plan = make_plan(topology);
             let opts = GeneratorOpts {
@@ -865,21 +874,51 @@ mod charts_capability_audit {
                     .iter()
                     .map(|g| g.name().replace('-', "_")),
             );
+            built_entity.extend(
+                build_entity_generators(&ctx, &[], None)
+                    .iter()
+                    .map(|g| g.name().replace('-', "_")),
+            );
+            built_domain.extend(
+                build_domain_generators(&ctx, &[], None)
+                    .iter()
+                    .map(|g| g.name().replace('-', "_")),
+            );
         }
 
-        let mut missing = Vec::new();
-        for cap in caps.values() {
-            if cap.kind != GeneratorKind::Global {
-                continue;
-            }
-            if !built.contains(&cap.name.replace('-', "_")) {
-                missing.push(cap.name.clone());
-            }
-        }
+        // Capabilities whose generators are constructed OUTSIDE the
+        // registry builders, independent of the plan filter.
+        const BUILT_ELSEWHERE: &[&str] = &[
+            // `pipeline.rs::run_codelist_generators` runs every codelist
+            // generator unconditionally (codelists are not entities).
+            "codelist",
+        ];
+        let missing_of = |kind: GeneratorKind, built: &std::collections::HashSet<String>| {
+            caps.values()
+                .filter(|c| c.kind == kind && !built.contains(&c.name.replace('-', "_")))
+                .filter(|c| !BUILT_ELSEWHERE.contains(&c.name.as_str()))
+                .map(|c| c.name.clone())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let missing = missing_of(GeneratorKind::Global, &built);
         assert!(
             missing.is_empty(),
             "Global capabilities with NO registry constructor (the #577 \
              class — the capability list lies): {missing:?}"
+        );
+        // Issue #859: a plan listing an Entity/Domain capability by its
+        // verbatim (possibly hyphenated) name must actually run it.
+        let missing = missing_of(GeneratorKind::Entity, &built_entity);
+        assert!(
+            missing.is_empty(),
+            "Entity capabilities a verbatim plan entry never runs (the #859 \
+             class): {missing:?}"
+        );
+        let missing = missing_of(GeneratorKind::Domain, &built_domain);
+        assert!(
+            missing.is_empty(),
+            "Domain capabilities a verbatim plan entry never runs (the #859 \
+             class): {missing:?}"
         );
     }
 }

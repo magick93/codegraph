@@ -158,6 +158,37 @@ async fn required_genuine_entity_ref_is_not_null_across_all_layers() {
         !response_dto.contains("pub candidate_id: Option<uuid::Uuid>"),
         "response DTO required entity ref must NOT be Option<uuid::Uuid>. Got:\n{response_dto}"
     );
+
+    // 5. DDL (issue #57): the required ref is NOT NULL, so its FK must not
+    // be ON DELETE SET NULL (the parent delete would fail on the NOT NULL
+    // violation) — a required reference RESTRICTs.
+    let ddl = generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"))
+        .generate(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|f| f.content.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        ddl.contains("candidate_id UUID NOT NULL"),
+        "DDL required entity ref must be NOT NULL. Got:\n{ddl}"
+    );
+    let fk = ddl
+        .lines()
+        .find(|l| l.contains("FOREIGN KEY (candidate_id)"))
+        .unwrap_or_else(|| panic!("no candidate_id FK in DDL:\n{ddl}"));
+    assert!(
+        fk.contains("ON DELETE RESTRICT"),
+        "a required reference RESTRICTs (issue #57). Got: {fk}"
+    );
 }
 
 /// Regression test: a required genuine EntityReference that is ALSO detected as

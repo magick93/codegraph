@@ -1892,6 +1892,15 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     let build_plan = profiles.plan;
     let ui_package_scope = profiles.ui_package_scope;
 
+    // The v1 support matrix (issue #849 §3): warn when the plan selects a
+    // topology × feature combination v1 does not claim.
+    if let Some(plan) = build_plan.as_ref() {
+        soft_warnings += crate::init::support_matrix::report_unsupported_combinations(
+            plan,
+            domain_config.as_ref().ok(),
+        );
+    }
+
     let mox_mode = !args.mox_files.is_empty();
     let rosetta_mode = !args.rosetta_files.is_empty();
     let model_mode = mox_mode || rosetta_mode;

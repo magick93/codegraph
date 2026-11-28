@@ -11,6 +11,8 @@ pub(crate) use enrich::ddl_dto_gap_fields;
 
 pub(super) use artifacts::composition_table_conflict;
 #[cfg(test)]
+pub(super) use artifacts::{GeneratedTables, retain_generated_fks};
+#[cfg(test)]
 pub(super) use children::composition_node_to_child_table;
 #[cfg(test)]
 pub(super) use enrich::{apply_workflow_defaults, detect_extensions_from_columns};
