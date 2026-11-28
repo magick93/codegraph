@@ -51,9 +51,7 @@ jobs:
           node-version: 22
       # psql for the scratch-database lifecycle (the suite's own stages).
       - name: Install postgresql-client
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
+        run: scripts/ci/apt-install.sh --if-missing psql postgresql-client
       # The .deb recipe from ci.yml's `test-ops-integration` job (proven
       # there): the release TARBALL nests its binaries under
       # `hurl-<ver>-x86_64-unknown-linux-gnu/bin/`, so the old
@@ -64,7 +62,7 @@ jobs:
           HURL_VERSION=8.1.0
           curl --silent --location --remote-name \
             "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/hurl_${HURL_VERSION}_amd64.deb"
-          sudo apt-get update && sudo apt-get install -y "./hurl_${HURL_VERSION}_amd64.deb"
+          scripts/ci/apt-install.sh "./hurl_${HURL_VERSION}_amd64.deb"
           hurl --version
       # Pre-pull the PINNED CLI (and warm the npm cache) before the gate
       # runs. This must stay the ONLY `npx … supabase` command in the file,

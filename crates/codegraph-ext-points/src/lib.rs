@@ -5,8 +5,26 @@ use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExtensionPointsConfig {
+    /// The reserved `[push_plane]` table (issue #566) — consumer assertions
+    /// about the push plane's deployment state. `push_plane` is therefore not
+    /// usable as an extension-point id.
+    #[serde(default)]
+    pub push_plane: PushPlaneConfig,
     #[serde(flatten)]
     pub points: HashMap<String, ExtensionPointDef>,
+}
+
+/// `[push_plane]` in extension-points.toml (issue #566). Strict: a
+/// misspelled key is a parse error, never a silently ignored signal.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PushPlaneConfig {
+    /// The consumer asserts every installation has a provisioned
+    /// `platform_integrations.installations.signing_secret` (e.g. a seed
+    /// step or the `PUT …/signing-secret` route runs). `true` silences
+    /// doctor's #511 unsigned-delivery advisory; the default keeps it ON.
+    #[serde(default)]
+    pub signing_secret_provisioned: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

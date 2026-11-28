@@ -1329,19 +1329,29 @@ fn check_extension_points(
 
     // Issue #511 back-compat advisory: push events are HMAC-signed only
     // when the installation row carries a signing_secret (the column
-    // ships nullable). Doctor cannot see the database, so every run that
-    // carries the push plane hears about the provisioning step once.
-    soft += 1;
-    println!(
-        "WARN extension-points — installations without signing_secret deliver UNSIGNED \
-         events (issue #511)"
-    );
-    println!(
-        "     hint: provision platform_integrations.installations.signing_secret per \
-         installation (PUT /api/v1/integrations/installations/{{id}}/signing-secret \
-         since issue #552 — no raw SQL); receivers verify with \
-         integration_dispatch::verify_event_signature"
-    );
+    // ships nullable). Doctor cannot see the database, so the advisory is
+    // ON unless the consumer explicitly asserts provisioning (issue #566:
+    // `[push_plane] signing_secret_provisioned = true`).
+    if config.push_plane.signing_secret_provisioned {
+        println!(
+            "INFO extension-points — signing_secret provisioning asserted \
+             ([push_plane] signing_secret_provisioned = true); #511 advisory silenced"
+        );
+    } else {
+        soft += 1;
+        println!(
+            "WARN extension-points — installations without signing_secret deliver UNSIGNED \
+             events (issue #511)"
+        );
+        println!(
+            "     hint: provision platform_integrations.installations.signing_secret per \
+             installation (PUT /api/v1/integrations/installations/{{id}}/signing-secret \
+             since issue #552 — no raw SQL); receivers verify with \
+             integration_dispatch::verify_event_signature. Once provisioned, assert it \
+             with `[push_plane] signing_secret_provisioned = true` in \
+             extension-points.toml (issue #566)"
+        );
+    }
 
     println!(
         "PASS extension-points — {} — {points} point(s), {entities} entity ref(s){}",

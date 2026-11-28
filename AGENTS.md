@@ -5561,6 +5561,30 @@ gateway 8787 and worker base 8791 needs no manifest edits. Absent
 The live 10-domain boot gate is a recorded follow-up (it needs a full
 workers fixture + Postgres).
 
+### The api suite regenerates from clean (issue #796)
+
+`testkit api` regenerates in place (manifest `graph_binary` + `schemas_dir`)
+and then discovers contracts by listing `hurl.dir`, so a contract (or
+migration) the PREVIOUS generation wrote and this one no longer writes used
+to be hurl'd against the new app unless the consumer authored a
+`pre_generate` wipe hook. `suites/api/stale_sweep.rs` closes it without ever
+deleting a file the harness cannot prove was generated: after the
+`pre_generate` hooks it snapshots `{app_dir}/.codegraph-manifest.json` (the
+generator's ownership record) and removes it so the generator writes a FRESH
+one instead of merging; after a successful regeneration it deletes exactly
+`prior − regenerated` and logs `regen sweep: removed N stale file(s) a
+previous generation wrote (roots: …)` (or `no prior … nothing removed`). A
+failed regeneration restores the prior manifest byte-for-byte; a regeneration
+that wrote no manifest refuses to sweep. Never swept: the ops manifest the
+suite was loaded from, `testkit/`, and absolute/escaping entries.
+Hand-authored contracts are never in a manifest, so `output_dir = "."` and a
+shared `hurl.dir` stay safe. Boundary: only the `app_dir` root's manifest is
+consulted (separate `domain_types_base`/`hooks_api_base` roots are not swept),
+and output another profile's run accumulated into the same root counts as
+"not regenerated" and is removed. The review fixture is unaffected (no
+`graph_binary`; its gates regenerate through the swept, locked recipe).
+Gates: `cargo test -p codegraph-ops --lib -- stale_sweep` (5).
+
 ### Migration tracking (issue #756 — ONE table for boot + band)
 
 Every migration plane shares ONE tracking table, so a generated app boots over
@@ -6048,7 +6072,14 @@ native `cargo check` cannot see this class.
   emitted `integration_dispatch::verify_event_signature` (constant-time
   MAC check + 5-minute replay window, `EVENT_SIGNATURE_MAX_AGE_SECS`).
   Deliberately exceeds the webhook plane's precedent, whose timestamp
-  header is unsigned; the webhook plane is untouched.
+  header is unsigned; the webhook plane is untouched. Doctor's
+  unsigned-delivery advisory (it cannot see the database) is ON by default
+  and goes quiet only when the consumer asserts provisioning in
+  extension-points.toml (issue #566): `[push_plane]
+  signing_secret_provisioned = true` (a strict, reserved table — so
+  `push_plane` is not a usable extension-point id; a misspelled key is a
+  parse error). Gate: `init_tests ::
+  doctor_signing_advisory_is_silenced_only_by_an_explicit_provisioning_signal`.
 - Gate: `cargo test -p codegraph --test extension_points_tests` (7,
   node-free) + `doctor_validates_extension_points` in `init_tests`. The
   signing construction carries a computed known-answer vector (#518):
