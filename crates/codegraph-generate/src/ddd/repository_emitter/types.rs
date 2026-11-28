@@ -94,6 +94,21 @@ pub struct EntityTree {
     pub design_finders: Vec<DesignFinder>,
 }
 
+impl EntityTree {
+    /// The by-id loaders this entity's query handler exposes (issue #869) —
+    /// the ONE derivation every plane reads ([`crate::ddd::loaders`]).
+    #[must_use]
+    pub fn query_loaders(&self) -> crate::ddd::loaders::QueryLoaders {
+        crate::ddd::loaders::QueryLoaders::for_ops(
+            self.has_create,
+            self.has_read,
+            self.has_update,
+            self.has_delete,
+            self.parent_ref.is_some(),
+        )
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct TreeColumn {

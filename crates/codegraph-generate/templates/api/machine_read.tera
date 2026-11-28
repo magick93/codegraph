@@ -49,16 +49,17 @@ pub struct MachineReadModelResponse {
 const MACHINE_ID: &str = "{{ machine_id }}";
 
 /// The machine read model for {{ entity_name }} `id`: load the row
-/// (RLS-scoped), read the status column, derive from the kernel. This is
+/// (RLS-scoped{% if scoped_load %}, and scoped to its parent — a member of another parent is a 404{% endif %}), read the status column, derive from the kernel. This is
 /// the ONE derivation — the merged `/workflow` payload reuses it when the
 /// entity carries a workflow config.
 pub(crate) async fn machine_read_model(
     state: &AppState,
-    api_key_info: &crate::middleware::ApiKeyInfo,
+    api_key_info: &crate::middleware::ApiKeyInfo,{% if scoped_load %}
+    parent_id: Uuid,{% endif %}
     id: Uuid,
 ) -> Result<MachineReadModelResponse, AppError> {
     let correlation_id = Uuid::new_v4();
-    let entity = state.{{ domain }}_{{ module_name }}_queries.find_by_id(id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+    let entity = state.{{ domain }}_{{ module_name }}_queries.{% if scoped_load %}find_by_id_scoped(id, parent_id{% else %}find_by_id(id{% endif %}{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e| AppError::internal(format!("Failed to find {{ entity_name }}: {e}")).with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found")).with_correlation_id(correlation_id))?;
     // The entity column is the write-both source of truth (Stage 2 keeps
@@ -125,9 +126,9 @@ pub async fn get_machine(
     headers: HeaderMap,
 {% if role == "child" %}
 {% if ancestor_path_params >= 2 %}
-    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
+    Path((_grandparent_id, {% if not scoped_load %}_{% endif %}parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
 {% else %}
-    Path((_parent_id, id)): Path<(Uuid, Uuid)>,
+    Path(({% if not scoped_load %}_{% endif %}parent_id, id)): Path<(Uuid, Uuid)>,
 {% endif %}
 {% else %}
     Path(id): Path<Uuid>,
@@ -138,7 +139,7 @@ pub async fn get_machine(
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<Uuid>().ok())
         .unwrap_or_else(Uuid::new_v4);
-    let response = machine_read_model(&state, &api_key_info, id).await?;
+    let response = machine_read_model(&state, &api_key_info, {% if scoped_load %}parent_id, {% endif %}id).await?;
     Ok(Json(serde_json::json!({
         "data": response,
         "meta": { "correlation_id": correlation_id.to_string() }

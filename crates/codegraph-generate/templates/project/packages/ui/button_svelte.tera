@@ -1,0 +1,23 @@
+{% raw %}<!-- Button primitive for generated forms (issue #860). Vendored by `codegraph init`; consumer-owned. -->
+<script lang="ts">
+	import type { Snippet } from 'svelte';
+	import type { HTMLButtonAttributes } from 'svelte/elements';
+
+	let {
+		variant = 'primary',
+		loading = false,
+		type = 'button',
+		disabled = false,
+		children,
+		...rest
+	}: HTMLButtonAttributes & {
+		variant?: 'primary' | 'secondary';
+		loading?: boolean;
+		children?: Snippet;
+	} = $props();
+</script>
+
+<button {type} disabled={disabled || loading} data-variant={variant} aria-busy={loading} {...rest}>
+	{@render children?.()}
+</button>
+{% endraw %}

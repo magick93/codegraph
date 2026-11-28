@@ -1,0 +1,26 @@
+{% raw %}<!-- Labelled select primitive for generated forms (issue #860). Vendored by `codegraph init`; consumer-owned. -->
+<script lang="ts">
+	import type { HTMLSelectAttributes } from 'svelte/elements';
+	import type { SelectOption } from './types';
+
+	let {
+		label,
+		options = [],
+		value = $bindable(''),
+		...rest
+	}: Omit<HTMLSelectAttributes, 'value'> & {
+		label: string;
+		options?: SelectOption[];
+		value?: unknown;
+	} = $props();
+</script>
+
+<label class="block">
+	<span class="text-sm font-medium">{label}</span>
+	<select bind:value {...rest}>
+		{#each options as option (option.value)}
+			<option value={option.value}>{option.label}</option>
+		{/each}
+	</select>
+</label>
+{% endraw %}

@@ -22,6 +22,11 @@ pub struct QueryContext {
     pub has_read: bool,
     pub has_create: bool,
     pub has_list: bool,
+    /// The query handler emits `find_by_id` (issue #869 — the ONE loader
+    /// derivation, [`crate::ddd::loaders::QueryLoaders`]).
+    pub has_find_by_id: bool,
+    /// The query handler emits `find_by_id_scoped` (issue #869).
+    pub has_find_by_id_scoped: bool,
     pub has_fts: bool,
     pub has_embeddings: bool,
     pub filter_fields: Vec<FilterFieldInfo>,
@@ -271,10 +276,14 @@ impl EntityGenerator for QueryGenerator {
         )
         .await;
 
+        let loaders =
+            crate::ddd::loaders::QueryLoaders::for_operations(&operations, parent_ref.is_some());
         let ctx = QueryContext {
             has_read: operations.contains(&"read".to_string()),
             has_create: operations.contains(&"create".to_string()),
             has_list: operations.contains(&"list".to_string()),
+            has_find_by_id: loaders.find_by_id,
+            has_find_by_id_scoped: loaders.find_by_id_scoped,
             has_fts,
             has_embeddings,
             filter_fields,

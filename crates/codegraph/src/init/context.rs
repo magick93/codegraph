@@ -124,6 +124,19 @@ pub const PROJECT_TEMPLATES: &[(&str, &str)] = &[
         "project/packages/ui/api_key_settings_svelte.tera",
         "packages/ui/src/ApiKeySettings.svelte",
     ),
+    // Issue #860: the form primitives the `ui-form` generator imports.
+    (
+        "project/packages/ui/button_svelte.tera",
+        "packages/ui/src/Button.svelte",
+    ),
+    (
+        "project/packages/ui/input_svelte.tera",
+        "packages/ui/src/Input.svelte",
+    ),
+    (
+        "project/packages/ui/select_svelte.tera",
+        "packages/ui/src/Select.svelte",
+    ),
     (
         "project/packages/entities/package_json.tera",
         "packages/entities/package.json",

@@ -32,6 +32,11 @@ pub struct RepositoryContext {
     pub has_list: bool,
     pub has_fts: bool,
     pub has_embeddings: bool,
+    /// The trait declares `find_by_id` (issue #869 — the query handler's
+    /// need plus the search hydration, [`crate::ddd::loaders::QueryLoaders`]).
+    pub has_find_by_id: bool,
+    /// The trait declares `find_by_id_scoped` (issue #869).
+    pub has_find_by_id_scoped: bool,
     pub filter_fields: Vec<FilterFieldInfo>,
     /// FK column for parent-scoped lookups (child entities only).
     pub parent_ref: Option<String>,
@@ -291,7 +296,11 @@ impl EntityGenerator for RepositoryTraitGenerator {
             .await?
             .design_finders;
 
+        let loaders =
+            crate::ddd::loaders::QueryLoaders::for_operations(&operations, parent_ref.is_some());
         let ctx = RepositoryContext {
+            has_find_by_id: loaders.repository_find_by_id(has_fts, has_embeddings),
+            has_find_by_id_scoped: loaders.find_by_id_scoped,
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
             has_update: operations.contains(&"update".to_string()),

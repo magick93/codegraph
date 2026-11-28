@@ -8,4 +8,8 @@ export { default as SignupPage } from './SignupPage.svelte';
 export { default as Dashboard } from './Dashboard.svelte';
 export { default as TeamSettings } from './TeamSettings.svelte';
 export { default as ApiKeySettings } from './ApiKeySettings.svelte';
-export type { DashboardDomain, DashboardEntity } from './types';
+// Form primitives the generated `ui-form` component imports (issue #860).
+export { default as Button } from './Button.svelte';
+export { default as Input } from './Input.svelte';
+export { default as Select } from './Select.svelte';
+export type { DashboardDomain, DashboardEntity, SelectOption } from './types';

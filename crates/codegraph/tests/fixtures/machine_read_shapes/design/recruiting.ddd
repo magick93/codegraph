@@ -39,5 +39,41 @@ application Recruiting {
             InReview -> Approved via Approve;
             terminal Approved;
         }
+        // Shape 3 (issue #827): a parent-scoped member (`role = "child"`
+        // under PositionOpeningType) — its read model loads through
+        // `find_by_id_scoped(id, parent_id)`.
+        entity InterviewType scaffold repository InterviewRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        machine interviewStatus: InterviewStatus {
+            initial Scheduled;
+            Scheduled -> Held via Hold;
+            Scheduled -> Cancelled via Cancel;
+            terminal Held;
+            terminal Cancelled;
+        }
+        // Shape 4 (issues #827 + #869): a parent-scoped member whose
+        // repository saves but never reads — no `read` op, so no machine
+        // read model, but the create/update re-reads and the ownership
+        // check still need the query loaders (#869: they used to be
+        // emitted only under `read`, E0599).
+        entity InterviewNoteType scaffold repository InterviewNoteRepository {
+            findAll;
+            save;
+        }
+        machine noteStatus: InterviewNoteStatus {
+            initial Draft;
+            Draft -> Filed via File;
+            terminal Filed;
+        }
+        // Shape 5 (issue #869): a ROOT that saves and deletes but never
+        // reads — the create/update re-reads still need `find_by_id`.
+        entity ReferralType scaffold repository ReferralRepository {
+            save;
+            delete;
+        }
     }
 }

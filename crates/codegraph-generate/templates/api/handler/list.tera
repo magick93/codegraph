@@ -74,7 +74,7 @@ const ALLOWED_INCLUDE_KEYS: &[&str] = &[
     "{{ path.alias }}",
 {% endfor %}
 ];
-{% endif %}{% endif %}
+{% endif %}
 
 /// List {{ entity_name }} with pagination and JSON:API filters.
 #[utoipa::path(
@@ -216,4 +216,4 @@ pub async fn list(
     })))
 {% endif %}
 }
-{% endif %}
+{% endif %}{% endif %}

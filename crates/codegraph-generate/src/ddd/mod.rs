@@ -17,6 +17,7 @@ pub mod functions_api;
 pub mod functions_sql;
 pub mod invariants;
 pub mod kernel_probe;
+pub mod loaders;
 pub mod mox_ops;
 pub mod query;
 pub mod regulatory_report;

@@ -205,7 +205,15 @@ async fn only_the_machine_with_a_loader_has_a_read_model() {
         .into_iter()
         .collect();
     bearing.sort();
-    assert_eq!(bearing, ["Application", "PositionOpeningType"]);
+    assert_eq!(
+        bearing,
+        [
+            "Application",
+            "InterviewNoteType",
+            "InterviewType",
+            "PositionOpeningType"
+        ]
+    );
 
     let mut with_read_model: Vec<String> =
         codegraph_generate::machines::machine_read_model_titles(&engine, &config)
@@ -215,8 +223,9 @@ async fn only_the_machine_with_a_loader_has_a_read_model() {
     with_read_model.sort();
     assert_eq!(
         with_read_model,
-        ["PositionOpeningType"],
-        "a machine-bearing design without a loader keeps its machine, not a read model"
+        ["InterviewType", "PositionOpeningType"],
+        "a machine-bearing design without a loader keeps its machine, not a read model; a \
+         parent-scoped member nested under its parent loads through the scoped loader (#827)"
     );
 
     // The kernel surface still resolves for BOTH: the registry embed, the
@@ -241,25 +250,31 @@ async fn only_the_machine_with_a_loader_has_a_read_model() {
     );
 }
 
-/// The loader predicate itself — the two facts `ddd/query.tera` reads.
+/// The loader predicate itself — the two facts `ddd/query.tera` reads plus
+/// the route fact (issue #827): a parent-scoped member loads through
+/// `find_by_id_scoped`, which needs the parent id a nested route carries.
 #[test]
-fn loader_predicate_is_read_without_a_parent_reference() {
+fn loader_predicate_needs_read_and_a_route_for_the_scoped_loader() {
     use codegraph_generate::machines::machine_read_model_has_loader;
     assert!(
-        machine_read_model_has_loader(true, false),
+        machine_read_model_has_loader(true, false, false),
         "a root with a read op"
     );
     assert!(
-        !machine_read_model_has_loader(false, false),
+        !machine_read_model_has_loader(false, false, false),
         "no read op: a design without a repository (an empty op set) has no `find_by_id`"
     );
     assert!(
-        !machine_read_model_has_loader(false, true),
-        "no read op, parent-scoped"
+        !machine_read_model_has_loader(false, true, true),
+        "no read op, parent-scoped: no `find_by_id_scoped` either"
     );
     assert!(
-        !machine_read_model_has_loader(true, true),
-        "a parent-scoped member loads through `find_by_id_scoped`, which the read model does not use"
+        machine_read_model_has_loader(true, true, true),
+        "a parent-scoped member on a nested route loads through `find_by_id_scoped` (#827)"
+    );
+    assert!(
+        !machine_read_model_has_loader(true, true, false),
+        "a parent-scoped member on a FLAT route has no parent id for the scoped loader"
     );
 }
 
@@ -410,10 +425,18 @@ async fn validation_names_the_withheld_read_model() {
 
     let warnings =
         codegraph_generate::machines::machine_read_model_withheld_warnings(&engine, &config).await;
-    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
+    for class in ["`Application`", "`InterviewNoteType`"] {
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains(class) && w.contains("no `read` op")),
+            "the Warning names {class} and the reason: {warnings:?}"
+        );
+    }
     assert!(
-        warnings[0].contains("`Application`") && warnings[0].contains("no `read` op"),
-        "the Warning names the class and the reason: {warnings:?}"
+        !warnings.iter().any(|w| w.contains("`InterviewType`")),
+        "the nested member has a scoped loader (#827): {warnings:?}"
     );
 
     let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
@@ -421,15 +444,21 @@ async fn validation_names_the_withheld_read_model() {
         .iter()
         .filter(|issue| issue.check == "machine_read_model")
         .collect();
-    assert_eq!(named.len(), 1, "one finding, for `Application` only");
-    assert!(matches!(
-        named[0].severity,
-        codegraph::validate::Severity::Warning
-    ));
+    assert_eq!(
+        named.len(),
+        2,
+        "one finding each for `Application` and `InterviewNoteType`"
+    );
     assert!(
-        named[0].message.contains("`Application`"),
-        "{}",
-        named[0].message
+        named
+            .iter()
+            .all(|issue| matches!(issue.severity, codegraph::validate::Severity::Warning))
+    );
+    assert!(
+        named
+            .iter()
+            .any(|issue| issue.message.contains("`Application`")),
+        "{named:?}"
     );
 }
 
@@ -468,4 +497,125 @@ async fn stale_read_model_module_is_swept_on_regeneration() {
             "{profile}: the mod pass must not re-declare the swept module:\n{api_mod}"
         );
     }
+}
+
+// ── 7. A parent-scoped member loads through the scoped loader (#827) ───────
+
+/// `InterviewType` is a `role = "child"` member under `PositionOpeningType`
+/// with its own repository. Its query plane serves `find_by_id_scoped`, its
+/// routes nest under the parent, and the read model now reads through the
+/// scoped loader — which is also the ownership check (a member of another
+/// parent is a 404). `/workflow` would merge the same call.
+#[tokio::test]
+async fn nested_member_read_model_loads_through_the_scoped_loader() {
+    let fixture = write_fixture();
+    let output = generate(&fixture, "default").await;
+    let tree = tree(&output);
+
+    let module = read(&tree, "src/api/recruiting/interview_machine.rs");
+    assert!(
+        module.contains("_queries.find_by_id_scoped(id, parent_id"),
+        "the read model loads through the scoped loader:\n{module}"
+    );
+    assert!(
+        !module.contains("_queries.find_by_id(id"),
+        "never the unscoped loader for a parent-scoped member:\n{module}"
+    );
+    assert!(
+        module.contains("    parent_id: Uuid,\n    id: Uuid,"),
+        "the derivation takes the parent id:\n{module}"
+    );
+    assert!(
+        module.contains("Path((parent_id, id)): Path<(Uuid, Uuid)>"),
+        "the route binds the parent id it already extracts:\n{module}"
+    );
+    assert!(
+        module.contains("machine_read_model(&state, &api_key_info, parent_id, id)"),
+        "{module}"
+    );
+    // The query plane really carries the loader the module calls.
+    let query = read(&tree, "src/domain/recruiting/interview/query.rs");
+    assert!(query.contains("fn find_by_id_scoped"), "{query}");
+
+    // Routed under the parent, registered in OpenAPI.
+    let router = read(&tree, "src/api/recruiting/router.rs");
+    assert!(
+        router.contains("interview_machine::get_machine"),
+        "{router}"
+    );
+    let openapi = read(&tree, "src/api/openapi/recruiting.rs");
+    assert!(
+        openapi.contains("interview_machine::get_machine"),
+        "{openapi}"
+    );
+
+    // The no-read member stays withheld on every surface.
+    assert!(
+        files_mentioning(&tree, "interview_note_machine").is_empty(),
+        "{:?}",
+        files_mentioning(&tree, "interview_note_machine")
+    );
+
+    // Roots keep the unscoped loader, byte-for-byte the pre-#827 call.
+    let root = read(&tree, "src/api/recruiting/position_opening_machine.rs");
+    assert!(root.contains("_queries.find_by_id(id"), "{root}");
+    assert!(!root.contains("parent_id"), "{root}");
+}
+
+// ── 8. The query loaders exist wherever a handler calls them (#869) ────────
+
+/// A design that saves (create + update) or deletes without `findById` still
+/// has handlers that read rows back through the query handler: the create
+/// and update re-reads (`find_by_id`, both roles) and the child ownership
+/// checks (`find_by_id_scoped`). The query plane used to emit both loaders
+/// only under `read`, so these handlers called methods that did not exist
+/// (E0599). One derivation (`ddd::loaders::QueryLoaders`) now feeds the
+/// query handler, the repository trait and both impls.
+#[tokio::test]
+async fn query_loaders_exist_wherever_a_handler_calls_them() {
+    let fixture = write_fixture();
+    let output = generate(&fixture, "default").await;
+    let tree = tree(&output);
+
+    // The child that saves but never reads.
+    let note_query = read(&tree, "src/domain/recruiting/interview_note/query.rs");
+    assert!(
+        note_query.contains("pub async fn find_by_id("),
+        "the create/update re-read loader:\n{note_query}"
+    );
+    assert!(
+        note_query.contains("pub async fn find_by_id_scoped("),
+        "the child update ownership loader:\n{note_query}"
+    );
+    let note_handler = read(&tree, "src/api/recruiting/interview_note_handler.rs");
+    assert!(
+        note_handler.contains("_queries.find_by_id("),
+        "{note_handler}"
+    );
+    assert!(
+        note_handler.contains("_queries.find_by_id_scoped("),
+        "{note_handler}"
+    );
+    // No `read` op: no GET route, and still no machine read model.
+    assert!(
+        files_mentioning(&tree, "interview_note_machine").is_empty(),
+        "{:?}",
+        files_mentioning(&tree, "interview_note_machine")
+    );
+
+    // The root that saves and deletes but never reads: unscoped only.
+    let referral_query = read(&tree, "src/domain/recruiting/referral/query.rs");
+    assert!(
+        referral_query.contains("pub async fn find_by_id("),
+        "{referral_query}"
+    );
+    assert!(
+        !referral_query.contains("find_by_id_scoped"),
+        "a root has no scoped loader:\n{referral_query}"
+    );
+    let referral_handler = read(&tree, "src/api/recruiting/referral_handler.rs");
+    assert!(
+        referral_handler.contains("_queries.find_by_id("),
+        "{referral_handler}"
+    );
 }

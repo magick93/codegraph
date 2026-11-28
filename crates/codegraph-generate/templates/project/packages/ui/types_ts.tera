@@ -12,4 +12,10 @@ export interface DashboardDomain {
   entityCount: number;
   entities: DashboardEntity[];
 }
+
+/** One `<Select>` option (issue #860). */
+export interface SelectOption {
+  value: string;
+  label: string;
+}
 {% endraw %}

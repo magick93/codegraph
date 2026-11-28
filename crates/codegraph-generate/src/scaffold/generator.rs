@@ -86,8 +86,8 @@ pub struct ScaffoldEntity {
     /// True when the entity's operations exclude update AND delete (append-only
     /// event streams): app_user must not be granted UPDATE/DELETE on the table.
     pub append_only: bool,
-    /// Whether the generated query handler takes a hooks argument (mirrors the
-    /// `uses_find_by_id` condition in ddd/query.tera).
+    /// Whether the generated query handler takes a hooks argument — exactly
+    /// when it emits `find_by_id` (`ddd::loaders::QueryLoaders`, issue #869).
     pub has_query_hooks: bool,
 }
 
@@ -281,6 +281,9 @@ pub async fn build_scaffold_domains(
     let mut domain_nsids: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     let mut seen_scaffold_entities = std::collections::HashSet::new();
+    // The graph parent candidates the query generator resolves `parent_ref`
+    // through (issue #869) — read once for the whole scaffold.
+    let parent_candidates = db.get_parent_candidates().await.unwrap_or_default();
     for entry in generation_order {
         let stripped = config.defaults.strip_suffix(&entry.schema_title);
         // Titles may contain spaces (e.g. "Review Decision") — sanitize to
@@ -321,13 +324,31 @@ pub async fn build_scaffold_domains(
             .flatten()
             .map(|s| s.pg_table_name)
             .unwrap_or_else(|| module_name.clone());
-        let has_config_parent = config
-            .domains
-            .get(&entry.domain)
-            .and_then(|d| d.get_entity_config(&entity_name))
-            .and_then(|ec| ec.parent_ref.as_ref())
-            .is_some();
-        let has_query_hooks = has_create || (has_read && !has_config_parent);
+        // The query handler's `new()` takes the hooks argument exactly when
+        // it emits `find_by_id` (issue #869): the SAME derivation and the
+        // SAME graph-resolved parent reference the query generator reads, so
+        // the AppState construction and the handler arity cannot disagree.
+        let has_parent_ref = crate::resolve_parent_fk_column_same_domain(
+            &entry.schema_title,
+            &parent_candidates,
+            config
+                .domains
+                .get(&entry.domain)
+                .and_then(|d| d.get_entity_config(&entry.schema_title)),
+            &entry.domain,
+            config,
+            db,
+        )
+        .await
+        .is_some();
+        let has_query_hooks = crate::ddd::loaders::QueryLoaders::for_ops(
+            has_create,
+            has_read,
+            has_update,
+            has_delete,
+            has_parent_ref,
+        )
+        .find_by_id;
         domain_entity_map
             .entry(entry.domain.clone())
             .or_default()

@@ -67,8 +67,8 @@ fn assert_scaffold_files_exist(project: &Path, domains: &[&str]) {
     // per domain.
     assert_eq!(
         expected.len(),
-        34 + domains.len(),
-        "file tree should be 34 fixed outputs + one model file per domain"
+        37 + domains.len(),
+        "file tree should be 37 fixed outputs + one model file per domain"
     );
     expected.sort();
     for rel in &expected {

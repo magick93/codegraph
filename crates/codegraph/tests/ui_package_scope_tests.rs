@@ -390,3 +390,61 @@ fn import_and_export_scanners_read_the_shapes_the_tree_uses() {
         ["W", "X", "Y", "Z"].iter().map(|s| s.to_string()).collect()
     );
 }
+
+/// Issue #860: no UI template hardcodes a PRIVATE package scope — every
+/// generated import routes through `@{{ project.ui_package_scope }}`. The
+/// emdash templates are excluded on purpose: they build a plugin FOR the
+/// community-os host (`@community-os/sdk`, `@community-os/emdash-common` are
+/// that host's published contract, not codegraph's vendored packages).
+#[test]
+fn no_ui_template_hardcodes_a_private_package_scope() {
+    let templates = repo_root().join("crates/codegraph-generate/templates");
+    let mut offenders = Vec::new();
+    for file in files_under(&templates) {
+        let rel = file
+            .strip_prefix(&templates)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        if rel.starts_with("emdash/") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&file) else {
+            continue;
+        };
+        for scope in ["@crewbase/", "@community-os/"] {
+            if text.contains(scope) {
+                offenders.push(format!("{rel}: {scope}"));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "private scopes in templates: {offenders:?}"
+    );
+}
+
+/// Issue #860: the `ui-form` generator imports only what the vendored
+/// `@{scope}/ui` index exports — the #18 parity rule, held at the template
+/// level because no shipped profile runs `ui-form` (the init+generate pin
+/// above cannot see it).
+#[test]
+fn ui_form_imports_only_what_the_vendored_ui_package_exports() {
+    let templates = repo_root().join("crates/codegraph-generate/templates");
+    let form = fs::read_to_string(templates.join("ui/cosmos_entity_form.tera")).unwrap();
+    let imports = scoped_imports(&form, "{{ project.ui_package_scope }}");
+    assert_eq!(imports.len(), 1, "one scoped import: {imports:?}");
+    let (pkg, names) = &imports[0];
+    assert_eq!(pkg, "ui");
+    let exports = index_exports(
+        &fs::read_to_string(templates.join("project/packages/ui/index_ts.tera")).unwrap(),
+    );
+    let missing: Vec<&String> = names.iter().filter(|n| !exports.contains(*n)).collect();
+    assert!(
+        missing.is_empty(),
+        "@{{scope}}/ui does not export {missing:?}"
+    );
+    for name in ["Button", "Input", "Select"] {
+        assert!(names.contains(name), "{names:?}");
+    }
+}

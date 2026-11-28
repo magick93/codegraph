@@ -4964,8 +4964,8 @@ Tera templates in `crates/codegraph-generate/templates/project/` (see
 
 ### Scaffolded file tree
 
-35 outputs by default (`--domains common`): 34 fixed files (14 project
-files + the pnpm workspace + the 19 vendored UI package files) + one
+38 outputs by default (`--domains common`): 37 fixed files (14 project
+files + the pnpm workspace + the 22 vendored UI package files) + one
 `model/<domain>.mox` per domain.
 
 | File | Purpose |
@@ -4984,7 +4984,7 @@ files + the pnpm workspace + the 19 vendored UI package files) + one
 | `README.md` | Getting-started readme (mox-first quickstart + layout) |
 | `.github/workflows/ci.yml` | CI workflow (generate job runs mox-first) |
 | `pnpm-workspace.yaml` | pnpm workspace: `packages/*` + `generated/ui` (issue #18) |
-| `packages/{ui,entities,common}/` | The generated UI's component packages, vendored as consumer-owned starters (`@{scope}/ui`: LoginPage/SignupPage/Dashboard/TeamSettings/ApiKeySettings; `@{scope}/entities`: EntityDescriptor/createEntityApi/EntityList/EntityDetail/EntityForm/TimeAgo; `@{scope}/common`: CodelistData) — see "UI component packages" below |
+| `packages/{ui,entities,common}/` | The generated UI's component packages, vendored as consumer-owned starters (`@{scope}/ui`: LoginPage/SignupPage/Dashboard/TeamSettings/ApiKeySettings + the Button/Input/Select form primitives the `ui-form` generator imports (#860); `@{scope}/entities`: EntityDescriptor/createEntityApi/EntityList/EntityDetail/EntityForm/TimeAgo; `@{scope}/common`: CodelistData) — see "UI component packages" below |
 
 ### Layout decisions
 
@@ -5019,6 +5019,15 @@ non-crewbase project could `pnpm install` the generated UI.
   starters typed to what the templates actually pass (`EntityDescriptor` is
   the `descriptor.tera` shape). `context::ui_package_templates()` is the one
   list; the entity gate renders it too. Consumer-owned after init.
+- **No private scope in templates (#860)**: the `ui-form` generator
+  (`ui/cosmos_entity_form.tera`, in no shipped profile) imports
+  `Button`/`Input`/`Select` from `@{{ project.ui_package_scope }}/ui`
+  (vendored starters), never `@community-os/ui`. Pins:
+  `ui_package_scope_tests::no_ui_template_hardcodes_a_private_package_scope`
+  (scans `templates/**`; `emdash/` excluded — those templates build a
+  plugin FOR the community-os host, whose `@community-os/sdk` /
+  `emdash-common` are its published contract) +
+  `ui_form_imports_only_what_the_vendored_ui_package_exports`.
 - **Crewbase** (now its own consumer project) keeps its packages by setting
   `ui_package_scope = "crewbase"`.
 - **Doctor**: one advisory WARN (`init/ui_packages.rs`) when the plan builds
@@ -7326,11 +7335,50 @@ spelling).
   exactly `E0599 application_machine.rs:61` +
   `E0609 position_opening_machine.rs:66`) + `machine_read_model_tests`
   (10, unchanged) + the standing canaries.
-- **Deferred**: the scoped loader for parent-scoped members (#827 — the
-  nested route already carries the parent id, and `find_by_id_scoped`
-  exists); mounting `/machine` under the workers topology (the UI emits
-  the read-model contract while the route is monolith-only — the #703
-  posture, unchanged here).
+- **The scoped loader (issue #827)**: a parent-scoped member whose route
+  is NESTED under its parent (the workflow plane's
+  `api::workflow_action::resolve_route_role` resolves `"child"` — the ONE
+  role function the route shape and the loader decision share) now has a
+  read model: `machine_read.tera` loads through
+  `find_by_id_scoped(id, parent_id)` (also the ownership check — a member
+  of another parent is a 404), the `/machine` handler binds the parent id
+  it already extracts, and the `/workflow` merge passes it
+  (`WorkflowActionContext.machine_scoped_load`).
+  `machine_read_model_has_loader(has_read, has_parent_ref, nested_route)`
+  = `has_read && (!has_parent_ref || nested_route)`;
+  `machines::machine_read_model_loader` answers `Unscoped`/`Scoped`. A
+  parent-scoped member on a FLAT route stays withheld with a Warning naming
+  the fix (`role = "child"` + `parent`/`parent_ref`). Roots are
+  byte-identical. Fixture: `InterviewType` (served, scoped) +
+  `InterviewNoteType` (no `read`, withheld) in
+  `tests/fixtures/machine_read_shapes`.
+- **The query loaders follow the handlers, not `read` (issue #869, found
+  by the #827 compile pin)**: the create and update re-reads, the child
+  update/delete ownership checks and the guarded root delete all call the
+  query handler's `find_by_id` / `find_by_id_scoped`, so the loaders are
+  NOT a `read`-op surface. ONE derivation —
+  `ddd::loaders::QueryLoaders::for_ops` (`find_by_id = create || update ||
+  (!parent_ref && (read || delete))`, `find_by_id_scoped = parent_ref &&
+  (read || update || delete)`; `repository_find_by_id` adds the FTS /
+  embedding hydration) — feeds `query.tera` (`has_find_by_id` /
+  `has_find_by_id_scoped`, incl. the hooks field), the repository trait
+  (`repository.tera`), both impls (`EntityTree::query_loaders`), the
+  scaffold's `QueryHandler::new` arity (`has_query_hooks`, now from the
+  graph-resolved parent ref) and `child_parent_load`. A design that saves
+  or deletes without `findById` used to emit handlers calling loaders that
+  did not exist (E0599) and a trait-less scoped impl (E0407). The list
+  handler likewise renders only with `list` (it sat under `has_list or
+  is_auditable` while its filter allow-list sat under `has_list`). Every
+  `read`-bearing tree is byte-identical (the wrapper tags keep their
+  lines). Fixture: `InterviewNoteType` (`{ findAll; save; }` child) +
+  `ReferralType` (`{ save; delete; }` root); pin
+  `machine_read_shape_tests::query_loaders_exist_wherever_a_handler_calls_them`
+  + the `generated_app_with_machine_read_shapes_compiles` compile gate.
+  Recorded: `workflow_action/transition.tera` and `handler/mox.tera` call
+  `find_by_id` with no op gate (both need `read` in practice).
+- **Deferred**: mounting `/machine` under the workers topology (the UI
+  emits the read-model contract while the route is monolith-only — the
+  #703 posture, unchanged here).
 
 ## Include Path System (`?include=`)
 

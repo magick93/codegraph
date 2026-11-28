@@ -2,9 +2,7 @@
 <!-- Form component for PositionScheduleTypeCodeList. -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import Button from '@community-os/ui/Button.svelte';
-	import Input from '@community-os/ui/Input.svelte';
-	import Select from '@community-os/ui/Select.svelte';
+	import { Button, Input, Select } from '@app/ui';
 	import { api } from '$lib/api';
 	import type { PositionScheduleTypeCodeListResponse } from '#lib/api/types.ts';
 
