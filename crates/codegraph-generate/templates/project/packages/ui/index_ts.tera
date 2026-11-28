@@ -1,0 +1,11 @@
+// @{{ ui_package_scope }}/ui — vendored by `codegraph init` (issue #18).
+// Consumer-owned: `codegraph init` never overwrites this file without --force.
+//
+// The generated UI's `(auth)` login/signup routes, the dashboard, and the
+// team + API-key settings routes import exactly these components.
+export { default as LoginPage } from './LoginPage.svelte';
+export { default as SignupPage } from './SignupPage.svelte';
+export { default as Dashboard } from './Dashboard.svelte';
+export { default as TeamSettings } from './TeamSettings.svelte';
+export { default as ApiKeySettings } from './ApiKeySettings.svelte';
+export type { DashboardDomain, DashboardEntity } from './types';

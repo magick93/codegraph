@@ -1,0 +1,13 @@
+{% raw %}<!-- Relative timestamp. Vendored by `codegraph init`; consumer-owned. -->
+<script lang="ts">
+	import { relativeTime } from './format';
+
+	let { value }: { value?: string | null } = $props();
+</script>
+
+{#if value}
+	<time datetime={value} title={new Date(value).toLocaleString()}>{relativeTime(value)}</time>
+{:else}
+	<span>—</span>
+{/if}
+{% endraw %}

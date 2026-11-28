@@ -1,0 +1,21 @@
+// @{{ ui_package_scope }}/entities — vendored by `codegraph init` (issue #18).
+// Consumer-owned: `codegraph init` never overwrites this file without --force.
+//
+// The generated UI imports exactly this surface: `EntityDescriptor` (every
+// `routes/**/descriptor.ts`), `createEntityApi` + `EntityList`/`EntityDetail`/
+// `EntityForm` (the entity shell pages) and `TimeAgo` (detail pages).
+export type {
+  EntityDescriptor,
+  EntityField,
+  EntityChild,
+  EntityGroup,
+  EntityOperation,
+  EntityWorkflow,
+} from './types';
+export { createEntityApi, ApiError } from './api';
+export type { EntityApi, EntityApiOptions, ListResult } from './api';
+export { formatValue } from './format';
+export { default as EntityList } from './EntityList.svelte';
+export { default as EntityDetail } from './EntityDetail.svelte';
+export { default as EntityForm } from './EntityForm.svelte';
+export { default as TimeAgo } from './TimeAgo.svelte';

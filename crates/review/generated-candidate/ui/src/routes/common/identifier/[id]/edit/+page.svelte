@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { EntityForm, createEntityApi } from '@crewbase/entities';
+	import { EntityForm, createEntityApi } from '@app/entities';
 	import { IdentifierDescriptor } from '../../../descriptor';
 	import { apiClient } from '#lib/api/client.ts';
 	import { goto } from '$app/navigation';

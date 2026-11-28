@@ -22,18 +22,21 @@ fn test_descriptor_template_renders_minimal() {
     let no_wizard: Option<serde_json::Value> = None;
     ctx.insert("wizard", &no_wizard);
 
+    ctx.insert("project", &scoped_project());
+
     let output = tera.render("ui/descriptor.tera", &ctx).unwrap();
     assert!(output.contains("EntityDescriptor"));
     assert!(output.contains("TestEntity"));
     assert!(output.contains("'create'"));
     assert!(output.contains("'read'"));
     assert!(output.contains("'list'"));
-    assert!(output.contains("@crewbase/entities"));
+    assert!(output.contains("@acme/entities"));
+    assert!(!output.contains("@crewbase"));
 }
 
 /// `displayField` (issue #468 W2) renders from the resolved display field —
 /// child entries and entity-ref targets alike — and falls back to `'id'`
-/// (never `null`, which would break the string-typed `@crewbase/entities`
+/// (never `null`, which would break the string-typed `@{scope}/entities`
 /// contract) when no display field resolved or the context key is absent.
 #[test]
 fn test_descriptor_display_field_resolution_and_id_fallback() {
@@ -101,6 +104,8 @@ fn test_descriptor_display_field_resolution_and_id_fallback() {
     let no_wizard: Option<serde_json::Value> = None;
     ctx.insert("wizard", &no_wizard);
 
+    ctx.insert("project", &scoped_project());
+
     let output = tera.render("ui/descriptor.tera", &ctx).unwrap();
 
     assert!(
@@ -144,10 +149,13 @@ fn test_shell_list_template_renders() {
     ctx.insert("domain", "recruiting");
     ctx.insert("path_segment", "position-openings");
 
+    ctx.insert("project", &scoped_project());
+
     let output = tera.render("ui/shell_list.tera", &ctx).unwrap();
     assert!(output.contains("EntityList"));
     assert!(output.contains("PositionOpeningDescriptor"));
-    assert!(output.contains("@crewbase/entities"));
+    assert!(output.contains("@acme/entities"));
+    assert!(!output.contains("@crewbase"));
 }
 
 #[test]
@@ -163,6 +171,8 @@ fn test_shell_detail_template_renders() {
     ctx.insert("entity_name", "PositionOpening");
     ctx.insert("domain", "recruiting");
     ctx.insert("path_segment", "position-openings");
+
+    ctx.insert("project", &scoped_project());
 
     let output = tera.render("ui/shell_detail.tera", &ctx).unwrap();
     assert!(output.contains("EntityDetail"));
@@ -184,6 +194,8 @@ fn test_shell_create_template_renders() {
     ctx.insert("domain", "recruiting");
     ctx.insert("path_segment", "position-openings");
 
+    ctx.insert("project", &scoped_project());
+
     let output = tera.render("ui/shell_create.tera", &ctx).unwrap();
     assert!(output.contains("EntityForm"));
     assert!(output.contains("mode=\"create\""));
@@ -204,8 +216,23 @@ fn test_shell_edit_template_renders() {
     ctx.insert("domain", "recruiting");
     ctx.insert("path_segment", "position-openings");
 
+    ctx.insert("project", &scoped_project());
+
     let output = tera.render("ui/shell_edit.tera", &ctx).unwrap();
     assert!(output.contains("EntityForm"));
     assert!(output.contains("mode=\"edit\""));
     assert!(output.contains("data.item"));
+}
+
+/// The project config the template pins render with: an explicit
+/// `ui_package_scope` (issue #18), so the import scope is asserted, not
+/// assumed.
+fn scoped_project() -> codegraph::generate::ProjectConfig {
+    codegraph::generate::ProjectConfig {
+        identity: codegraph::generate::IdentityConfig {
+            ui_package_scope: Some("acme".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
 }

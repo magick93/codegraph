@@ -1,0 +1,48 @@
+{% raw %}<!-- Descriptor-driven entity detail. Vendored by `codegraph init`; consumer-owned. -->
+<script lang="ts">
+	import type { EntityApi } from './api';
+	import type { EntityDescriptor } from './types';
+	import { formatValue } from './format';
+
+	let { descriptor, id, api }: { descriptor: EntityDescriptor; id: string; api: EntityApi } = $props();
+
+	const basePath = $derived(`/${descriptor.domain}/${descriptor.pathSegment}`);
+	const canEdit = $derived(descriptor.operations.includes('update'));
+
+	let item = $state<Record<string, unknown> | null>(null);
+	let error = $state<string | null>(null);
+
+	$effect(() => {
+		api
+			.get(id)
+			.then((r) => {
+				item = r;
+				error = null;
+			})
+			.catch((e: unknown) => {
+				error = e instanceof Error ? e.message : String(e);
+			});
+	});
+</script>
+
+<section data-testid="entity-detail-{descriptor.pathSegment}">
+	<header class="mb-4 flex items-center justify-between">
+		<a href={basePath}>&larr; {descriptor.name}</a>
+		{#if canEdit}
+			<a href="{basePath}/{id}/edit" class="rounded border px-3 py-1 text-sm">Edit</a>
+		{/if}
+	</header>
+	{#if error}
+		<p role="alert">{error}</p>
+	{:else if !item}
+		<p>Loading…</p>
+	{:else}
+		<dl class="grid grid-cols-3 gap-2">
+			{#each descriptor.fields as field (field.name)}
+				<dt class="font-medium">{field.label}</dt>
+				<dd class="col-span-2">{formatValue(item[field.name])}</dd>
+			{/each}
+		</dl>
+	{/if}
+</section>
+{% endraw %}

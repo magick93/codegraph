@@ -61,6 +61,10 @@ pub struct ProjectTemplateContext {
     pub api_port: u16,
     pub ui_port: u16,
     pub api_title: String,
+    /// npm scope (without `@`) of the vendored UI packages — the kebab-case
+    /// of `app_name`, matching the generator's default (issue #18). Written
+    /// into profiles.toml `meta.ui_package_scope` so the two stay explicit.
+    pub ui_package_scope: String,
 }
 
 /// Canonical template list: (template path, output path). Output paths may
@@ -84,7 +88,97 @@ pub const PROJECT_TEMPLATES: &[(&str, &str)] = &[
     ("project/gitignore.tera", ".gitignore"),
     ("project/readme.tera", "README.md"),
     ("project/ci_yml.tera", ".github/workflows/ci.yml"),
+    // Issue #18: the generated UI's component packages, vendored as a pnpm
+    // workspace (`@{ui_package_scope}/{ui,entities,common}`). Consumer-owned
+    // starters — init's no-overwrite guard keeps hand edits.
+    ("project/pnpm_workspace.tera", "pnpm-workspace.yaml"),
+    (
+        "project/packages/ui/package_json.tera",
+        "packages/ui/package.json",
+    ),
+    (
+        "project/packages/ui/index_ts.tera",
+        "packages/ui/src/index.ts",
+    ),
+    (
+        "project/packages/ui/types_ts.tera",
+        "packages/ui/src/types.ts",
+    ),
+    (
+        "project/packages/ui/login_page_svelte.tera",
+        "packages/ui/src/LoginPage.svelte",
+    ),
+    (
+        "project/packages/ui/signup_page_svelte.tera",
+        "packages/ui/src/SignupPage.svelte",
+    ),
+    (
+        "project/packages/ui/dashboard_svelte.tera",
+        "packages/ui/src/Dashboard.svelte",
+    ),
+    (
+        "project/packages/ui/team_settings_svelte.tera",
+        "packages/ui/src/TeamSettings.svelte",
+    ),
+    (
+        "project/packages/ui/api_key_settings_svelte.tera",
+        "packages/ui/src/ApiKeySettings.svelte",
+    ),
+    (
+        "project/packages/entities/package_json.tera",
+        "packages/entities/package.json",
+    ),
+    (
+        "project/packages/entities/index_ts.tera",
+        "packages/entities/src/index.ts",
+    ),
+    (
+        "project/packages/entities/types_ts.tera",
+        "packages/entities/src/types.ts",
+    ),
+    (
+        "project/packages/entities/api_ts.tera",
+        "packages/entities/src/api.ts",
+    ),
+    (
+        "project/packages/entities/format_ts.tera",
+        "packages/entities/src/format.ts",
+    ),
+    (
+        "project/packages/entities/entity_list_svelte.tera",
+        "packages/entities/src/EntityList.svelte",
+    ),
+    (
+        "project/packages/entities/entity_detail_svelte.tera",
+        "packages/entities/src/EntityDetail.svelte",
+    ),
+    (
+        "project/packages/entities/entity_form_svelte.tera",
+        "packages/entities/src/EntityForm.svelte",
+    ),
+    (
+        "project/packages/entities/time_ago_svelte.tera",
+        "packages/entities/src/TimeAgo.svelte",
+    ),
+    (
+        "project/packages/common/package_json.tera",
+        "packages/common/package.json",
+    ),
+    (
+        "project/packages/common/index_ts.tera",
+        "packages/common/src/index.ts",
+    ),
 ];
+
+/// The init templates that vendor the generated UI's component packages
+/// (issue #18) — every `PROJECT_TEMPLATES` entry under these prefixes. The
+/// entity codegen gate renders exactly this set into its fixture so the
+/// generated UI type-checks against the REAL packages, not stubs.
+pub fn ui_package_templates() -> impl Iterator<Item = &'static (&'static str, &'static str)> {
+    PROJECT_TEMPLATES
+        .iter()
+        .filter(|(template, _)| template.starts_with("project/packages/"))
+}
 
 /// The template that renders one `model/<domain>.mox` per domain.
 pub const MODEL_TEMPLATE: &str = "project/model_mox.tera";
@@ -142,6 +236,7 @@ impl ProjectTemplateContext {
             api_port: 3000,
             ui_port: 5173,
             api_title,
+            ui_package_scope: heck::ToKebabCase::to_kebab_case(project_name as &str),
         }
     }
 

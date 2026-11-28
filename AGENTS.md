@@ -3207,8 +3207,10 @@ the proven #573 IFML pattern:
 - **`entity_codegen_gate`** (ignored, nightly lane): regenerates the
   review fixture in place (the regen is SHARED with `review_api_suite` by
   path inclusion — `review_api_suite_regen.rs`; it now threads the plan's
-  codegen flags into ProjectConfig), stubs the consumer-monorepo packages
-  (`@crewbase/*` file: stubs, `@community-os/ui`, `src/lib/api/index.ts`,
+  codegen flags into ProjectConfig), installs the `codegraph init`-vendored
+  UI packages as `file:` deps (`@app/*`, issue #18 — formerly hand-written
+  `@crewbase/*` stubs) and stubs the remaining consumer surface
+  (`@community-os/ui`, `src/lib/api/index.ts`,
   the `#lib/components/ui/*` barrels from the actual member surface,
   `cookie@^1` override, gate tsconfig), sweeps the retired stores, then
   **vite build** + **svelte-check** — asserting ZERO diagnostics on
@@ -4903,13 +4905,14 @@ cargo run -- add domain billing
 validates the result, and `codegraph add domain <name>` grows it. Init is
 **mox-first**: the scaffold emits `model/<domain>.mox` per domain and NO
 `schemas/` directory or `classifier.toml` (JSON interop is documented via
-`import schema` / `codegraph migrate`). The scaffold is generated from 15
+`import schema` / `codegraph migrate`). The scaffold is generated from the
 Tera templates in `crates/codegraph-generate/templates/project/` (see
 "Templates & context" below).
 
 ### Scaffolded file tree
 
-15 outputs by default (`--domains common`): 14 fixed files + one
+35 outputs by default (`--domains common`): 34 fixed files (14 project
+files + the pnpm workspace + the 19 vendored UI package files) + one
 `model/<domain>.mox` per domain.
 
 | File | Purpose |
@@ -4927,6 +4930,8 @@ Tera templates in `crates/codegraph-generate/templates/project/` (see
 | `.gitignore` | Ignores `generated/` |
 | `README.md` | Getting-started readme (mox-first quickstart + layout) |
 | `.github/workflows/ci.yml` | CI workflow (generate job runs mox-first) |
+| `pnpm-workspace.yaml` | pnpm workspace: `packages/*` + `generated/ui` (issue #18) |
+| `packages/{ui,entities,common}/` | The generated UI's component packages, vendored as consumer-owned starters (`@{scope}/ui`: LoginPage/SignupPage/Dashboard/TeamSettings/ApiKeySettings; `@{scope}/entities`: EntityDescriptor/createEntityApi/EntityList/EntityDetail/EntityForm/TimeAgo; `@{scope}/common`: CodelistData) — see "UI component packages" below |
 
 ### Layout decisions
 
@@ -4941,6 +4946,39 @@ Tera templates in `crates/codegraph-generate/templates/project/` (see
   workspace and gitignored. The wrapper binary and config stay in the repo.
 - **Safety**: init refuses to overwrite existing files unless `--force`, and
   a path containment guard keeps writes inside the project dir.
+
+### UI component packages (issue #18)
+
+The generated SvelteKit app imports its auth/dashboard/settings routes,
+entity shells, descriptors, detail-page `TimeAgo` and codelist data from
+`@{scope}/ui`, `@{scope}/entities` and `@{scope}/common` (`workspace:*`
+deps). Before #18 the scope was the hardcoded private `@crewbase` — no
+non-crewbase project could `pnpm install` the generated UI.
+
+- **Scope**: profile `meta.ui_package_scope` (`IdentityConfig.ui_package_scope`,
+  templates read `{{ project.ui_package_scope }}`); default = kebab-case of
+  `app_name` (plan-less runs: `app`). `IdentityConfig` serializes by hand so
+  the `project` map always carries the RESOLVED scope. An explicit value
+  that is not an npm scope is a hard `Error::Config` before any tree is
+  written (`validate_ui_package_scope`); doctor fails on it too.
+- **Vendoring**: `codegraph init` writes the scope into profiles.toml and
+  renders `project/packages/**` (+ `project/pnpm_workspace.tera`) — Svelte 5
+  starters typed to what the templates actually pass (`EntityDescriptor` is
+  the `descriptor.tera` shape). `context::ui_package_templates()` is the one
+  list; the entity gate renders it too. Consumer-owned after init.
+- **Crewbase** (now its own consumer project) keeps its packages by setting
+  `ui_package_scope = "crewbase"`.
+- **Doctor**: one advisory WARN (`init/ui_packages.rs`) when the plan builds
+  `ui_scaffold` and `packages/{ui,entities,common}/package.json` is missing
+  or not named `@{scope}/…`.
+- **Not covered by #18** (recorded follow-ups): the generated `ui/` ships no
+  `tsconfig.json`, the shadcn primitives remain the documented
+  `PRIMITIVES.md` consumer step, and the `ui-shell` plan-name mismatch means
+  profile runs emit `descriptor.ts` but no shell pages.
+- Gates: `cargo test -p codegraph --test ui_package_scope_tests` (vendoring,
+  the import→export parity pin over a real init+generate tree, the override,
+  the invalid-scope refusal, the doctor WARN) + `entity_codegen_gate`
+  (svelte-check/vite build against the REAL vendored packages).
 
 ### Subcommand reference
 

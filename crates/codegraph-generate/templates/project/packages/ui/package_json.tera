@@ -1,0 +1,20 @@
+{
+  "name": "@{{ ui_package_scope }}/ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Auth, dashboard and settings components for the generated {{ project_name }} UI (vendored by codegraph init; consumer-owned).",
+  "type": "module",
+  "svelte": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "peerDependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "svelte": "^5.0.0"
+  }
+}

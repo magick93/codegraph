@@ -1,0 +1,78 @@
+{% raw %}<!-- Descriptor-driven entity list. Vendored by `codegraph init`; consumer-owned. -->
+<script lang="ts">
+	import type { EntityApi } from './api';
+	import type { EntityDescriptor } from './types';
+	import { formatValue } from './format';
+
+	let { descriptor, api }: { descriptor: EntityDescriptor; api: EntityApi } = $props();
+
+	const columns = $derived(
+		descriptor.fields.filter((f) => f.list?.visible).length > 0
+			? descriptor.fields.filter((f) => f.list?.visible)
+			: descriptor.fields.slice(0, 5),
+	);
+	const basePath = $derived(`/${descriptor.domain}/${descriptor.pathSegment}`);
+	const canCreate = $derived(descriptor.operations.includes('create'));
+
+	let items = $state<Record<string, unknown>[]>([]);
+	let error = $state<string | null>(null);
+	let loading = $state(true);
+
+	$effect(() => {
+		loading = true;
+		api
+			.list()
+			.then((r) => {
+				items = r.items;
+				error = null;
+			})
+			.catch((e: unknown) => {
+				error = e instanceof Error ? e.message : String(e);
+			})
+			.finally(() => {
+				loading = false;
+			});
+	});
+</script>
+
+<section data-testid="entity-list-{descriptor.pathSegment}">
+	<header class="mb-4 flex items-center justify-between">
+		<h1 class="text-xl font-semibold">{descriptor.name}</h1>
+		{#if canCreate}
+			<a href="{basePath}/new" class="rounded border px-3 py-1 text-sm">New</a>
+		{/if}
+	</header>
+	{#if loading}
+		<p>Loading…</p>
+	{:else if error}
+		<p role="alert">{error}</p>
+	{:else if items.length === 0}
+		<p>No records yet.</p>
+	{:else}
+		<table class="w-full text-sm">
+			<thead>
+				<tr>
+					{#each columns as col (col.name)}
+						<th class="text-left">{col.label}</th>
+					{/each}
+				</tr>
+			</thead>
+			<tbody>
+				{#each items as item (item.id)}
+					<tr>
+						{#each columns as col, i (col.name)}
+							<td>
+								{#if i === 0}
+									<a href="{basePath}/{item.id}">{formatValue(item[col.name])}</a>
+								{:else}
+									{formatValue(item[col.name])}
+								{/if}
+							</td>
+						{/each}
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
+</section>
+{% endraw %}

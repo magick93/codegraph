@@ -1,0 +1,48 @@
+{% raw %}<!-- API key minting over `public.create_api_key` (the generated api-key migration). Vendored by `codegraph init`; consumer-owned. -->
+<script lang="ts">
+	import type { SupabaseClient } from '@supabase/supabase-js';
+
+	let { supabase, organizationId }: { supabase: SupabaseClient; organizationId?: string } = $props();
+
+	let name = $state('');
+	let createdKey = $state<string | null>(null);
+	let error = $state<string | null>(null);
+	let submitting = $state(false);
+
+	async function create(event: SubmitEvent) {
+		event.preventDefault();
+		if (!organizationId) return;
+		submitting = true;
+		error = null;
+		createdKey = null;
+		const { data, error: rpcError } = await supabase.rpc('create_api_key', {
+			p_organization_id: organizationId,
+			p_name: name,
+			p_scopes: [{ entity_type: '*', entity_id: '*', action: '*' }],
+		});
+		submitting = false;
+		if (rpcError) {
+			error = rpcError.message;
+			return;
+		}
+		const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+		createdKey = (parsed as { key?: string } | null)?.key ?? null;
+		name = '';
+	}
+</script>
+
+<section data-testid="api-key-settings">
+	<h1 class="mb-4 text-xl font-semibold">API keys</h1>
+	<form onsubmit={create} class="flex gap-2">
+		<input name="name" required placeholder="Key name" bind:value={name} data-testid="api-key-name" />
+		<button type="submit" disabled={submitting || !organizationId} data-testid="api-key-create">Create key</button>
+	</form>
+	{#if error}
+		<p role="alert">{error}</p>
+	{/if}
+	{#if createdKey}
+		<p class="mt-2 text-sm">Copy this key now — it is shown only once:</p>
+		<code class="break-all" data-testid="api-key-value">{createdKey}</code>
+	{/if}
+</section>
+{% endraw %}

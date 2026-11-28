@@ -1,6 +1,6 @@
 // Generated from HR Open Standards — {{ title }}
 // {{ description | rust_doc(prefix="// ") }}
-import type { CodelistData } from '@crewbase/common';
+import type { CodelistData } from '@{{ project.ui_package_scope }}/common';
 
 export const {{ title }}: CodelistData = {
   title: '{{ title }}',

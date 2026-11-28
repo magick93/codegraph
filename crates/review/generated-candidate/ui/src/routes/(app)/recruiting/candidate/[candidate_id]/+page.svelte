@@ -20,7 +20,7 @@
 	import { apiGet } from '#lib/api/client.ts';
 	import ChildSection from '#lib/components/ChildSection.svelte';
 
-	import { TimeAgo } from '@crewbase/entities';
+	import { TimeAgo } from '@app/entities';
 	import { toast } from 'svelte-sonner';
 	import * as m from '#lib/paraglide/messages.js';
 	import * as fmt from '#lib/format.ts';

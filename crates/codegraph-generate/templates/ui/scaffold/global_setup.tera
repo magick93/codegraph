@@ -163,10 +163,10 @@ async function saveStorageState(
 
 const timestamp = Date.now();
 
-const ACME_OWNER_EMAIL = `test-acme-owner-${timestamp}@crewbase.test`;
-const ACME_EMPLOYEE_EMAIL = `test-acme-employee-${timestamp}@crewbase.test`;
-const ACME_MANAGER_EMAIL = `test-acme-manager-${timestamp}@crewbase.test`;
-const HIGHFIVE_OWNER_EMAIL = `test-highfive-owner-${timestamp}@crewbase.test`;
+const ACME_OWNER_EMAIL = `test-acme-owner-${timestamp}@example.test`;
+const ACME_EMPLOYEE_EMAIL = `test-acme-employee-${timestamp}@example.test`;
+const ACME_MANAGER_EMAIL = `test-acme-manager-${timestamp}@example.test`;
+const HIGHFIVE_OWNER_EMAIL = `test-highfive-owner-${timestamp}@example.test`;
 const TEST_PASSWORD = 'TestPassword123!';
 
 async function globalSetup(config: FullConfig) {
@@ -215,10 +215,10 @@ async function globalSetup(config: FullConfig) {
 
   // Workers 1..N each get their own unique user accounts
   for (let i = 1; i < numWorkers; i++) {
-    const ownerEmail = `test-acme-owner-w${i}-${timestamp}@crewbase.test`;
-    const employeeEmail = `test-acme-employee-w${i}-${timestamp}@crewbase.test`;
-    const managerEmail = `test-acme-manager-w${i}-${timestamp}@crewbase.test`;
-    const highfiveEmail = `test-highfive-owner-w${i}-${timestamp}@crewbase.test`;
+    const ownerEmail = `test-acme-owner-w${i}-${timestamp}@example.test`;
+    const employeeEmail = `test-acme-employee-w${i}-${timestamp}@example.test`;
+    const managerEmail = `test-acme-manager-w${i}-${timestamp}@example.test`;
+    const highfiveEmail = `test-highfive-owner-w${i}-${timestamp}@example.test`;
 
     await addUserToOrg(ownerEmail, TEST_PASSWORD, acme.orgId, 'owner');
     await addUserToOrg(employeeEmail, TEST_PASSWORD, acme.orgId, 'member');

@@ -1,0 +1,83 @@
+{% raw %}// Typed REST client over the generated API (`/api/{version}/{domain}/{segment}`).
+// Vendored by `codegraph init`; consumer-owned.
+import type { EntityDescriptor } from './types';
+
+/** A non-2xx API answer, carrying the generated error envelope. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly details?: { field: string; message: string }[];
+
+  constructor(status: number, message: string, code?: string, details?: { field: string; message: string }[]) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+export interface EntityApiOptions {
+  fetch?: typeof fetch;
+  /** API origin (e.g. `http://localhost:3000`); empty = same origin. */
+  baseUrl?: string;
+  /** API version path segment (default `v1`). */
+  apiVersion?: string;
+  headers?: Record<string, string>;
+}
+
+export interface ListResult<T> {
+  items: T[];
+  meta?: Record<string, unknown>;
+}
+
+export interface EntityApi<T = Record<string, unknown>> {
+  list(params?: Record<string, string | number | boolean>): Promise<ListResult<T>>;
+  get(id: string): Promise<T>;
+  create(body: Partial<T>): Promise<T>;
+  update(id: string, body: Partial<T>): Promise<T>;
+  remove(id: string): Promise<void>;
+}
+
+export function createEntityApi<T = Record<string, unknown>>(
+  descriptor: EntityDescriptor,
+  options: EntityApiOptions = {},
+): EntityApi<T> {
+  const doFetch = options.fetch ?? fetch;
+  const base = `${(options.baseUrl ?? '').replace(/\/$/, '')}/api/${options.apiVersion ?? 'v1'}/${descriptor.domain}/${descriptor.pathSegment}`;
+
+  async function request<R>(path: string, init: RequestInit = {}): Promise<R> {
+    const res = await doFetch(`${base}${path}`, {
+      ...init,
+      headers: { 'content-type': 'application/json', ...options.headers, ...(init.headers ?? {}) },
+    });
+    if (res.status === 204) return undefined as R;
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = body?.error ?? {};
+      throw new ApiError(res.status, err.message ?? res.statusText, err.code, err.details);
+    }
+    return body as R;
+  }
+
+  return {
+    async list(params = {}) {
+      const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();
+      const body = await request<{ data: T[]; meta?: Record<string, unknown> }>(qs ? `?${qs}` : '');
+      return { items: body.data ?? [], meta: body.meta };
+    },
+    async get(id) {
+      return (await request<{ data: T }>(`/${id}`)).data;
+    },
+    async create(payload) {
+      return (await request<{ data: T }>('', { method: 'POST', body: JSON.stringify(payload) })).data;
+    },
+    async update(id, payload) {
+      return (await request<{ data: T }>(`/${id}`, { method: 'PUT', body: JSON.stringify(payload) })).data;
+    },
+    async remove(id) {
+      await request<void>(`/${id}`, { method: 'DELETE' });
+    },
+  };
+}
+{% endraw %}

@@ -1,0 +1,126 @@
+{% raw %}<!-- Descriptor-driven create/edit form. Vendored by `codegraph init`; consumer-owned. -->
+<script lang="ts">
+	import { ApiError, type EntityApi } from './api';
+	import type { EntityDescriptor, EntityField } from './types';
+
+	let {
+		descriptor,
+		api,
+		mode,
+		initialData,
+		onSuccess,
+		onCancel,
+	}: {
+		descriptor: EntityDescriptor;
+		api: EntityApi;
+		mode: 'create' | 'edit';
+		initialData?: Record<string, unknown>;
+		onSuccess?: (item: Record<string, unknown>) => void;
+		onCancel?: () => void;
+	} = $props();
+
+	const editable = $derived(
+		descriptor.fields.filter((f) => !(mode === 'edit' && f.immutable)),
+	);
+
+	let values = $state<Record<string, unknown>>({});
+	let fieldErrors = $state<Record<string, string>>({});
+	let formError = $state<string | null>(null);
+	let submitting = $state(false);
+
+	$effect(() => {
+		values = { ...(initialData ?? {}) };
+	});
+
+	function inputType(field: EntityField): string {
+		switch (field.type) {
+			case 'number':
+			case 'date':
+			case 'email':
+			case 'datetime-local':
+				return field.type;
+			default:
+				return 'text';
+		}
+	}
+
+	function coerce(field: EntityField, raw: string): unknown {
+		if (raw === '') return undefined;
+		if (field.type === 'number') return Number(raw);
+		return raw;
+	}
+
+	async function submit(event: SubmitEvent) {
+		event.preventDefault();
+		submitting = true;
+		fieldErrors = {};
+		formError = null;
+		const payload: Record<string, unknown> = {};
+		for (const field of editable) {
+			if (values[field.name] !== undefined) payload[field.name] = values[field.name];
+		}
+		try {
+			const saved =
+				mode === 'create'
+					? await api.create(payload)
+					: await api.update(String(initialData?.id ?? ''), payload);
+			onSuccess?.(saved);
+		} catch (e: unknown) {
+			if (e instanceof ApiError && e.details) {
+				fieldErrors = Object.fromEntries(e.details.map((d) => [d.field, d.message]));
+			}
+			formError = e instanceof Error ? e.message : String(e);
+		} finally {
+			submitting = false;
+		}
+	}
+</script>
+
+<form onsubmit={submit} data-testid="entity-form-{descriptor.pathSegment}" class="space-y-3">
+	{#each editable as field (field.name)}
+		<label class="block">
+			<span class="text-sm font-medium">{field.label}{field.required ? ' *' : ''}</span>
+			{#if field.type === 'checkbox'}
+				<input
+					type="checkbox"
+					name={field.name}
+					checked={Boolean(values[field.name])}
+					onchange={(e) => (values[field.name] = e.currentTarget.checked)}
+				/>
+			{:else if field.options?.values}
+				<select
+					name={field.name}
+					required={field.required}
+					value={values[field.name] ?? ''}
+					onchange={(e) => (values[field.name] = coerce(field, e.currentTarget.value))}
+				>
+					<option value="">—</option>
+					{#each field.options.values as opt (opt.value)}
+						<option value={opt.value}>{opt.label}</option>
+					{/each}
+				</select>
+			{:else}
+				<input
+					type={inputType(field)}
+					name={field.name}
+					required={field.required}
+					value={values[field.name] ?? ''}
+					oninput={(e) => (values[field.name] = coerce(field, e.currentTarget.value))}
+				/>
+			{/if}
+			{#if fieldErrors[field.name]}
+				<span role="alert" class="text-sm">{fieldErrors[field.name]}</span>
+			{/if}
+		</label>
+	{/each}
+	{#if formError}
+		<p role="alert">{formError}</p>
+	{/if}
+	<div class="flex gap-2">
+		<button type="submit" disabled={submitting}>{mode === 'create' ? 'Create' : 'Save'}</button>
+		{#if onCancel}
+			<button type="button" onclick={() => onCancel?.()}>Cancel</button>
+		{/if}
+	</div>
+</form>
+{% endraw %}

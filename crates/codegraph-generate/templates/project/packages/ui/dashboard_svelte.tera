@@ -1,0 +1,24 @@
+{% raw %}<!-- Domain/entity overview. Vendored by `codegraph init`; consumer-owned. -->
+<script lang="ts">
+	import type { DashboardDomain } from './types';
+
+	let { orgName, domains }: { orgName: string; domains: DashboardDomain[] } = $props();
+</script>
+
+<section data-testid="dashboard">
+	<h1 class="mb-6 text-2xl font-semibold">{orgName}</h1>
+	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+		{#each domains as domain (domain.name)}
+			<article class="rounded border p-4" data-testid="dashboard-domain-{domain.name}">
+				<h2 class="font-medium">{domain.label}</h2>
+				<p class="text-sm">{domain.entityCount} {domain.entityCount === 1 ? 'entity' : 'entities'}</p>
+				<ul class="mt-2 space-y-1 text-sm">
+					{#each domain.entities as entity (entity.path)}
+						<li><a href={entity.path}>{entity.label}</a></li>
+					{/each}
+				</ul>
+			</article>
+		{/each}
+	</div>
+</section>
+{% endraw %}

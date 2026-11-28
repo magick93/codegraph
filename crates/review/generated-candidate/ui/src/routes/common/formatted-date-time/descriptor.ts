@@ -1,4 +1,4 @@
-import type { EntityDescriptor } from '@crewbase/entities';
+import type { EntityDescriptor } from '@app/entities';
 
 export const FormattedDateTimeDescriptor: EntityDescriptor = {
   name: 'FormattedDateTime',

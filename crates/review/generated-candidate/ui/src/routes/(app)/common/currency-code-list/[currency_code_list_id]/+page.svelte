@@ -14,7 +14,7 @@
 	import { deleteCurrencyCodeList } from '#lib/stores/common_currency_code_list.ts';
 
 
-	import { TimeAgo } from '@crewbase/entities';
+	import { TimeAgo } from '@app/entities';
 	import { toast } from 'svelte-sonner';
 	import * as m from '#lib/paraglide/messages.js';
 	import * as fmt from '#lib/format.ts';

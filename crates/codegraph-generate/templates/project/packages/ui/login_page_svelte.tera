@@ -1,0 +1,42 @@
+{% raw %}<!-- Email + password sign-in over Supabase auth. Vendored by `codegraph init`; consumer-owned. -->
+<script lang="ts">
+	import type { SupabaseClient } from '@supabase/supabase-js';
+
+	let { supabase, redirectTo = '/dashboard' }: { supabase: SupabaseClient; redirectTo?: string } = $props();
+
+	let email = $state('');
+	let password = $state('');
+	let error = $state<string | null>(null);
+	let submitting = $state(false);
+
+	async function submit(event: SubmitEvent) {
+		event.preventDefault();
+		submitting = true;
+		error = null;
+		const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+		submitting = false;
+		if (authError) {
+			error = authError.message;
+			return;
+		}
+		window.location.assign(redirectTo);
+	}
+</script>
+
+<form onsubmit={submit} class="mx-auto mt-16 max-w-sm space-y-3" data-testid="login-form">
+	<h1 class="text-xl font-semibold">Sign in</h1>
+	<label class="block">
+		<span class="text-sm">Email</span>
+		<input type="email" name="email" required bind:value={email} data-testid="login-email" />
+	</label>
+	<label class="block">
+		<span class="text-sm">Password</span>
+		<input type="password" name="password" required bind:value={password} data-testid="login-password" />
+	</label>
+	{#if error}
+		<p role="alert">{error}</p>
+	{/if}
+	<button type="submit" disabled={submitting} data-testid="login-submit">Sign in</button>
+	<p class="text-sm">No account? <a href="/signup">Sign up</a></p>
+</form>
+{% endraw %}
