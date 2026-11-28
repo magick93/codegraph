@@ -26,6 +26,15 @@ pub enum Error {
         /// Failure cause ("could not be read: …" / "is not valid JSON: …").
         reason: String,
     },
+    #[error("mox sigil import '{import_path}' imported by '{mox_path}' {reason}")]
+    MoxSigilImport {
+        /// The .mox file declaring the import (as compiled).
+        mox_path: String,
+        /// The import path exactly as written in the declaration.
+        import_path: String,
+        /// Failure cause ("could not be read (<resolved>): …").
+        reason: String,
+    },
     #[error("mox model error: {reason}")]
     MoxModel {
         /// Failure cause, including the rendered pherolang diagnostics

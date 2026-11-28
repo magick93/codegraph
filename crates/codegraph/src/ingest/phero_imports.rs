@@ -85,6 +85,63 @@ pub(crate) fn scan_sigil_imports(source: &str) -> Vec<String> {
         .collect()
 }
 
+/// Satisfy the `import sigil "<path>"` declarations of a set of `.mox`
+/// sources (issue #608): for each `(mox path, source)`, the named rosetta file
+/// resolved relative to that `.mox` file is keyed `(mox path, import path as
+/// written)` — the compile contract — plus the candidate pool of every
+/// `*.rosetta` under the named file's directory ([`discover_rosetta_files`],
+/// the pherolang CLI's workspace walk), so rosetta-internal namespace imports
+/// resolve. The `.ddd`/`.evt` ingests apply the same rule to their imported
+/// domains. A named import that cannot be read is a HARD error naming both
+/// paths (the `import schema` contract, [`crate::error::Error::MoxSigilImport`]);
+/// an unreadable sibling candidate only warns.
+pub(crate) fn sigil_imports_for_mox(
+    sources: &[(String, String)],
+) -> crate::error::Result<phero_driver::SigilImports> {
+    let mut sigil = phero_driver::SigilImports::new();
+    for (mox_path, source) in sources {
+        let dir = Path::new(mox_path)
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        insert_sigil_imports(&mut sigil, mox_path, source, dir)?;
+    }
+    Ok(sigil)
+}
+
+/// [`sigil_imports_for_mox`] for ONE domain whose compile key (`mox_key`,
+/// e.g. an `import "x.mox"` path as written) is not its filesystem path:
+/// the imports resolve against `dir`.
+pub(crate) fn insert_sigil_imports(
+    sigil: &mut phero_driver::SigilImports,
+    mox_key: &str,
+    source: &str,
+    dir: &Path,
+) -> crate::error::Result<()> {
+    for import_path in scan_sigil_imports(source) {
+        let resolved = dir.join(&import_path);
+        let text = std::fs::read_to_string(&resolved).map_err(|e| {
+            crate::error::Error::MoxSigilImport {
+                mox_path: mox_key.to_string(),
+                import_path: import_path.clone(),
+                reason: format!("could not be read ({}): {e}", resolved.display()),
+            }
+        })?;
+        sigil.insert(mox_key, &import_path, text);
+        for candidate in discover_rosetta_files(&resolved) {
+            match std::fs::read_to_string(&candidate) {
+                Ok(text) => sigil.insert(mox_key, candidate.display().to_string(), text),
+                Err(e) => eprintln!(
+                    "Warning: mox file '{mox_key}' discovered sigil '{}' \
+                     could not be read: {e}",
+                    candidate.display()
+                ),
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Recursively collects `*.rosetta` files under `file`'s directory,
 /// mirroring sigil's project discovery (the phero-cli
 /// `discover_rosetta_files` port): entries whose name starts with `.` or is

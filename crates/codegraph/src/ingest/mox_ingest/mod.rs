@@ -430,7 +430,11 @@ pub async fn ingest_mox_files(
 
     let imports = DomainImports {
         schemas: scanned.schema_imports,
-        sigil: phero_driver::SigilImports::new(),
+        // `import sigil "<path>"` (issue #608): the named rosetta files and
+        // their sibling pool, resolved relative to each `.mox` file. The
+        // driver lowers the needed rosetta closure into the model as its own
+        // packages, so the class bridge below carries them like any class.
+        sigil: crate::ingest::phero_imports::sigil_imports_for_mox(&scanned.sources)?,
     };
     let compilation = compile_files(&scanned.sources, &imports);
     for (path, diagnostic) in &compilation.diagnostics {
@@ -456,6 +460,7 @@ pub async fn ingest_mox_files(
         .map(|s| (s.title.clone(), s.schema_id.clone()))
         .collect();
 
+    let sigil_domains = sigil_package_domains(&model, &scanned.sources, domain_config);
     let mut bridge = MoxBridge::new(
         &model,
         ingestor,
@@ -465,7 +470,8 @@ pub async fn ingest_mox_files(
         known_titles,
         json_schema_ids,
         stats,
-    );
+    )
+    .with_package_domains(sigil_domains);
     bridge.bridge_namespaces().await?;
     bridge.scan_class_universe();
     bridge.scan_enum_universe();
@@ -644,6 +650,47 @@ pub(super) struct EnumEntry<'a> {
 /// Map a mox package name to a domain: an exact `domains.toml` key wins,
 /// then the last dot-segment; otherwise the snake_cased last segment is the
 /// domain (and, by the domain-driven pg-schema convention, the namespace).
+/// Domains for the packages an `import sigil` lowered into the model (issue
+/// #608): a package no `.mox` source declares came from the rosetta closure.
+/// When its namespace matches no `domains.toml` key (CDM's `cdm.base.math`),
+/// it lands in the domain of the first `.mox` file that imports sigil — the
+/// vocabulary belongs to the model that imports it. A namespace that does
+/// match a domain keeps the ordinary [`resolve_domain`] rule.
+pub(crate) fn sigil_package_domains(
+    model: &phero_ir::Model,
+    sources: &[(String, String)],
+    domain_config: &DomainConfig,
+) -> HashMap<String, String> {
+    let declared: HashSet<String> = sources
+        .iter()
+        .filter_map(|(_, text)| declared_package(text))
+        .collect();
+    let Some(importer) = sources
+        .iter()
+        .find(|(_, text)| !crate::ingest::phero_imports::scan_sigil_imports(text).is_empty())
+        .and_then(|(_, text)| declared_package(text))
+    else {
+        return HashMap::new();
+    };
+    let importer_domain = resolve_domain(domain_config, &importer).0;
+    model
+        .packages
+        .iter()
+        .filter(|package| !declared.contains(&package.name))
+        .filter(|package| !resolve_domain(domain_config, &package.name).1)
+        .map(|package| (package.name.clone(), importer_domain.clone()))
+        .collect()
+}
+
+/// The `package <name>` a `.mox` source declares (line scan).
+fn declared_package(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("package ")?;
+        let name = rest.trim().trim_end_matches(';').trim();
+        (!name.is_empty()).then(|| name.to_string())
+    })
+}
+
 pub(crate) fn resolve_domain(domain_config: &DomainConfig, package: &str) -> (String, bool) {
     if domain_config.domains.contains_key(package) {
         return (package.to_string(), true);

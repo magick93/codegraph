@@ -81,11 +81,14 @@ pub fn scan_mox_incompleteness(mox_files: &[PathBuf]) -> Vec<IncompleteFinding> 
         if import_broken {
             continue;
         }
+        let sources = [(file.clone(), text)];
         let compilation = phero_driver::compile_files(
-            &[(file.clone(), text)],
+            &sources,
             &phero_driver::DomainImports {
                 schemas: schema_imports,
-                sigil: phero_driver::SigilImports::new(),
+                // Issue #608; a missing import is check_mox_files' failure.
+                sigil: crate::ingest::phero_imports::sigil_imports_for_mox(&sources)
+                    .unwrap_or_default(),
             },
         );
         let Some(model) = compilation.model else {

@@ -22,10 +22,13 @@
 //!   [`crate::ifml_actor_import::resolve_actor_models`] — the run path's
 //!   warn-and-continue contract. Policies that resolve feed
 //!   E0107/E0108; an empty slice skips the authorization pass.
-//! - `.mox` imports (and the domain union they could provide) are
-//!   gathered but NOT compiled here — expression checking (E0100–E0103)
-//!   stays off (`domains: None`); the `.ifml`↔domain-typechecking slice
-//!   is a recorded follow-up.
+//! - `.mox` imports compile into the domain union
+//!   ([`phero_driver::project::compile_domain_union`], the pherolang CLI's
+//!   own step, issue #636) that the checker binds expressions against, so
+//!   the expression checks (E0100–E0103) run; the manifest receives the
+//!   same union. A file with no `.mox` imports has no union and the
+//!   expression pass is skipped (the CLI's rule); a union that does not
+//!   compile is a NAMED hard error, never a silent `None`.
 //!
 //! The manifest rides along on [`IfmlCompiled`] so consumers (route
 //! generation, the #559 service-op plane) can trust every edge without
@@ -121,13 +124,15 @@ pub fn compile_and_check_ifml(path: &Path) -> Result<IfmlCompiled> {
     let actor_models = crate::ifml_actor_import::resolve_actor_models(&policy_imports, base_dir);
     let actor_models = with_snake_role_aliases(actor_models);
 
-    // `domains: None`: the interaction-reference pass (E0104–E0106), the
-    // action-target check (E0109), and the authorization pass (E0107/E0108
-    // when actors resolve) run; the expression checks stay off (recorded
-    // follow-up). Error-severity diagnostics hard-fail; the lint channel
-    // (W0150–W0154) rides the compiled artifact as warnings — a linty
-    // model still ingests.
-    let diags = phero_ifml::check_ifml_with_actors(&compilation, None, &actor_models);
+    // The domain union (issue #636): the gathered `.mox` closure, compiled
+    // the way the pherolang CLI compiles it. With it the expression pass
+    // (E0100–E0103) runs beside the interaction-reference pass
+    // (E0104–E0106), the action-target check (E0109), and the authorization
+    // pass (E0107/E0108 when actors resolve). Error-severity diagnostics
+    // hard-fail; the lint channel (W0150–W0154) rides the compiled artifact
+    // as warnings — a linty model still ingests.
+    let domains = domain_union(&key, &project.domains)?;
+    let diags = phero_ifml::check_ifml_with_actors(&compilation, domains.as_ref(), &actor_models);
     let (errors, lints): (Vec<_>, Vec<_>) = diags
         .into_iter()
         .partition(|diag| diag.1.severity.is_error());
@@ -138,7 +143,7 @@ pub fn compile_and_check_ifml(path: &Path) -> Result<IfmlCompiled> {
         });
     }
 
-    let manifest = phero_ifml::manifest_ifml(&compilation, &project.imports, None);
+    let manifest = phero_ifml::manifest_ifml(&compilation, &project.imports, domains.as_ref());
     Ok(IfmlCompiled {
         compilation,
         manifest,
@@ -146,6 +151,24 @@ pub fn compile_and_check_ifml(path: &Path) -> Result<IfmlCompiled> {
         policy_imports,
         lints: render_diags(&lints).lines().map(str::to_string).collect(),
     })
+}
+
+/// The union of the `.ifml` file's gathered `.mox` domains, or `None` when it
+/// imports none (the expression pass then has nothing to bind against — the
+/// pherolang CLI's rule). A domain that does not compile fails the union by
+/// name.
+fn domain_union(file: &str, domains: &[(String, String)]) -> Result<Option<phero_ir::Model>> {
+    if domains.is_empty() {
+        return Ok(None);
+    }
+    phero_driver::project::compile_domain_union(domains)
+        .map(Some)
+        .map_err(|message| Error::IfmlModel {
+            file: file.to_string(),
+            reason: format!(
+                "the domain union the expression checks bind against cannot be built: {message}"
+            ),
+        })
 }
 
 /// Resolve one import path relative to the importing file's directory.

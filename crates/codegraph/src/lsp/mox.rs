@@ -206,7 +206,9 @@ pub fn build_mox_state(
 
     let imports = DomainImports {
         schemas: schema_imports,
-        sigil: phero_driver::SigilImports::new(),
+        // The ingest's sigil gather (issue #608); a missing named import
+        // surfaces as the compile's unknown-type diagnostics here.
+        sigil: crate::ingest::phero_imports::sigil_imports_for_mox(&sources).unwrap_or_default(),
     };
     let compilation = compile_files(&sources, &imports);
     for (path, diagnostic) in &compilation.diagnostics {

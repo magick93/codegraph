@@ -719,7 +719,9 @@ pub(crate) fn full_gather(mox: &MoxSources, cross: &UnionGather) -> UnionGather 
             &mox.sources,
             &phero_driver::DomainImports {
                 schemas: mox.schema_imports.clone(),
-                sigil: phero_driver::SigilImports::new(),
+                // Issue #608; a missing import is check_mox_files' failure.
+                sigil: crate::ingest::phero_imports::sigil_imports_for_mox(&mox.sources)
+                    .unwrap_or_default(),
             },
         );
         if let Some(model) = &compilation.model {

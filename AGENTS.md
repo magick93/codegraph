@@ -175,6 +175,28 @@ Import scan is a line-scan (declaration must start its trimmed line with
 `import schema `). Actor-policy domains carrying imports compile via
 `compile_actors_str_with_imports`.
 
+### `import sigil` (rosetta types from .mox, issue #608)
+
+`import sigil "cdm/math.rosetta"` in a `.mox` model is satisfied by the
+mox ingest itself — not by `--rosetta-files`, which stays a separate model
+source. `ingest::phero_imports::sigil_imports_for_mox` keys the named file
+`(mox path, import path as written)` resolved relative to the `.mox` file,
+plus the sibling `*.rosetta` pool (`discover_rosetta_files`, the CLI's
+workspace walk) so rosetta-internal namespace imports resolve; the `.ddd`/
+`.evt` ingests apply the same rule to their imported domains. The driver
+lowers the needed rosetta closure into the model as its own packages, so the
+ordinary class/enum bridge carries them; a lowered package whose namespace
+matches no `domains.toml` key (`cdm.base.math`) lands in the domain of the
+`.mox` file that imports sigil (`mox_ingest::sigil_package_domains`). A
+missing NAMED import is a hard `Error::MoxSigilImport` naming both paths
+(the `import schema` contract); an unreadable sibling only warns. Passing
+the same files via `--rosetta-files` is safe: the rosetta pass never
+overrides a title the mox pass bridged. Every `.mox` compile site uses the
+helper — the run path, doctor (`check_mox_files` hard-fails a missing
+import; the graph/extension-point/incomplete-feature passes reuse it), the
+LSP `MoxState`, and the `.actor` policy domains. Gate: `cargo test -p
+codegraph --test mox_sigil_import_tests` (5).
+
 ### LSP for `.mox` (MoxState)
 
 `codegraph lsp --mox-files <file>...` builds an in-process `MoxState`
@@ -3535,11 +3557,20 @@ upstream, and codegraph now ENFORCES it:
   (actors from the file's `.actor`/`.json` imports via
   `ifml_actor_import::resolve_actor_models` — per-import warn-and-continue,
   the run-path contract; an empty slice skips E0107/E0108), and
-  `phero_ifml::manifest_ifml`. `domains: None` — the E0104–E0106
-  interaction-reference pass and the E0107/E0108 authorization pass run;
-  the E0100–E0103 expression checks stay off (the domain-union slice is a
-  recorded follow-up; passing it today would fail consumer models on
-  `today()` bare calls E0102).
+  `phero_ifml::manifest_ifml`. **The domain union (issue #636)**: the
+  file's gathered `.mox` closure compiles through
+  `phero_driver::project::compile_domain_union` (the pherolang CLI's own
+  step) and feeds BOTH the checker and the manifest, so the E0100–E0103
+  expression checks run beside E0104–E0109. A file with no `.mox` imports
+  has no union and skips the expression pass (the CLI rule — the nightly
+  gate's `app.ifml` binds JSON-schema entities and imports no `.mox`); a
+  union that cannot be built is a NAMED `Error::IfmlModel` ("the domain
+  union … cannot be built"), never a silent `None`. Upstream walks `if`
+  guards, `filter:`/compound properties, table columns, event guards and
+  bindings, module overrides and commands — NOT form-field `validations:`.
+  Gate: `cargo test -p codegraph --test ifml_expression_check_tests` (5:
+  valid filter, unknown field names the token + an E010x code, broken
+  union named, doctor + run-path parity).
 - **Run path** (driver Pass 1b): a compile or checker diagnostic is a
   HARD error (`Error::IfmlModel` — the EvtModel precedent; a broken flow
   never half-ingests). Pass 1b prints the manifest counts after the
@@ -3560,8 +3591,7 @@ upstream, and codegraph now ENFORCES it:
   with resolved targets, commands) so the #559 service-op plane and any
   route-generation consumer can trust every edge without re-deriving
   resolution. Deferrals: generator-side consumption of
-  `manifest.controls`/`edges` (the #559 fix), CLI-from-`commands`,
-  E0100–E0103 expression checking via `compile_domain_union`, LSP
+  `manifest.controls`/`edges` (the #559 fix), CLI-from-`commands`, LSP
   diagnostics through `compile_ifml_lenient`.
 
 ### #468 quality pass — integrated UI, structural gates, hydration guards
