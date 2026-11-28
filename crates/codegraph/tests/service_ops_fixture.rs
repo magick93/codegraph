@@ -913,6 +913,42 @@ pub fn payroll_ddd_with_refused_body() -> String {
 /// `AdjustPayRunLine` (unconditional — child grant-`when` typing is
 /// upstream-blocked with the module's single machine; the capability gate
 /// itself is what the child handler pin exercises).
+// ── Issue #635: authored session-kind modifiers ───────────────────────
+
+/// The payroll policy with authored session-kind modifiers: Owner's
+/// `ApprovePayRun` is human-only, Manager's `InspectPayRun` agent-only;
+/// everything else is unmodified (so `unmodified_grants` decides it).
+/// `policy_b.actor` still grants Owner an unmodified `PreparePayRun` — the
+/// `never_both` partner of `ApprovePayRun`.
+pub const KIND_POLICY_ACTOR: &str = r#"
+import "pay_run.mox"
+
+actors Payroll {
+    actor Owner
+    actor Manager
+
+    capability ApprovePayRun on PayRunType
+    capability InspectPayRun on PayRunType
+    capability SubmitPayRun on PayRunType
+    capability PreparePayRun on PayRunType
+    capability AdjustPayRunLine on PayRunLineType
+    capability RecalculateAdjustment on PayRunLineAdjustmentType
+
+    grant Owner {
+        permit human ApprovePayRun
+        permit SubmitPayRun
+    }
+
+    grant Manager {
+        permit agent InspectPayRun
+        permit AdjustPayRunLine
+        permit RecalculateAdjustment
+    }
+
+    never_both { PreparePayRun, ApprovePayRun }
+}
+"#;
+
 pub const POLICY_ACTOR: &str = r#"
 import "pay_run.mox"
 

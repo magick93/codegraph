@@ -6574,7 +6574,10 @@ session_kind_planes = ["handler"]  # "handler"
   renderer: capability membership (an unheld capability renders
   `"api_key" => Err("capability `X` is not granted to agent sessions …")`),
   `never_both` (the one deliberate tightening — a key arm holding both
-  sides denies), grant `when`s over the loaded record. A policy-less graph
+  sides denies — a static check on the key arm, not keyed on the key id),
+  grant `when`s over the loaded record. Note `unmodified_grants = "agent"`
+  also removes unmodified grants from the HUMAN arms and the IFML client
+  map, not only from keys. A policy-less graph
   still yields an (empty) agent surface: agent mode never re-opens the
   bypass. The op-level `when` stays first in both modes. The request
   bundle (`ddd/command.tera` + `ddd/query.tera`, both providers) gains
@@ -6606,12 +6609,19 @@ session_kind_planes = ["handler"]  # "handler"
   `codegraph-ops/tests/fixtures/role_at_least_agent.sql` drift pin —
   re-bless `ROLE_GATE_BLESS=1`), `cargo test -p codegraph-core --lib
   authorization` (kind-blind forbid, wire omission), `cargo test -p
-  codegraph --test service_ops_tests -- api_key` (agent-mode handler +
-  bundle + role gate + hurl 403 end to end; bypass emits no session kind;
-  both modes' warnings) + `--test init_tests ::
+  codegraph --test service_ops_tests -- api_key` (incl. **`api_key_mode_matrix`**:
+  every accepted `(api_key_mode × unmodified_grants)` row generated end to
+  end over a `.actor` policy with authored `permit human` / `permit agent`
+  modifiers, asserting the handler arms, the hurl 403 set, the bundle, the
+  role gate and the warning per row — a new accepted value adds its rows
+  there; its first run caught the bypass warning over-reporting a
+  `never_both` no arm held) + `--test init_tests ::
   doctor_resolves_api_key_modes_and_refuses_reserved_ones`, the compile
-  pins `service_ops_compile_gate :: generated_app_in_api_key_agent_mode_compiles`
-  (ignored, SeaORM monolith) and `worker_wasm_compile_tests ::
+  pins `service_ops_compile_gate :: generated_app_compiles_in_every_api_key_mode`
+  (ignored, SeaORM monolith, table-driven: bypass / agent × any / agent ×
+  human over the kind policy — the policy rides an `.ifml` import shim, so
+  the role and key arms compile from REAL grants; the older legs in that
+  binary run policy-less) and `worker_wasm_compile_tests ::
   generated_worker_in_api_key_agent_mode_checks` (ignored, cornucopia
   native + wasm32), and `cargo test -p codegraph-ops --test authz_contract
   -- --ignored :: role_gate_follows_the_api_key_mode_in_db` (live: bypass

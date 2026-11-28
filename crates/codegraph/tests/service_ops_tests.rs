@@ -3146,3 +3146,209 @@ async fn api_key_authz_warnings_name_the_consequence_of_each_mode() {
     let agent = warnings(codegraph::profile::ApiKeyMode::Agent).await;
     assert!(agent.is_empty(), "{agent:?}");
 }
+
+// ── Issue #635: the mode matrix ─────────────────────────────────────────
+
+/// One generated authorize fn (`fn service_op_{snake}_authorize` … `}`).
+fn authorize_fn<'a>(handler: &'a str, snake: &str) -> &'a str {
+    let start = handler
+        .find(&format!("fn service_op_{snake}_authorize"))
+        .unwrap_or_else(|| panic!("{snake} authorize fn"));
+    let rest = &handler[start..];
+    &rest[..rest.find("\n}\n").expect("fn end")]
+}
+
+/// Every accepted `(api_key_mode, unmodified_grants)` combination, generated
+/// end to end over a policy whose grants carry authored `human` / `agent`
+/// modifiers. Each row states what a key session and each human role arm
+/// must see; the assertions read the generated handler, the actions hurl
+/// contract, the session bundle, the DB role gate and the run-path warning.
+/// A new accepted mode value must add its rows here.
+#[tokio::test]
+async fn api_key_mode_matrix() {
+    use codegraph::profile::{ApiKeyAuthz, ApiKeyMode};
+    use codegraph_core::types::GrantSessionKind::{self, Agent, Any, Human};
+
+    struct Case {
+        mode: ApiKeyMode,
+        unmodified: GrantSessionKind,
+        /// Ops a key session is provably denied (pinned 403 in the hurl
+        /// contract); every other gated op must NOT be pinned 403.
+        key_denied: &'static [&'static str],
+        /// Owner holds the unmodified `PreparePayRun` + `SubmitPayRun`
+        /// (they admit human sessions) — which also makes approve a
+        /// `never_both` conflict on the owner arm.
+        owner_holds_unmodified: bool,
+        /// The capabilities the agent-mode warning names as unreachable.
+        unreachable: &'static [&'static str],
+    }
+    let cases = [
+        Case {
+            mode: ApiKeyMode::Bypass,
+            unmodified: Any,
+            key_denied: &[],
+            owner_holds_unmodified: true,
+            unreachable: &[],
+        },
+        Case {
+            mode: ApiKeyMode::Bypass,
+            unmodified: Human,
+            key_denied: &[],
+            owner_holds_unmodified: true,
+            unreachable: &[],
+        },
+        Case {
+            mode: ApiKeyMode::Bypass,
+            unmodified: Agent,
+            key_denied: &[],
+            owner_holds_unmodified: false,
+            unreachable: &[],
+        },
+        Case {
+            mode: ApiKeyMode::Agent,
+            unmodified: Any,
+            key_denied: &["approve", "reverse", "purge"],
+            owner_holds_unmodified: true,
+            unreachable: &["ApprovePayRun"],
+        },
+        Case {
+            mode: ApiKeyMode::Agent,
+            unmodified: Human,
+            key_denied: &["approve", "reverse", "purge", "submit", "notify"],
+            owner_holds_unmodified: true,
+            unreachable: &["ApprovePayRun", "SubmitPayRun"],
+        },
+        Case {
+            mode: ApiKeyMode::Agent,
+            unmodified: Agent,
+            key_denied: &["approve", "reverse", "purge"],
+            owner_holds_unmodified: false,
+            unreachable: &["ApprovePayRun"],
+        },
+    ];
+
+    for case in &cases {
+        let label = format!("{} × unmodified {}", case.mode, case.unmodified.as_str());
+        let authz = ApiKeyAuthz {
+            mode: case.mode,
+            unmodified_grants: case.unmodified,
+        };
+        let fixture = write_fixture_in("service_ops_mode_matrix", PAYROLL_DDD);
+        fs::write(&fixture.actor, fixture::KIND_POLICY_ACTOR).unwrap();
+        let engine = ingest(&fixture).await;
+
+        // The authored modifiers survive .actor → graph.
+        let grants = engine.get_grants().await.unwrap();
+        let kind = |cap: &str| {
+            grants
+                .iter()
+                .find(|g| g.capability == cap)
+                .unwrap()
+                .session_kind
+        };
+        assert_eq!(kind("ApprovePayRun"), Human, "{label}");
+        assert_eq!(kind("InspectPayRun"), Agent, "{label}");
+        assert_eq!(kind("SubmitPayRun"), Any, "{label}");
+
+        let out = tempdir();
+        let domain_types = tempdir();
+        let hooks = tempdir();
+        let report = fixture::run_generation_in_mode(
+            &engine,
+            &fixture,
+            out.path(),
+            domain_types.path(),
+            hooks.path(),
+            authz,
+        )
+        .await
+        .unwrap();
+        assert!(!report.has_errors(), "{label}: {report:?}");
+        let agent = case.mode == ApiKeyMode::Agent;
+
+        // ── handler ──
+        let handler = read(&out.path().join("src/api/payroll/pay_run_handler.rs"));
+        assert_eq!(
+            handler.contains(r#"if role == "api_key""#),
+            !agent,
+            "{label}: the bypass exists exactly in bypass mode"
+        );
+        let approve = authorize_fn(&handler, "approve");
+        assert!(
+            approve.contains(r#""owner" => {"#),
+            "{label}: Approve is human-granted:\n{approve}"
+        );
+        assert_eq!(
+            approve.contains("separation of duties: role `owner`"),
+            case.owner_holds_unmodified,
+            "{label}: owner's never_both conflict follows unmodified_grants:\n{approve}"
+        );
+        let submit = authorize_fn(&handler, "submit");
+        assert_eq!(
+            submit.contains(r#""owner" => {"#),
+            case.owner_holds_unmodified,
+            "{label}: the unmodified SubmitPayRun reaches the owner arm:\n{submit}"
+        );
+        let inspect = authorize_fn(&handler, "inspect");
+        assert!(
+            !inspect.contains(r#""manager" =>"#),
+            "{label}: an agent-only grant never reaches a human arm:\n{inspect}"
+        );
+        assert_eq!(
+            inspect.contains(r#""api_key" => {"#),
+            agent,
+            "{label}:\n{inspect}"
+        );
+
+        // ── actions contract ──
+        let actions = read(&actions_file(out.path(), "_pay_run_actions.hurl"));
+        for op in ["approve", "reverse", "purge", "inspect", "submit", "notify"] {
+            let status = status_after(&actions, &format!("service op `{op}` "));
+            assert_eq!(
+                status == Some(403),
+                case.key_denied.contains(&op),
+                "{label}: op `{op}` pinned {status:?}:\n{actions}"
+            );
+        }
+
+        // ── session bundle + DB role gate ──
+        assert_eq!(
+            !files_containing(out.path(), "app.session_kind").is_empty(),
+            agent,
+            "{label}: app.session_kind exists exactly in agent mode"
+        );
+        let rbac = files_containing(out.path(), "FUNCTION public.role_at_least");
+        assert_eq!(rbac[0].1.contains("v_role = 'api_key'"), !agent, "{label}");
+
+        // ── run-path warning ──
+        let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+        let warnings: Vec<String> = codegraph::validate::ValidationPass::run_with_options(
+            &engine,
+            &config,
+            codegraph::validate::ValidationOptions {
+                api_key_authz: authz,
+                ..Default::default()
+            },
+        )
+        .await
+        .into_iter()
+        .filter(|issue| issue.check == "api_key_authz")
+        .map(|issue| issue.message)
+        .collect();
+        if agent {
+            let named: Vec<&str> = ["ApprovePayRun", "SubmitPayRun", "InspectPayRun"]
+                .into_iter()
+                .filter(|cap| warnings.iter().any(|w| w.contains(&format!("`{cap}`"))))
+                .collect();
+            assert_eq!(named, case.unreachable, "{label}: {warnings:?}");
+        } else {
+            // Bypass warns exactly when some human arm carries a gate keys
+            // skip — here the owner's never_both conflict on approve.
+            assert_eq!(
+                !warnings.is_empty(),
+                case.owner_holds_unmodified,
+                "{label}: {warnings:?}"
+            );
+        }
+    }
+}

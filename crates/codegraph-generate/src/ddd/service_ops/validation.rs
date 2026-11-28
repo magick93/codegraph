@@ -767,7 +767,13 @@ pub async fn api_key_authz_warnings(
         for route in routes.iter().filter(|r| !r.capabilities.is_empty()) {
             match authz.mode {
                 crate::profile::ApiKeyMode::Bypass => {
-                    let sod = !surface.sod_conflicts(&route.capabilities).is_empty();
+                    // Mirrors the renderer: a `never_both` conflict binds
+                    // a role arm only when that arm holds BOTH sides.
+                    let conflicts = surface.sod_conflicts(&route.capabilities);
+                    let sod = surface.roles.values().any(|permits| {
+                        route.capabilities.iter().any(|c| permits.contains_key(c))
+                            && conflicts.iter().any(|c| permits.contains_key(c))
+                    });
                     let when_gated = surface.roles.values().any(|permits| {
                         route.capabilities.iter().any(|c| {
                             permits
