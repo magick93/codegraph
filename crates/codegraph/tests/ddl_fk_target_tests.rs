@@ -1,31 +1,37 @@
-//! Issue #322: an FK targets the schema its referenced table is EMITTED in.
+//! Issue #322 / #57: FK constraints in emitted DDL.
 //!
-//! A graph FK edge carries the domain the target was DECLARED in (the mox
-//! package). When another domain claims the title in the generation order
-//! (an explicit `entities` entry re-claims a discovery-only title), the table
-//! is emitted in the CLAIMING domain. Pre-#322 the FK named the declared
-//! schema, failed the emitted-table filter, and was silently dropped — the
-//! reference column shipped with no constraint at all.
+//! #322 — an FK targets the schema its referenced table is EMITTED in. The
+//! graph FK edge carries the domain the target was DECLARED in, while the
+//! table is emitted in the domain that claims the title in the generation
+//! order; `retain_generated_fks` re-points a disagreeing FK (the in-crate
+//! `db::ddl::tests` KATs pin the remap). End to end, this file pins the
+//! invariant over a cross-domain model: every `REFERENCES <schema>.<table>`
+//! names a table some emitted migration creates, and the cross-domain FK
+//! survives into the DDL.
+//!
+//! #57 — a required reference is `NOT NULL` + `ON DELETE RESTRICT`; an
+//! optional one is nullable + `ON DELETE SET NULL`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const MODEL_MOX: &str = r#"
+const HR_MOX: &str = r#"
 package hr
 
 class EmployeeType {
     String name
-    refers PositionType position
     refers PositionType[0..1] backupPosition
 }
+"#;
+
+const RECRUITING_MOX: &str = r#"
+package recruiting
 
 class PositionType {
     String title
 }
 "#;
 
-/// `recruiting` explicitly configures `PositionType`, so it claims the title
-/// although the class is declared in the `hr` package.
 const DOMAINS_TOML: &str = r#"
 [defaults]
 operations = ["create", "read", "update", "delete", "list"]
@@ -39,7 +45,6 @@ postgres_schema = "hr"
 label = "Recruiting"
 schema_dir = "recruiting"
 postgres_schema = "recruiting"
-entities = ["PositionType"]
 "#;
 
 fn run_args<'a>(
@@ -99,10 +104,12 @@ async fn generate() -> (tempfile::TempDir, Vec<(String, String)>) {
     let config = root.path().join("domains.toml");
     fs::write(&config, DOMAINS_TOML).unwrap();
     fs::create_dir_all(root.path().join("model")).unwrap();
-    let mox = root.path().join("model/hr.mox");
-    fs::write(&mox, MODEL_MOX).unwrap();
+    let hr = root.path().join("model/hr.mox");
+    fs::write(&hr, HR_MOX).unwrap();
+    let recruiting = root.path().join("model/recruiting.mox");
+    fs::write(&recruiting, RECRUITING_MOX).unwrap();
     let output = root.path().join("generated");
-    let mox_files = vec![mox];
+    let mox_files = vec![hr, recruiting];
     codegraph::driver::run(run_args(root.path(), &config, &mox_files, &output))
         .await
         .expect("generation succeeds");
@@ -123,22 +130,18 @@ fn employee_ddl(migs: &[(String, String)]) -> &str {
 }
 
 #[tokio::test]
-async fn fk_to_a_reclaimed_entity_targets_the_claiming_schema() {
+async fn cross_domain_fk_targets_the_emitting_schema() {
     let (_root, migs) = generate().await;
     assert!(
         migs.iter()
             .any(|(name, _)| name.ends_with("_recruiting_position.sql")),
-        "the reclaimed title is emitted in the claiming domain: {:?}",
+        "the target is emitted in its own domain: {:?}",
         migs.iter().map(|(n, _)| n).collect::<Vec<_>>()
     );
     let ddl = employee_ddl(&migs);
     assert!(
         ddl.contains("REFERENCES recruiting.position(id)"),
-        "the FK names the schema the table is emitted in:\n{ddl}"
-    );
-    assert!(
-        !ddl.contains("REFERENCES hr.position"),
-        "no FK names the declared-but-unemitted schema:\n{ddl}"
+        "the cross-domain FK names the schema the table is emitted in:\n{ddl}"
     );
 }
 
@@ -175,31 +178,21 @@ async fn every_fk_target_is_an_emitted_table() {
     );
 }
 
-/// Issue #57: a required reference is `NOT NULL` + `ON DELETE RESTRICT`; an
-/// optional one stays nullable + `ON DELETE SET NULL`. The DDL never pairs a
-/// NOT NULL column with SET NULL.
+/// Issue #57: an optional reference stays nullable + `ON DELETE SET NULL`.
+/// (A required mox `refers` lowers to a junction child table, so the required
+/// RESTRICT leg is pinned over a scalar JSON reference in
+/// `generate_tests::required_fk`.)
 #[tokio::test]
-async fn required_reference_restricts_and_optional_sets_null() {
+async fn optional_reference_sets_null() {
     let (_root, migs) = generate().await;
     let ddl = employee_ddl(&migs);
-    let fk_line = |col: &str| {
-        ddl.lines()
-            .find(|l| l.contains(&format!("FOREIGN KEY ({col})")))
-            .unwrap_or_else(|| panic!("no FK on {col}:\n{ddl}"))
-            .to_string()
-    };
+    let fk = ddl
+        .lines()
+        .find(|l| l.contains("FOREIGN KEY (backup_position_id)"))
+        .unwrap_or_else(|| panic!("no FK on backup_position_id:\n{ddl}"));
+    assert!(fk.contains("ON DELETE SET NULL"), "{fk}");
     assert!(
-        fk_line("position_id").contains("ON DELETE RESTRICT"),
-        "{}",
-        fk_line("position_id")
-    );
-    assert!(
-        fk_line("backup_position_id").contains("ON DELETE SET NULL"),
-        "{}",
-        fk_line("backup_position_id")
-    );
-    assert!(
-        ddl.lines().any(|l| l.contains("position_id UUID NOT NULL")),
-        "the required reference is NOT NULL:\n{ddl}"
+        ddl.lines().any(|l| l.trim() == "backup_position_id UUID,"),
+        "the optional reference is nullable:\n{ddl}"
     );
 }
