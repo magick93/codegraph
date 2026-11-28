@@ -4971,9 +4971,25 @@ non-crewbase project could `pnpm install` the generated UI.
 - **Doctor**: one advisory WARN (`init/ui_packages.rs`) when the plan builds
   `ui_scaffold` and `packages/{ui,entities,common}/package.json` is missing
   or not named `@{scope}/…`.
-- **Not covered by #18** (recorded follow-ups): the generated `ui/` ships no
-  `tsconfig.json`, the shadcn primitives remain the documented
-  `PRIMITIVES.md` consumer step (#858). The `ui-shell` plan-name mismatch is
+- **Fresh-init UI build (#858, FIXED)**: the scaffold emits `ui/tsconfig.json`
+  if-absent (kit-3 `$app/tsconfig` shape), the codegraph-owned
+  `array-field`/`date-range-field` components (beside
+  `structured-wrapper-field`; POM testid contract `{id}-row-{i}`/
+  `{id}-add-btn`/`{id}-remove-{i}` and the sr-only `{id}-value` half-open
+  range literal), and `SHADCN_PRIMITIVES` names every primitive the pages
+  import (`alert`, `field`, `native-select`, `spinner`, `switch`, `tabs`,
+  `textarea` were missing). The shadcn primitives stay the documented
+  `PRIMITIVES.md` consumer step; `scaffold::tests::
+  every_template_ui_import_is_a_primitive_or_codegraph_owned` scans
+  `templates/ui/**` so an import can never ship without its install entry
+  (`CODEGRAPH_OWNED_COMPONENTS` is the emitted half). The entity gate no
+  longer stubs the two components. The stub-free nightly lane
+  `fresh_init_ui_gate` (ignored, `entity-gate.yml`) runs init → generate →
+  `pnpm install` → the PRIMITIVES.md shadcn-svelte install → `vite build`;
+  it gates the BUILD, not svelte-check (a fresh tree still carries
+  type-only findings: the G1 `$env` move, `Record` casts in list pages, a
+  ux-spec `columnValues` call the page class lacks).
+- The `ui-shell` plan-name mismatch is
   FIXED (#859): `ui-shell` is retired from every profile (its top-level route
   tree conflicts with `(app)`; plan-less runs still emit it), and generator
   names compare `-`/`_`-insensitively in `BuildPlan::has_*_gen`
@@ -7554,6 +7570,31 @@ preserves both.
   parent/junction CASCADE and hierarchy SET NULL are unchanged.
 - Gates: `cargo test -p codegraph --test ddl_fk_target_tests` + the in-crate
   `db::ddl::tests` remap KATs.
+
+### Entity e2e fixture/route consistency (issues #324, #323)
+
+- **#324 — the fixture body covers the create DTO**: every family's
+  `testData()` is rendered from the ui field set, which can miss create-DTO
+  members (a required `immutable_fields` entry is the in-repo reproduction —
+  `dto_create.tera` keeps it, `create_fields` drops it). `ui/e2e_test/
+  ux_guards.rs::fixture_supplement_for` runs the IFML seed planner
+  (`ifml::e2e_test::create_body_supplement` over `plan_seed` — the DTO's own
+  surface via `build_dto_context`, ONE derivation for both planes) and
+  `_dep_setup.tera`'s `test_data` section appends each uncovered required
+  member (`fixture_supplement`, empty ⇒ byte-identical bodies). A required
+  field neither plane can seed WITHHOLDS the ux spec with
+  `warning: ux-rules: … ux spec withheld — the create DTO requires …`.
+- **#323 — one entity per ux spec**: the spec drives the entity's own list
+  route; when another entity of the domain resolves to the same route (same
+  segment under the same parent chain), the spec would assert one entity's
+  columns against the other's page, so both are withheld with a warning
+  naming the route and the other entity (`list_route_owner_conflict`). The
+  depth-2 ux spec now opens the grandparent-hop UI route (`UI_PATH`, the
+  crud spec's rule) instead of the API base path.
+- Gates: `cargo test -p codegraph --test ux_rules_tests` (the supplement
+  pin over `task.ux.test.ts` + `task.api.crud.test.ts`, the no-supplement
+  twin, the nested-child resolution pin, the shared-route withholding pin)
+  + `ui::e2e_test::ux_guards` route KAT.
 
 ### Support-matrix doctor check (issue #862)
 

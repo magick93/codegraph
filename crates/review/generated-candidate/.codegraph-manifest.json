@@ -634,6 +634,10 @@
     "ui/src/lib/components/forms/StringTypeArrayForm.svelte",
     "ui/src/lib/components/ui/SearchInput.svelte",
     "ui/src/lib/components/ui/WorkflowPanel.svelte",
+    "ui/src/lib/components/ui/array-field/ArrayField.svelte",
+    "ui/src/lib/components/ui/array-field/index.ts",
+    "ui/src/lib/components/ui/date-range-field/DateRangeField.svelte",
+    "ui/src/lib/components/ui/date-range-field/index.ts",
     "ui/src/lib/components/ui/structured-wrapper-field/StructuredWrapperField.svelte",
     "ui/src/lib/components/ui/structured-wrapper-field/index.ts",
     "ui/src/lib/format.ts",
@@ -1112,6 +1116,7 @@
     "ui/tests/generated/rsvp/rsvp.owner.crud.test.ts",
     "ui/tests/generated/rsvp/rsvp.page.ts",
     "ui/tests/generated/rsvp/rsvp.validation.test.ts",
+    "ui/tsconfig.json",
     "ui/vite.config.ts"
   ],
   "generatedBy": "codegraph v0.1.0",

@@ -58,4 +58,8 @@
 {% for dep in entity_ref_deps %}
     ...(depIds['{{ dep.dep_id }}'] ? { '{{ dep.field_name }}': depIds['{{ dep.dep_id }}'] } : {}),
 {% endfor %}
+{%- for entry in fixture_supplement %}
+    // required by the create DTO, absent from the ui field set (issue #324)
+    '{{ entry.name }}': {{ entry.value }},
+{%- endfor %}
 {%- endif -%}

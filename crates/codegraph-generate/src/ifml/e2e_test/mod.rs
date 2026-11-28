@@ -14,7 +14,9 @@ mod render;
 mod spec_payload;
 mod ux_plans;
 
+pub(crate) use body::create_body_supplement;
 pub use fixtures::Fixture;
+pub use fixtures::SeedGap;
 pub use generator::IfmlE2eTestGenerator;
 pub use spec_payload::{
     ActionAct, ActionActKind, ActionSpec, ActionTest, ClickThroughTest, ModalCloseAssertions,

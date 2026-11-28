@@ -5,6 +5,7 @@ mod generator;
 mod include;
 mod pom_ctx;
 mod refs;
+mod ux_guards;
 mod ux_spec;
 
 pub use context::{

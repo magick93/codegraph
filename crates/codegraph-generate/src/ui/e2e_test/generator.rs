@@ -158,7 +158,7 @@ impl UiE2eTestGenerator {
     /// Resolve parent info for child entities (extracted verbatim from
     /// `generate`, issue #751). Manual config (role = "child", parent =
     /// "...") takes priority over graph detection.
-    async fn resolve_parent_info(
+    pub(super) async fn resolve_parent_info(
         &self,
         db: &dyn GraphQuerier,
         config: &DomainConfig,
@@ -857,9 +857,6 @@ impl EntityGenerator for UiE2eTestGenerator {
                 initial_state.clone(),
             )
         });
-        let ux_spec =
-            ux_spec_from_inputs(db, config, project, schema_title, &domain, &ux_inputs).await?;
-
         // Build the required entity-ref dependency closure (leaf-first).
         // Required FKs (e.g. case.tenant_id) are created in beforeAll; optional
         // refs are omitted from payloads and never created.
@@ -915,6 +912,57 @@ impl EntityGenerator for UiE2eTestGenerator {
         let (parent_test_data_json, grandparent_test_data_json) = self
             .build_parent_test_data(db, config, parent.as_ref(), &parent_title_for_data)
             .await;
+
+        // Issue #324: the fixture body is rendered from the ui field set, which
+        // can miss create-DTO members. Supplement it from the DTO's own surface
+        // (the IFML seed planner); a required field neither plane can seed
+        // withholds the ux spec with a named warning instead of shipping a
+        // guaranteed-422 file.
+        let (fixture_supplement, fixture_gaps) = super::ux_guards::fixture_supplement_for(
+            db,
+            config,
+            project,
+            schema_title,
+            &create_fields,
+            &entity_ref_deps,
+            parent.as_ref(),
+        )
+        .await;
+
+        let mut ux_spec =
+            ux_spec_from_inputs(db, config, project, schema_title, &domain, &ux_inputs).await?;
+        if ux_spec.is_some() {
+            if !fixture_gaps.is_empty() {
+                eprintln!(
+                    "warning: ux-rules: {schema_title}: ux spec withheld — the create DTO requires \
+                     field(s) the fixture cannot seed: {} (issue #324)",
+                    fixture_gaps.join("; ")
+                );
+                ux_spec = None;
+            } else if let Some(owner) = self
+                .list_route_owner_conflict(
+                    db,
+                    config,
+                    &domain,
+                    schema_title,
+                    &path_segment,
+                    parent.as_ref(),
+                )
+                .await
+            {
+                // Issue #323: the list route this spec would drive belongs to
+                // another entity too, so its fixture, asserted columns and
+                // rendered page would come from two different entities.
+                eprintln!(
+                    "warning: ux-rules: {schema_title}: ux spec withheld — its list route \
+                     `{}` is also {owner}'s, so the spec would assert one entity's columns \
+                     against another's page; give one of them a distinct `path_segment` \
+                     (issue #323)",
+                    super::ux_guards::list_route(&domain, &path_segment, parent.as_ref()),
+                );
+                ux_spec = None;
+            }
+        }
 
         // POM inputs (issue #316): spec-infra gated — populated whenever
         // ANY spec file is emitted (any-op entities), NOT ux-flag gated.
@@ -990,6 +1038,7 @@ impl EntityGenerator for UiE2eTestGenerator {
             grandparent_test_data_json,
             e2e_include,
             ux_spec,
+            fixture_supplement,
             pom,
         };
 

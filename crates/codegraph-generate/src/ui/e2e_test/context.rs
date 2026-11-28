@@ -119,6 +119,14 @@ pub struct E2eMediaFieldCtx {
     pub max_bytes: u64,
 }
 
+/// One `testData()` entry the create DTO requires and the ui field set does
+/// not carry (issue #324). `value` is a JS literal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FixtureSupplementEntry {
+    pub name: String,
+    pub value: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct UiE2eTestContext {
     pub entity_name: String,
@@ -186,6 +194,10 @@ pub struct UiE2eTestContext {
     /// or no list/create output) — no `.ux.test.ts` file is emitted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ux_spec: Option<UxE2eSpecCtx>,
+    /// Create-DTO members the ui field set does not carry (issue #324),
+    /// appended to every family's `testData()` body by `_dep_setup.tera`.
+    /// Empty when the ui field set already covers the create DTO.
+    pub fixture_supplement: Vec<FixtureSupplementEntry>,
     /// POM (Playwright Object Model) inputs (issue #316). Populated for
     /// every spec-emitting (any-op) entity — spec-infra gated, NOT
     /// ux-flag gated; `None` only when the entity emits no spec files.
