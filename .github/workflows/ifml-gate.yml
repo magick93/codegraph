@@ -53,7 +53,7 @@ jobs:
       # Issue #733: the child-tenancy and media-runtime gates drive the `psql`
       # binary through the test framework, so the runner needs a client.
       - name: Install psql
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: scripts/ci/apt-install.sh --if-missing psql postgresql-client
       - name: Install Playwright chromium
         run: npx --yes playwright@1.62.0 install --with-deps chromium
       - name: Run IFML codegen gate
