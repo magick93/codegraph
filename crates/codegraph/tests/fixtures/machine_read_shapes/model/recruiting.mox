@@ -19,9 +19,9 @@
 // under `PositionOpeningType` in domains.toml. Its query plane loads
 // through `find_by_id_scoped`, and the read model now does too.
 //
-// Shape 4 (issue #827, negative) — a machine-bearing child whose design
-// exposes no `findById` (`InterviewNoteType`): no `read` op, no loader,
-// the read model stays withheld with a Warning.
+// Shape 4 (issue #827, negative) — a machine-bearing child with no
+// repository (`InterviewNoteType`): an empty op set, no `read` op, no
+// loader; the read model stays withheld with a Warning.
 package nz.example.recruiting
 
 enum ApplicationDisposition {

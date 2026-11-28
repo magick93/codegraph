@@ -448,7 +448,10 @@ impl RepositoryImplEmitter {
         if needs_find_by_id {
             self.emit_find_by_id_fn(&tree, &mut code);
         }
-        if tree.parent_ref.is_some() {
+        // The trait declares the scoped loader only for an entity with a
+        // `read` op (repository.tera) — an empty op set (a design without a
+        // repository) must not emit an impl method the trait lacks (E0407).
+        if tree.has_read && tree.parent_ref.is_some() {
             self.emit_find_by_id_scoped_fn(&tree, &mut code);
         }
         if tree.has_update {

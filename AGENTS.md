@@ -7327,8 +7327,17 @@ spelling).
   parent-scoped member on a FLAT route stays withheld with a Warning naming
   the fix (`role = "child"` + `parent`/`parent_ref`). Roots are
   byte-identical. Fixture: `InterviewType` (served, scoped) +
-  `InterviewNoteType` (no `findById`, withheld) in
+  `InterviewNoteType` (no repository, withheld) in
   `tests/fixtures/machine_read_shapes`.
+- **Repository gate (found by the #827 compile pin)**: both repository
+  impls (SeaORM `repository_emitter/emitter.rs`, cornucopia
+  `cornucopia_repo.rs`) emit `find_by_id_scoped` only when the entity has a
+  `read` op AND a parent reference — the trait's own gate
+  (`repository.tera`). A parent-scoped design without a repository used to
+  emit an impl method its trait lacked (E0407), the #449 empty-op-set
+  invariant again. Recorded gap (not fixed): a parent-scoped design whose
+  repository declares `save` but no `findById` still does not compile (its
+  handler/command planes call `find_by_id`).
 - **Deferred**: mounting `/machine` under the workers topology (the UI
   emits the read-model contract while the route is monolith-only — the
   #703 posture, unchanged here).

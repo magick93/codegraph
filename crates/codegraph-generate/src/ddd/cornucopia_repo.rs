@@ -298,7 +298,9 @@ fn emit_adapter(
     }
 
     // ── find_by_id_scoped ───────────────────────────────────────────────
-    if tree.parent_ref.is_some() {
+    // Gated like the trait method (repository.tera: `has_read` and a
+    // parent reference) — never an impl method the trait lacks (E0407).
+    if tree.has_read && tree.parent_ref.is_some() {
         emit_adapter_find_by_id_scoped(tree, &mut code);
     }
 

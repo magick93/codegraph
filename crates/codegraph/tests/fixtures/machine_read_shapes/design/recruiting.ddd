@@ -55,12 +55,9 @@ application Recruiting {
             terminal Held;
             terminal Cancelled;
         }
-        // Shape 4 (issue #827, negative): a parent-scoped member whose
-        // design exposes no `findById` — no `read` op, no loader.
-        entity InterviewNoteType scaffold repository InterviewNoteRepository {
-            findAll;
-            save;
-        }
+        // Shape 4 (issue #827, negative): a parent-scoped member with no
+        // repository — an empty op set, so no `read` op and no loader.
+        entity InterviewNoteType
         machine noteStatus: InterviewNoteStatus {
             initial Draft;
             Draft -> Filed via File;
