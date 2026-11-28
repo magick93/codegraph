@@ -590,12 +590,22 @@ fn check_mox_files(
         return (hard, soft);
     }
 
+    // The run path's sigil gather (issue #608) — doctor and `run` must
+    // compile the same workspace; a missing named import is the same hard
+    // failure on both.
+    let sigil = match crate::ingest::phero_imports::sigil_imports_for_mox(&sources) {
+        Ok(sigil) => sigil,
+        Err(e) => {
+            println!("FAIL mox — {e}");
+            return (hard + 1, soft);
+        }
+    };
     // Union compile: one workspace, diagnostics tagged with their file path.
     let compilation = phero_driver::compile_files(
         &sources,
         &phero_driver::DomainImports {
             schemas: schema_imports,
-            sigil: phero_driver::SigilImports::new(),
+            sigil,
         },
     );
     for (p, diagnostic) in &compilation.diagnostics {
@@ -1194,14 +1204,20 @@ fn check_extension_points(
                 &sources,
                 &phero_driver::DomainImports {
                     schemas: phero_driver::SchemaImports::new(),
-                    sigil: phero_driver::SigilImports::new(),
+                    // A missing sigil import is reported by check_mox_files.
+                    sigil: crate::ingest::phero_imports::sigil_imports_for_mox(&sources)
+                        .unwrap_or_default(),
                 },
             );
             if let Some(model) = compilation.model {
                 let suffix = &cfg.defaults.type_suffix;
+                let sigil_domains =
+                    crate::ingest::mox_ingest::sigil_package_domains(&model, &sources, cfg);
                 for package in &model.packages {
-                    let (domain, matched) =
-                        crate::ingest::mox_ingest::resolve_domain(cfg, &package.name);
+                    let (domain, matched) = match sigil_domains.get(&package.name) {
+                        Some(domain) => (domain.clone(), true),
+                        None => crate::ingest::mox_ingest::resolve_domain(cfg, &package.name),
+                    };
                     if !matched {
                         continue;
                     }

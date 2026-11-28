@@ -219,9 +219,22 @@ fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorModel
         .iter()
         .map(|d| (d.path.clone(), d.source.clone()))
         .collect();
+    // `import sigil` in the policy's domains (issue #608), resolved against
+    // each domain's own directory.
+    let mut sigil = SigilImports::new();
+    for domain in &domains {
+        if let Err(e) = crate::ingest::phero_imports::insert_sigil_imports(
+            &mut sigil,
+            &domain.path,
+            &domain.source,
+            &domain.dir,
+        ) {
+            eprintln!("Warning: policy import '{raw}': {e}");
+        }
+    }
     let imports = DomainImports {
         schemas: schema_imports,
-        sigil: SigilImports::new(),
+        sigil,
     };
     let inputs = CompileInputs::from_domains(&domain_pairs).with_imports(imports);
     let compilation = compile_actors_str(raw, source, &inputs);

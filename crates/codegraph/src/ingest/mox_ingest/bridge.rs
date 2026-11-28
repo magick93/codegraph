@@ -47,6 +47,8 @@ pub(super) struct MoxBridge<'a> {
     mox: MoxDomainModel,
     unmatched_with_behavior: Vec<String>,
     pending_alias_refs: Vec<PendingAliasRef>,
+    /// Domain overrides for sigil-lowered packages (issue #608).
+    package_domains: HashMap<String, String>,
 }
 
 impl<'a> MoxBridge<'a> {
@@ -81,7 +83,22 @@ impl<'a> MoxBridge<'a> {
             mox: MoxDomainModel::default(),
             unmatched_with_behavior: Vec::new(),
             pending_alias_refs: Vec::new(),
+            package_domains: HashMap::new(),
         }
+    }
+
+    /// Route the given packages to fixed domains (the sigil-import fallback,
+    /// [`super::sigil_package_domains`]).
+    pub(super) fn with_package_domains(mut self, package_domains: HashMap<String, String>) -> Self {
+        self.package_domains = package_domains;
+        self
+    }
+
+    fn domain_for(&self, package: &str) -> String {
+        self.package_domains
+            .get(package)
+            .cloned()
+            .unwrap_or_else(|| resolve_domain(self.domain_config, package).0)
     }
 
     /// ── Namespace bridge (issue #268): `package <dotted.name>` declarations
@@ -130,7 +147,7 @@ impl<'a> MoxBridge<'a> {
                     self.stats.skipped += 1;
                     continue;
                 }
-                let (domain, _) = resolve_domain(self.domain_config, &package.name);
+                let domain = self.domain_for(&package.name);
                 let schema_id = format!("{}/{}", package.name, class.name);
                 self.class_schema_ids
                     .insert(class.name.clone(), schema_id.clone());
@@ -154,7 +171,7 @@ impl<'a> MoxBridge<'a> {
                 if !seen_enums.insert(enum_def.name.clone()) {
                     continue;
                 }
-                let (domain, _) = resolve_domain(self.domain_config, &package.name);
+                let domain = self.domain_for(&package.name);
                 let schema_id = format!("{}/{}", package.name, enum_def.name);
                 self.enum_index.push(EnumEntry {
                     enum_def,
