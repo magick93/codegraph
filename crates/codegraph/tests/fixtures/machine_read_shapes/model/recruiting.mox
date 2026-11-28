@@ -43,6 +43,11 @@ enum InterviewStatus {
     Cancelled = 2
 }
 
+enum InterviewNoteStatus {
+    Draft = 0
+    Filed = 1
+}
+
 class CandidateType {
     String candidateId
     contains Application[] applications opposite candidate
@@ -66,5 +71,5 @@ class InterviewType {
 
 class InterviewNoteType {
     String noteId
-    InterviewStatus noteStatus
+    InterviewNoteStatus noteStatus
 }

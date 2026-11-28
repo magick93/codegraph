@@ -2,9 +2,7 @@
 <!-- Form component for GenderCodeList. -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import Button from '@community-os/ui/Button.svelte';
-	import Input from '@community-os/ui/Input.svelte';
-	import Select from '@community-os/ui/Select.svelte';
+	import { Button, Input, Select } from '@app/ui';
 	import { api } from '$lib/api';
 	import type { GenderCodeListResponse } from '#lib/api/types.ts';
 

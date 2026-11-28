@@ -186,38 +186,10 @@ fn install_vendored_ui_packages() -> Result<(), String> {
     }
     fs::write(&pkg_path, pkg).map_err(|e| e.to_string())?;
 
-    // The fixture's hand-authored pages (ui/forms/*) import the consumer's
-    // real design system and api module — stub them so the check resolves.
-    let community = stubs.join("@community-os").join("ui");
-    fs::create_dir_all(&community).map_err(|e| e.to_string())?;
-    fs::write(
-        community.join("package.json"),
-        r#"{ "name": "@community-os/ui", "version": "0.0.0" }"#,
-    )
-    .map_err(|e| e.to_string())?;
-    for component in ["Button", "Input", "Select"] {
-        fs::write(
-            community.join(format!("{component}.svelte")),
-            "<!-- Gate-owned stub (entity ui gate). -->\n<script lang=\"ts\">\n\timport type { Snippet } from 'svelte';\n\tlet { children, value = $bindable(''), ...rest }: {\n\t\tchildren?: Snippet;\n\t\tvalue?: string;\n\t\t[key: string]: unknown;\n\t} = $props();\n</script>\n\n{@render children?.()}\n",
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    let pkg_path = ui_dir().join("package.json");
-    let pkg = fs::read_to_string(&pkg_path).map_err(|e| e.to_string())?;
-    // The hand-authored forms import @community-os/ui WITHOUT declaring it
-    // (the consumer monorepo resolves it implicitly) — add the file: dep.
-    let patched = if pkg.contains("@community-os/ui") {
-        pkg.replace(
-            "\"@community-os/ui\": \"workspace:*\"",
-            "\"@community-os/ui\": \"file:stubs/@community-os/ui\"",
-        )
-    } else {
-        pkg.replace(
-            "\"@app/ui\": \"file:stubs/@app/ui\"",
-            "\"@app/ui\": \"file:stubs/@app/ui\",\"@community-os/ui\": \"file:stubs/@community-os/ui\"",
-        )
-    };
-    fs::write(&pkg_path, patched).map_err(|e| e.to_string())?;
+    // The fixture's `ui/forms/*` (the `ui-form` generator) import their
+    // Button/Input/Select from the vendored `@app/ui` above (issue #860 —
+    // formerly a private `@community-os/ui` the gate had to stub), and the
+    // consumer api module below.
     // The consumer api module the hand-authored forms import. Written
     // unconditionally so stub edits land (the src tree persists runs).
     let api_index = ui_dir().join("src/lib/api/index.ts");
@@ -828,11 +800,11 @@ fn one_based(position: u64) -> u32 {
 /// output and must typecheck clean — the allowlist is fail-closed (a new
 /// generated directory is asserted by default).
 ///
-/// `forms/` (top-level, NOT `src/`) is the legacy cosmos form plane whose
-/// imports resolve through the consumer monorepo's design system
-/// (`@community-os/ui`) — the gate stubs that package, so a diagnostic
-/// there measures the stub, not the generator. Its diagnostics are
-/// recorded (printed + written) on every run.
+/// `forms/` (top-level, NOT `src/`) is the legacy cosmos form plane (the
+/// `ui-form` generator). Since issue #860 its primitives come from the
+/// vendored `@app/ui` starters, but it still imports the consumer api
+/// module the gate stubs, so its diagnostics are recorded (printed +
+/// written) on every run rather than asserted.
 fn consumer_owned(path: &str) -> bool {
     matches!(
         path,

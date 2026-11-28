@@ -54,10 +54,8 @@ const MACHINE_ID: &str = "{{ machine_id }}";
 /// entity carries a workflow config.
 pub(crate) async fn machine_read_model(
     state: &AppState,
-    api_key_info: &crate::middleware::ApiKeyInfo,
-{% if scoped_load %}
-    parent_id: Uuid,
-{% endif %}
+    api_key_info: &crate::middleware::ApiKeyInfo,{% if scoped_load %}
+    parent_id: Uuid,{% endif %}
     id: Uuid,
 ) -> Result<MachineReadModelResponse, AppError> {
     let correlation_id = Uuid::new_v4();
