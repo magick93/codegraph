@@ -263,6 +263,7 @@ async fn flag_on_turns_the_refusals_into_hard_errors() {
             workers_topology: false,
             events_producer: true,
             database_target: DatabaseTarget::Postgres,
+            ..Default::default()
         },
     )
     .await;

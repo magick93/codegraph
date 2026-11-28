@@ -15,20 +15,53 @@ use super::when_lower::{InjectedScope, lower_when_scoped, rust_string_literal};
 /// (`route_generator/hydration.rs`): an actor whose snake_case name equals
 /// the account role claims it; otherwise `owner` falls to the first actor
 /// and `member` to the last.
+///
+/// Session kinds (issue #635): the human role arms carry only the grants
+/// that admit HUMAN sessions. Under `api_key_mode = "agent"` the surface
+/// also carries an [`API_KEY_ROLE`] entry — the union of every actor's
+/// effective permits whose grant admits AGENT sessions — and
+/// `agent_mode` drops the API-key bypass, so key sessions are gated by
+/// exactly the same arm renderer as roles (capability, `never_both`,
+/// grant `when`).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PolicySurface {
     pub roles: BTreeMap<String, BTreeMap<String, Vec<Option<String>>>>,
     pub never_both: Vec<Vec<String>>,
+    /// `api_key_mode = "agent"`: the rendered gate has no API-key bypass.
+    pub agent_mode: bool,
 }
+
+/// The session role an API-key session carries (`scaffold/middleware.tera`
+/// sets `role = "api_key"`); under agent mode it is the agent arm's key.
+pub(crate) const API_KEY_ROLE: &str = "api_key";
 
 impl PolicySurface {
     /// Build from the graph readback. `None` when the graph carries no
     /// actors (no policy ingested — capability/SoD gates are skipped with
     /// a warning, the IFML warn-and-continue posture).
-    pub async fn from_graph(db: &dyn GraphQuerier) -> Result<Option<Self>, GraphError> {
+    ///
+    /// Under `api_key_mode = "agent"` a policy-less graph still yields a
+    /// surface (an empty agent arm): with nothing granted, key sessions
+    /// hold no capability — the agent mode never silently re-opens the
+    /// bypass.
+    pub async fn from_graph(
+        db: &dyn GraphQuerier,
+        authz: crate::profile::ApiKeyAuthz,
+    ) -> Result<Option<Self>, GraphError> {
+        use codegraph_core::types::GrantSessionKind;
+        let agent_mode = authz.mode == crate::profile::ApiKeyMode::Agent;
         let actors = db.get_actors().await?;
         if actors.is_empty() {
-            return Ok(None);
+            if !agent_mode {
+                return Ok(None);
+            }
+            let mut roles = BTreeMap::new();
+            roles.insert(API_KEY_ROLE.to_string(), BTreeMap::new());
+            return Ok(Some(Self {
+                roles,
+                never_both: Vec::new(),
+                agent_mode,
+            }));
         }
         let grants = db.get_grants().await?;
         let actor_names: Vec<String> = actors.iter().map(|a| a.name.clone()).collect();
@@ -43,6 +76,9 @@ impl PolicySurface {
                 for permit in
                     codegraph_core::types::resolve_effective_permits(&actors, &grants, actor)
                 {
+                    if !authz.admits(permit.session_kind, GrantSessionKind::Human) {
+                        continue;
+                    }
                     let entry = permits.entry(permit.capability.clone()).or_default();
                     let when = permit.when.clone();
                     if !entry.contains(&when) {
@@ -51,6 +87,28 @@ impl PolicySurface {
                 }
             }
             roles.insert(role.to_string(), permits);
+        }
+        if agent_mode {
+            // A key session is an agent principal, not any one actor: it
+            // holds every permit some actor's grant admits for agent
+            // sessions (forbid already won inside each actor's chain).
+            let mut permits: BTreeMap<String, Vec<Option<String>>> = BTreeMap::new();
+            for actor in &actor_names {
+                for permit in
+                    codegraph_core::types::resolve_effective_permits(&actors, &grants, actor)
+                {
+                    if permit.effect != "permit"
+                        || !authz.admits(permit.session_kind, GrantSessionKind::Agent)
+                    {
+                        continue;
+                    }
+                    let entry = permits.entry(permit.capability.clone()).or_default();
+                    if !entry.contains(&permit.when) {
+                        entry.push(permit.when.clone());
+                    }
+                }
+            }
+            roles.insert(API_KEY_ROLE.to_string(), permits);
         }
         let never_both = db
             .get_actor_policy()
@@ -63,7 +121,11 @@ impl PolicySurface {
                     .collect()
             })
             .unwrap_or_default();
-        Ok(Some(Self { roles, never_both }))
+        Ok(Some(Self {
+            roles,
+            never_both,
+            agent_mode,
+        }))
     }
 
     /// The capabilities that conflict with `capabilities` under
@@ -80,6 +142,62 @@ impl PolicySurface {
             }
         }
         conflicts
+    }
+}
+
+/// How an API-key session fares at an op's capability gate (issue #635) —
+/// the decision [`render_authorize_fn_with_injected`] renders for the
+/// [`API_KEY_ROLE`] arm, restated as data for the hurl contract planner.
+/// Mirrors the renderer exactly: a `never_both` conflict the arm holds
+/// denies; an unconditional permit admits; only-`when`-guarded permits are
+/// conditional; holding nothing denies.
+pub(crate) fn api_key_gate(
+    surface: Option<&PolicySurface>,
+    capabilities: &[String],
+) -> super::types::ApiKeyGate {
+    use super::types::ApiKeyGate;
+    let Some(policy) = surface.filter(|p| p.agent_mode) else {
+        return ApiKeyGate::Unaffected;
+    };
+    if capabilities.is_empty() {
+        return ApiKeyGate::Unaffected;
+    }
+    let empty = BTreeMap::new();
+    let arm = policy.roles.get(API_KEY_ROLE).unwrap_or(&empty);
+    let held: Vec<&String> = capabilities
+        .iter()
+        .filter(|c| arm.contains_key(*c))
+        .collect();
+    if held.is_empty() {
+        return ApiKeyGate::Denied {
+            reason: format!(
+                "capability `{}` is not granted to agent sessions",
+                capabilities.join("`, `")
+            ),
+        };
+    }
+    let conflicts: Vec<String> = policy
+        .sod_conflicts(capabilities)
+        .into_iter()
+        .filter(|c| arm.contains_key(c))
+        .collect();
+    if !conflicts.is_empty() {
+        return ApiKeyGate::Denied {
+            reason: format!(
+                "separation of duties: agent sessions hold `{}`, which is `never_both` with `{}`",
+                conflicts.join("`, `"),
+                capabilities.join("`, `")
+            ),
+        };
+    }
+    let unconditional = held.iter().any(|c| {
+        arm.get(*c)
+            .is_some_and(|whens| whens.iter().any(Option::is_none))
+    });
+    if unconditional {
+        ApiKeyGate::Admitted
+    } else {
+        ApiKeyGate::Conditional
     }
 }
 
@@ -259,6 +377,15 @@ pub(crate) fn render_authorize_fn_with_injected(
              loaded record, so generation refuses"
         ));
     }
+    let agent_mode = surface.is_some_and(|policy| policy.agent_mode);
+    let key_note = if agent_mode {
+        "/// API-key sessions are agent principals (`api_key_mode = \"agent\"`,\n\
+         /// issue #635): they hold the permits granted to agent sessions and\n\
+         /// are gated like a role (RLS scopes still apply).\n"
+    } else {
+        "/// API-key sessions bypass the policy gates (RLS scopes still\n\
+         /// apply) so contract suites and service callers keep working.\n"
+    };
     let mut out = String::new();
     let mut body = String::new();
     if injected.is_empty() {
@@ -275,8 +402,7 @@ pub(crate) fn render_authorize_fn_with_injected(
              ///\n\
              /// Encodes the actor policy at generation time: capability\n\
              /// membership{membership_note}\n\
-             /// API-key sessions bypass the policy gates (RLS scopes still\n\
-             /// apply) so contract suites and service callers keep working.\n\
+             {key_note}\
              #[allow(clippy::result_large_err)]\n\
              fn service_op_{snake}_authorize(\n    \
                  role: &str,\n{response_param}\
@@ -293,6 +419,7 @@ pub(crate) fn render_authorize_fn_with_injected(
                  /// op body is a 501 seam regardless)."
             },
             response_param = response_param,
+            key_note = key_note,
         ));
     } else {
         out.push_str(&format!(
@@ -304,8 +431,7 @@ pub(crate) fn render_authorize_fn_with_injected(
              /// plus the injected-scope `when` guard (issue #663): every\n\
              /// injected scope loads through the repository plane's own query\n\
              /// (RLS-scoped by the session context) before the guard evaluates.\n\
-             /// API-key sessions bypass the policy gates (RLS scopes still\n\
-             /// apply) so contract suites and service callers keep working.\n\
+             {key_note}\
              #[allow(clippy::result_large_err)]\n\
              async fn service_op_{snake}_authorize(\n    \
                  state: &AppState,\n    \
@@ -362,12 +488,16 @@ pub(crate) fn render_authorize_fn_with_injected(
                  return Err({message}.to_string());\n            }}\n"
         ));
     }
-    body.push_str(
-        "    if role == \"api_key\" {\n                \
-             return Ok(());\n            \
-         }\n\
-         match role {\n",
-    );
+    if agent_mode {
+        body.push_str("    match role {\n");
+    } else {
+        body.push_str(
+            "    if role == \"api_key\" {\n                \
+                 return Ok(());\n            \
+             }\n\
+             match role {\n",
+        );
+    }
     out.push_str(&body);
     let conflicts = surface
         .map(|policy| policy.sod_conflicts(capabilities))
@@ -378,6 +508,16 @@ pub(crate) fn render_authorize_fn_with_injected(
             .filter(|c| permits.contains_key(*c))
             .collect();
         if held.is_empty() {
+            if agent_mode && role == API_KEY_ROLE {
+                out.push_str(&format!(
+                    "        \"api_key\" => Err({}.to_string()),\n",
+                    rust_string_literal(&format!(
+                        "capability `{}` is not granted to agent sessions \
+                         (api_key_mode = \"agent\")",
+                        capabilities.join("`, `")
+                    ))
+                ));
+            }
             continue;
         }
         out.push_str(&format!(

@@ -242,6 +242,7 @@ fn expr_json_round_trips_through_serde_when_present() {
         effect: "permit".to_string(),
         when: Some("amount > 0".to_string()),
         obligations: vec![],
+        session_kind: Default::default(),
         expr_json: Some(r#"{"kind":"binary"}"#.to_string()),
     };
     let text = serde_json::to_string(&edge).expect("serialize");

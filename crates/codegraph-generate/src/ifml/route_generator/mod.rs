@@ -199,7 +199,8 @@ impl GlobalGenerator for IfmlRouteGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let querier = IfmlGraphQuerier::new(db);
+        let querier =
+            IfmlGraphQuerier::new(db).with_unmodified_grants(project.codegen.unmodified_grants);
         let model = querier
             .get_ifml_model()
             .await

@@ -66,6 +66,12 @@ fn write_invariant_profiles(dir: &Path) -> std::path::PathBuf {
 }
 
 fn write_profiles_inner(dir: &Path, with_rules: bool) -> std::path::PathBuf {
+    write_profiles_with(dir, with_rules, "")
+}
+
+/// [`write_profiles_inner`] plus extra `[features]` lines (issue #635: the
+/// agent-mode leg injects `api_key_mode = "agent"`).
+fn write_profiles_with(dir: &Path, with_rules: bool, extra_features: &str) -> std::path::PathBuf {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
     let type_contracts = workspace_root.join("crates/codegraph-type-contracts");
@@ -85,7 +91,7 @@ fn write_profiles_inner(dir: &Path, with_rules: bool) -> std::path::PathBuf {
     );
     text = text.replace(
         "[profiles.default.features]\n",
-        "[profiles.default.features]\ndependency_strategy = \"path\"\n",
+        &format!("[profiles.default.features]\ndependency_strategy = \"path\"\n{extra_features}"),
     );
     if with_rules {
         // The workspace profile declares `rosetta_backend = false` — flip
@@ -800,4 +806,60 @@ async fn generated_app_with_machine_read_shapes_compiles() {
 
     codegraph::driver::check_generated_output(&output)
         .expect("the generated app with both machine read-model shapes must compile");
+}
+
+/// Issue #635: the `api_key_mode = "agent"` plane compiles — the key arm
+/// rendered like a role (capability membership, the `never_both` denial the
+/// fixture's merged policy forces, grant `when`s), the `app.session_kind`
+/// bind in BOTH session bundles (command + query), and the kind-keyed role
+/// gate migration.
+#[tokio::test]
+#[ignore = "slow: cargo check over the generated app; needs the full dep stack"]
+async fn generated_app_in_api_key_agent_mode_compiles() {
+    let fixture = write_fixture_in("service_ops_agent_gate", PAYROLL_DDD);
+    let _engine = ingest(&fixture).await;
+
+    let out_dir = gate_tempdir();
+    let output = out_dir.path().join("app");
+    fs::create_dir_all(&output).unwrap();
+    let fixture_root = fixture.config.parent().unwrap().to_path_buf();
+    let profiles_path = write_profiles_with(&fixture_root, false, "api_key_mode = \"agent\"\n");
+
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &fixture.config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles_path),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: std::slice::from_ref(&fixture.mox),
+        rosetta_files: &[],
+        ddd_files: std::slice::from_ref(&fixture.ddd),
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("generation in agent mode must succeed");
+
+    let handler = fs::read_to_string(output.join("src/api/payroll/pay_run_handler.rs")).unwrap();
+    assert!(
+        !handler.contains(r#"if role == "api_key""#) && handler.contains("\"api_key\" =>"),
+        "the agent arm must replace the bypass before the build spend"
+    );
+
+    codegraph::driver::check_generated_output(&output)
+        .expect("the generated app in api_key agent mode must pass the compile gate");
 }

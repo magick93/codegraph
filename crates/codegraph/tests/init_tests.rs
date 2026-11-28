@@ -589,6 +589,64 @@ generators = ["ddl"]
     );
 }
 
+/// Issue #635: doctor resolves the API-key authorization modes through the
+/// SAME plan parse the run path uses — `agent` resolves; a reserved mode
+/// (`per_key`) is a hard failure naming the slice, never a partial mode.
+#[test]
+fn doctor_resolves_api_key_modes_and_refuses_reserved_ones() {
+    let doctor = |mode: &str| {
+        let dir = TempDir::new().unwrap();
+        cmd_init(&init_args(dir.path(), "demo-app", Some(repo_root()), false)).unwrap();
+        let project = dir.path().join("demo-app");
+        fs::write(
+            project.join("profiles.toml"),
+            format!(
+                r#"[profiles.default.meta]
+name = "demo-app"
+version = "0.1.0"
+description = ""
+
+[profiles.default.features]
+api_key_mode = "{mode}"
+
+[profiles.default.api]
+generators = ["ddl"]
+"#
+            ),
+        )
+        .unwrap();
+        cmd_doctor(&DoctorArgs {
+            config: project.join("domains.toml"),
+            schemas: None,
+            classifier: None,
+            profiles_config: Some(project.join("profiles.toml")),
+            mox_files: vec![project.join("model/common.mox")],
+            rosetta_files: vec![],
+            ddd_files: vec![],
+            evt_files: vec![],
+            deploy_files: vec![],
+            ifml_files: vec![],
+            extension_points: None,
+            fail_on_findings: false,
+            graph_artifact: None,
+            emit_graph: None,
+            graph_reachability: vec![],
+        })
+    };
+    assert_eq!(
+        doctor("agent").unwrap().hard_failures,
+        0,
+        "agent mode must resolve"
+    );
+    assert_eq!(
+        doctor("bypass").unwrap().hard_failures,
+        0,
+        "bypass mode must resolve"
+    );
+    let err = doctor("per_key").expect_err("per_key is reserved (issue #635 slice 2)");
+    assert!(err.to_string().contains("1 hard check(s) failed"), "{err}");
+}
+
 /// A schemas directory that exists but is empty is still a misconfiguration
 /// in mox mode — the WARN stays.
 #[test]

@@ -506,6 +506,49 @@ fn rbac_roles_renders_hierarchy_rank_helpers() {
     assert!(sql.contains("'ROLE_FORBIDDEN'"));
     // The retired fixed-matrix function is gone.
     assert!(!sql.contains("enforce_role_action"));
+    // Default `api_key_mode = "bypass"`: the role-literal pass-through.
+    assert!(sql.contains("IF v_role = '' OR v_role = 'api_key' THEN"));
+    assert!(!sql.contains("app.session_kind"));
+}
+
+/// Issue #635: under `api_key_mode = "agent"` the role gate's key-session
+/// pass-through keys on `app.session_kind`, never on the role literal.
+#[test]
+fn rbac_role_gate_keys_on_session_kind_in_agent_mode() {
+    let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = crate::template_engine::create_tera(&template_dir).unwrap();
+    let mut project = crate::ProjectConfig::default();
+    project.codegen.api_key_mode = crate::profile::ApiKeyMode::Agent;
+    let ctx = serde_json::json!({ "roles_hierarchy": ["owner", "manager", "member"] });
+    let sql = render_template_with_project(&tera, "db/rbac_roles.tera", &ctx, &project).unwrap();
+    assert!(
+        sql.contains(
+            "IF v_role = '' OR coalesce(current_setting('app.session_kind', true), '') = 'agent' THEN"
+        ),
+        "{sql}"
+    );
+    assert!(!sql.contains("v_role = 'api_key'"), "{sql}");
+
+    // The live DB leg (`codegraph-ops` `authz_contract`) installs exactly
+    // this function from a committed fixture — held byte-equal here so the
+    // live proof cannot drift from the template. Re-bless with
+    // `ROLE_GATE_BLESS=1`.
+    let start = sql
+        .find("CREATE OR REPLACE FUNCTION public.role_at_least")
+        .expect("role_at_least");
+    let end = start + sql[start..].find("$function$;").expect("function end") + "$function$;".len();
+    let rendered = format!("{}\n", &sql[start..end]);
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../codegraph-ops/tests/fixtures/role_at_least_agent.sql");
+    if std::env::var_os("ROLE_GATE_BLESS").is_some() {
+        std::fs::write(&fixture, &rendered).unwrap();
+    }
+    assert_eq!(
+        std::fs::read_to_string(&fixture).unwrap_or_default(),
+        rendered,
+        "the authz_contract agent-mode fixture drifted from db/rbac_roles.tera \
+         (re-bless with ROLE_GATE_BLESS=1)"
+    );
 }
 
 fn test_context() -> DdlContext {

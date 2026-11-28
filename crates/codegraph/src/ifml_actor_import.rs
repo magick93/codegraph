@@ -284,6 +284,7 @@ pub fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
                     when: entry.when.clone(),
                     expr_json: crate::expr_json::when_expr_json(entry.when.as_deref()),
                     obligations: entry.obligations.clone(),
+                    session_kind: session_kind(entry.session_kind),
                 });
             }
         }
@@ -312,6 +313,7 @@ pub fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
                         when: entry.when.clone(),
                         expr_json: crate::expr_json::when_expr_json(entry.when.as_deref()),
                         obligations: entry.obligations.clone(),
+                        session_kind: session_kind(entry.session_kind),
                     })
                     .collect(),
             });
@@ -396,5 +398,16 @@ async fn validate_views(querier: &dyn GraphQuerier, model: &IfmlModel) {
                 );
             }
         }
+    }
+}
+
+/// Mirror phero-ir's grant-entry session kind (issue #635). Exhaustive so a
+/// new upstream kind is a compile error here, never a silent `Any`.
+fn session_kind(kind: phero_ir::SessionKind) -> codegraph_core::types::GrantSessionKind {
+    use codegraph_core::types::GrantSessionKind;
+    match kind {
+        phero_ir::SessionKind::Human => GrantSessionKind::Human,
+        phero_ir::SessionKind::Agent => GrantSessionKind::Agent,
+        phero_ir::SessionKind::Any => GrantSessionKind::Any,
     }
 }

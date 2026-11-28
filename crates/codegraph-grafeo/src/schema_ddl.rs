@@ -102,7 +102,12 @@
 /// persisted by a pre-#815 binary serves no machine IR — the compiled
 /// artifact the machine kernel emitter embeds and validates is exactly
 /// what it silently lacks. Cold re-ingest instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 15;
+///
+/// Bumped to 16 for grant session kinds (issue #635): the `Grant` edge
+/// gains a nullable `session_kind` prop. A cached graph persisted by a
+/// pre-#635 binary reads every grant as `any` — a `permit human X` would
+/// admit agent sessions (fail-open). Cold re-ingest instead.
+pub const GRAPH_FORMAT_VERSION: u32 = 16;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact
@@ -845,7 +850,7 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS MembershipInTenant",
         "CREATE EDGE TYPE IF NOT EXISTS HasRole",
         // Authorization metamodel edge types
-        "CREATE EDGE TYPE IF NOT EXISTS Grant (effect STRING NOT NULL, when_expr STRING, obligations STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS Grant (effect STRING NOT NULL, when_expr STRING, obligations STRING, session_kind STRING)",
         // mox domain metamodel edge types
         "CREATE EDGE TYPE IF NOT EXISTS BelongsToClass ()",
         "CREATE EDGE TYPE IF NOT EXISTS VocabularyInPackage ()",

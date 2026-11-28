@@ -3489,6 +3489,7 @@ async fn run_media_pipeline(
         deployment_topology: topology,
         dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
         event_envelope: codegraph_generate::events::EnvelopeVariant::Native,
+        api_key_authz: codegraph_generate::profile::ApiKeyAuthz::default(),
         event_idempotency: false,
         event_archive: false,
         events_producer: false,

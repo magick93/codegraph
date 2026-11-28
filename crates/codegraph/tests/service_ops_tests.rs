@@ -2951,3 +2951,198 @@ async fn body_driven_selector_resolves_against_the_current_state() {
     let actions = read(&actions_file(out.path(), "_pay_run_actions.hurl"));
     assert_eq!(status_after(&actions, "/actions/archive"), Some(200));
 }
+
+// ── API-key authorization modes (issue #635) ────────────────────────────
+
+/// Every generated `.rs` file under `root` whose text contains `needle`.
+fn files_containing(root: &Path, needle: &str) -> Vec<(PathBuf, String)> {
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(text) = fs::read_to_string(&path)
+                && text.contains(needle)
+            {
+                found.push((path, text));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+#[tokio::test]
+async fn api_key_agent_mode_gates_key_sessions_in_handler_bundle_and_role_gate() {
+    let fixture = write_fixture_in("service_ops_agent_mode", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let authz = codegraph::profile::ApiKeyAuthz {
+        mode: codegraph::profile::ApiKeyMode::Agent,
+        ..Default::default()
+    };
+    let report = fixture::run_generation_in_mode(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+        authz,
+    )
+    .await
+    .unwrap();
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    // ── handler: no bypass; the key session is gated like a role ──
+    let handler = read(&out.path().join("src/api/payroll/pay_run_handler.rs"));
+    assert!(!handler.contains(r#"if role == "api_key""#), "{handler}");
+    assert!(
+        handler.contains("API-key sessions are agent principals"),
+        "{handler}"
+    );
+    // The fixture grants are all unmodified (`any`), so the agent arm holds
+    // the union of every actor's permits — including BOTH sides of
+    // never_both(PreparePayRun, ApprovePayRun): separation of duty now binds
+    // key sessions (the one deliberate tightening).
+    let approve_start = handler
+        .find("fn service_op_approve_authorize")
+        .expect("approve authorize fn");
+    let approve_fn = &handler[approve_start..];
+    let approve_fn = &approve_fn[..approve_fn.find("\n}\n").unwrap()];
+    assert!(
+        approve_fn.contains("separation of duties: role `api_key` holds `PreparePayRun`"),
+        "{approve_fn}"
+    );
+    // Inspect is Manager-granted; the key arm holds it unconditionally.
+    let inspect_start = handler
+        .find("fn service_op_inspect_authorize")
+        .expect("inspect authorize fn");
+    let inspect_fn = &handler[inspect_start..];
+    let inspect_fn = &inspect_fn[..inspect_fn.find("\n}\n").unwrap()];
+    assert!(inspect_fn.contains("\"api_key\" => {"), "{inspect_fn}");
+
+    // ── the request bundle carries app.session_kind on both planes ──
+    let bundles = files_containing(out.path(), "async fn set_rls_session_vars");
+    assert!(!bundles.is_empty(), "no session bundle emitted");
+    for (path, text) in &bundles {
+        assert!(
+            text.contains("set_config('app.session_kind', '{}', true)")
+                || text.contains("&\"app.session_kind\""),
+            "{} must set app.session_kind:\n{text}",
+            path.display()
+        );
+        assert!(
+            text.contains(r#"(if role == "api_key" { "agent" } else { "human" })"#),
+            "{}",
+            path.display()
+        );
+    }
+
+    // ── the DB role gate keys on the session kind, not the role literal ──
+    let rbac = files_containing(out.path(), "FUNCTION public.role_at_least");
+    assert_eq!(rbac.len(), 1, "one role-gate migration");
+    assert!(
+        rbac[0]
+            .1
+            .contains("current_setting('app.session_kind', true), '') = 'agent'")
+    );
+    assert!(!rbac[0].1.contains("v_role = 'api_key'"));
+
+    // ── the actions contract pins the key arm's verdict ──
+    let actions = read(&actions_file(out.path(), "_pay_run_actions.hurl"));
+    assert!(
+        actions
+            .contains("service op `approve` (service `PayRunService`) — api_key_mode = \"agent\""),
+        "the SoD-denied approve must carry the agent-mode note:\n{actions}"
+    );
+    assert_eq!(
+        status_after(&actions, "service op `approve`"),
+        Some(403),
+        "approve: SoD binds the agent arm:\n{actions}"
+    );
+    assert_ne!(
+        status_after(&actions, "service op `inspect`"),
+        Some(403),
+        "inspect: the agent arm holds it unconditionally:\n{actions}"
+    );
+}
+
+#[tokio::test]
+async fn api_key_bypass_mode_emits_no_session_kind() {
+    let fixture = write_fixture_in("service_ops_bypass_mode", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+    assert!(
+        files_containing(out.path(), "app.session_kind").is_empty(),
+        "bypass mode must stay byte-identical (no session kind anywhere)"
+    );
+}
+
+#[tokio::test]
+async fn api_key_authz_warnings_name_the_consequence_of_each_mode() {
+    let fixture = write_fixture_in("service_ops_authz_warn", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let warnings = |mode| {
+        let engine = &engine;
+        let config = &config;
+        async move {
+            codegraph::validate::ValidationPass::run_with_options(
+                engine,
+                config,
+                codegraph::validate::ValidationOptions {
+                    api_key_authz: codegraph::profile::ApiKeyAuthz {
+                        mode,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .await
+            .into_iter()
+            .filter(|issue| issue.check == "api_key_authz")
+            .map(|issue| {
+                assert!(matches!(
+                    issue.severity,
+                    codegraph::validate::Severity::Warning
+                ));
+                issue.message
+            })
+            .collect::<Vec<_>>()
+        }
+    };
+
+    // bypass: approve carries a never_both conflict on the Owner arm —
+    // keys skip it under the documented v1 semantics.
+    let bypass = warnings(codegraph::profile::ApiKeyMode::Bypass).await;
+    assert_eq!(bypass.len(), 1, "{bypass:?}");
+    assert!(
+        bypass[0].contains("api_key_mode = \"bypass\"")
+            && bypass[0].contains("PayRunService::approve"),
+        "{bypass:?}"
+    );
+
+    // agent: every fixture grant is unmodified, so the agent arm reaches
+    // every granted capability — nothing is unreachable. (SoD denials are
+    // reported by the handler, not as "unreachable".)
+    let agent = warnings(codegraph::profile::ApiKeyMode::Agent).await;
+    assert!(agent.is_empty(), "{agent:?}");
+}

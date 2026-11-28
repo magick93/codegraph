@@ -1014,6 +1014,11 @@ pub mod compensation {
 }
 "#;
 
+/// The two gate legs share [`tree_root`] (and its build cache), so they
+/// serialize on this lock — a parallel run would regenerate one tree under
+/// the other's cargo check.
+static TREE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Fixed materialization root (same convention as the hooks runtime
 /// harness): survives a failed run so the generated tree can be inspected.
 fn tree_root() -> PathBuf {
@@ -1831,6 +1836,7 @@ async fn build_worker_fixture() -> codegraph_core::mock::MockEngine {
             effect: "permit".to_string(),
             when: None,
             obligations: Vec::new(),
+            session_kind: Default::default(),
             expr_json: None,
         }],
         policy: codegraph_core::types::ActorPolicyNode {
@@ -1995,6 +2001,7 @@ fn worker_build_plan() -> BuildPlan {
         deployment_topology: codegraph::profile::DeploymentTopology::Workers,
         dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
         event_envelope: codegraph::generate::events::EnvelopeVariant::Native,
+        api_key_authz: codegraph::profile::ApiKeyAuthz::default(),
         event_idempotency: false,
         event_archive: false,
         events_producer: false,
@@ -2310,6 +2317,7 @@ fn assert_stub_tripwire(output_dir: &Path) {
 #[tokio::test]
 #[ignore = "compiles a generated workers workspace for native + wasm32: downloads crates.io deps, ~3-6 min cold (needs the wasm32-unknown-unknown target)"]
 async fn generated_worker_wasm_check_is_in_ci() {
+    let _tree = TREE_LOCK.lock().await;
     // ── Fixture: workers topology + extension points, cornucopia provider ──
     let mock = build_worker_fixture().await;
     let config = worker_domain_config();
@@ -2520,4 +2528,106 @@ async fn generated_worker_wasm_check_is_in_ci() {
     );
     fs::write(&trait_path, &trait_original).unwrap();
     fs::write(&adapter_path, &adapter_original).unwrap();
+}
+
+/// Issue #635: the `api_key_mode = "agent"` plane compiles in the
+/// cornucopia worker — natively AND on wasm32. The cornucopia session
+/// bundle gains the `app.session_kind` bind (a 14-parameter execute on the
+/// command plane, 12 on the query plane), and the capability-gated action's
+/// authorize fn renders the `"api_key"` arm instead of the bypass. Green
+/// checks only (the mutation teeth live on the bypass leg above).
+#[tokio::test]
+#[ignore = "compiles a generated workers workspace for native + wasm32: downloads crates.io deps, ~3-6 min cold (needs the wasm32-unknown-unknown target)"]
+async fn generated_worker_in_api_key_agent_mode_checks() {
+    let _tree = TREE_LOCK.lock().await;
+    let mock = build_worker_fixture().await;
+    let config = worker_domain_config();
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = template_engine::create_tera(&template_dir).unwrap();
+
+    let root = tree_root();
+    let _ = fs::remove_dir_all(&root);
+    let output_dir = root.join("app");
+    let domain_types_base = output_dir.join("domain-types");
+    let hooks_tmp = root.join("hooks");
+    fs::create_dir_all(&hooks_tmp).unwrap();
+
+    let ext = worker_extension_points();
+    let repo = repo_root();
+    let mut project = worker_project_config(&repo);
+    project.codegen.api_key_mode = codegraph::profile::ApiKeyMode::Agent;
+    let mut plan = worker_build_plan();
+    plan.api_key_authz.mode = codegraph::profile::ApiKeyMode::Agent;
+
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
+            db: &mock,
+            config: &config,
+            output_dir: &output_dir,
+            tera: &tera,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: Path::new(""),
+            domain_types_base: Some(&domain_types_base),
+            hooks_base: Some(&hooks_tmp),
+            ext_points: Some(&ext),
+            seed_config: None,
+            build_plan: Some(&plan),
+            profile_name: "default",
+            ifml_frameworks: vec![],
+            ifml_components: None,
+            ux_rules: None,
+            project_config: Some(&project),
+            emdash_plugins: None,
+            domain_config_dir: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        !report.has_errors(),
+        "generation should succeed: {}",
+        report.summary()
+    );
+
+    // The agent plane is on disk before the build spend.
+    let worker_src = output_dir.join("workers").join(DOMAIN).join("src");
+    let mut bundles = 0;
+    let mut stack = vec![worker_src.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(text) = fs::read_to_string(&path)
+                && text.contains("async fn set_rls_session_vars")
+            {
+                assert!(
+                    text.contains("&\"app.session_kind\""),
+                    "{} must bind app.session_kind",
+                    path.display()
+                );
+                bundles += 1;
+            }
+        }
+    }
+    assert!(bundles > 0, "no cornucopia session bundle emitted");
+
+    install_cornucopia_stub(&output_dir);
+    assert_stub_tripwire(&output_dir);
+
+    let native = cargo_check(&["check", "-p", WORKER_CRATE]);
+    assert_check_green("native whole-package worker (agent mode)", &native);
+    let wasm_worker = cargo_check(&[
+        "check",
+        "--lib",
+        "-p",
+        WORKER_CRATE,
+        "--no-default-features",
+        "--features",
+        "cloudflare-worker",
+        "--target",
+        "wasm32-unknown-unknown",
+    ]);
+    assert_check_green("wasm32 domain worker lib (agent mode)", &wasm_worker);
 }

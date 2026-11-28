@@ -82,6 +82,10 @@ pub struct IfmlE2eTestGenerator {
     /// The DTO wire-key casing (#539 follow-through): fixture POST bodies
     /// must match the create/update DTOs' serde contract.
     pub(super) dto_casing: DtoKeyCasing,
+    /// API-key authorization modes (issue #635): persona keys are API-key
+    /// sessions, so the action-leg planner reads the same policy surface
+    /// the handler renders from.
+    pub(super) api_key_authz: crate::profile::ApiKeyAuthz,
     /// Required create-body fields the seed projection could not fill
     /// (issue #806). Drained once per run into the run-path WARN and the
     /// emitted `tests/ifml/omitted-specs.md`; interior mutability keeps the
@@ -118,6 +122,7 @@ impl IfmlE2eTestGenerator {
             mappings: None,
             integrated: false,
             dto_casing: DtoKeyCasing::default(),
+            api_key_authz: crate::profile::ApiKeyAuthz::default(),
             seed_gaps: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -126,6 +131,12 @@ impl IfmlE2eTestGenerator {
     /// the build plan in the registry).
     pub fn with_dto_casing(mut self, casing: DtoKeyCasing) -> Self {
         self.dto_casing = casing;
+        self
+    }
+
+    /// Thread the build's API-key authorization modes (issue #635).
+    pub fn with_api_key_authz(mut self, authz: crate::profile::ApiKeyAuthz) -> Self {
+        self.api_key_authz = authz;
         self
     }
 
@@ -319,7 +330,8 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             gaps.clear();
         }
 
-        let querier = IfmlGraphQuerier::new(db);
+        let querier =
+            IfmlGraphQuerier::new(db).with_unmodified_grants(self.api_key_authz.unmodified_grants);
         let model = querier
             .get_ifml_model()
             .await

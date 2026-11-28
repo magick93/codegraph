@@ -357,6 +357,7 @@ async fn flag_on_validation_hard_fails_with_the_documented_sentences() {
             workers_topology: false,
             events_producer: true,
             database_target: DatabaseTarget::Postgres,
+            ..Default::default()
         },
     )
     .await;

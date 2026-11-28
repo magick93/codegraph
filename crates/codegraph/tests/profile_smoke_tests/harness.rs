@@ -161,6 +161,7 @@ pub(crate) async fn run_routing_generators_with_parts(
         deployment_topology: topology,
         dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
         event_envelope: codegraph::generate::events::EnvelopeVariant::Native,
+        api_key_authz: codegraph::profile::ApiKeyAuthz::default(),
         event_idempotency: false,
         event_archive: false,
         events_producer: false,

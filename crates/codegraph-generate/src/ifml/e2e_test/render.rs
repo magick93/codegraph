@@ -636,6 +636,8 @@ pub(crate) fn render_action_spec(
                     // does not have.
                     ActionActKind::Conflict
                     | ActionActKind::Forbidden
+                    | ActionActKind::AgentNotGranted
+                    | ActionActKind::AgentSeparationOfDuty
                     | ActionActKind::NotImplemented => {}
                 }
             }
@@ -671,6 +673,8 @@ pub(crate) fn render_action_spec(
                 }
                 ActionActKind::Conflict
                 | ActionActKind::Forbidden
+                | ActionActKind::AgentNotGranted
+                | ActionActKind::AgentSeparationOfDuty
                 | ActionActKind::NotImplemented => {
                     let fragment = act
                         .kind

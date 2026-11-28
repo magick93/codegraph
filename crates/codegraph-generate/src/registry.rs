@@ -680,7 +680,12 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
                         crate::project_config::DtoKeyCasing::from_config(&plan.dto_key_casing)
                     }
                     None => crate::project_config::DtoKeyCasing::default(),
-                });
+                })
+                .with_api_key_authz(
+                    ctx.build_plan
+                        .map(|plan| plan.api_key_authz)
+                        .unwrap_or_default(),
+                );
             if integrated {
                 // Specs/journeys/bootstrap move under ui/tests/ifml (support
                 // under ui/tests/ifml/support) so they never collide with the
@@ -810,6 +815,7 @@ mod charts_capability_audit {
             deployment_topology: topology,
             dependency_strategy: DependencyStrategy::Rev,
             event_envelope: crate::events::EnvelopeVariant::Native,
+            api_key_authz: crate::profile::ApiKeyAuthz::default(),
             event_idempotency: false,
             event_archive: false,
             events_producer: false,

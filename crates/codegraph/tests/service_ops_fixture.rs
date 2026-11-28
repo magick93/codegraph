@@ -1551,6 +1551,28 @@ pub async fn run_generation_result(
     domain_types_dir: &Path,
     hooks_tmp: &Path,
 ) -> Result<codegraph_generate::report::GenerationReport, codegraph_core::error::Error> {
+    run_generation_in_mode(
+        engine,
+        fixture,
+        output_dir,
+        domain_types_dir,
+        hooks_tmp,
+        codegraph::profile::ApiKeyAuthz::default(),
+    )
+    .await
+}
+
+/// [`run_generation_result`] under an explicit API-key authorization mode
+/// (issue #635): the plan AND the project config carry it, the way the
+/// driver threads it.
+pub async fn run_generation_in_mode(
+    engine: &codegraph_grafeo::GrafeoEngine,
+    fixture: &Fixture,
+    output_dir: &Path,
+    domain_types_dir: &Path,
+    hooks_tmp: &Path,
+    api_key_authz: codegraph::profile::ApiKeyAuthz,
+) -> Result<codegraph_generate::report::GenerationReport, codegraph_core::error::Error> {
     let tera = codegraph::generate::template_engine::create_tera(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("templates"),
     )
@@ -1570,7 +1592,8 @@ pub async fn run_generation_result(
     for section in resolved.sections.values_mut() {
         section.generators.retain(|g| !g.starts_with("grpc_"));
     }
-    let plan = codegraph::profile::BuildPlan::from_profile(&resolved, &registry).unwrap();
+    let mut plan = codegraph::profile::BuildPlan::from_profile(&resolved, &registry).unwrap();
+    plan.api_key_authz = api_key_authz;
 
     let project_config = codegraph::generate::ProjectConfig {
         identity: codegraph::generate::IdentityConfig {
@@ -1587,6 +1610,8 @@ pub async fn run_generation_result(
         },
         codegen: codegraph::generate::CodegenConfig {
             types_import_prefix: "crate::types".into(),
+            api_key_mode: api_key_authz.mode,
+            unmodified_grants: api_key_authz.unmodified_grants,
             ..Default::default()
         },
         ..Default::default()

@@ -208,6 +208,7 @@ async fn ingest_policy(db: &MockEngine) {
             when: None,
             expr_json: None,
             obligations: vec![],
+            session_kind: Default::default(),
         }],
         policy: ActorPolicyNode {
             blocks: vec!["core".to_string()],

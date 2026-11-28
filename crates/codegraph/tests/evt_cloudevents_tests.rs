@@ -157,6 +157,7 @@ fn monolith_plan() -> codegraph::profile::BuildPlan {
         deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
         dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
         event_envelope: codegraph::generate::events::EnvelopeVariant::Native,
+        api_key_authz: codegraph::profile::ApiKeyAuthz::default(),
         event_idempotency: false,
         event_archive: false,
         events_producer: false,

@@ -1477,6 +1477,7 @@ async fn collection_add_plans_ok_then_not_found_legs() {
         },
         record_load: false,
         authorize_async: false,
+        api_key: Default::default(),
         injected_guard: None,
         invariant_block: None,
         throws: Vec::new(),

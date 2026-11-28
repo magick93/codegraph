@@ -118,6 +118,7 @@ fn grant(actor: &str, capability: &str, effect: &str, when: Option<&str>) -> Gra
         when: when.map(|w| w.to_string()),
         expr_json: None,
         obligations: vec![],
+        session_kind: Default::default(),
     }
 }
 

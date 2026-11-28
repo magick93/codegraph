@@ -77,7 +77,7 @@ impl GrafeoEngine {
                 self.lookup_node(&registry::keys::capability(&grant.capability)),
             ) {
                 crate::perf::bump_registry_edge_hit();
-                let props: Vec<(&str, grafeo::Value)> = vec![
+                let mut props: Vec<(&str, grafeo::Value)> = vec![
                     ("effect", grafeo::Value::String(grant.effect.clone().into())),
                     ("when_expr", opt_to_grafeo_value(&grant.when)),
                     (
@@ -85,17 +85,30 @@ impl GrafeoEngine {
                         grafeo::Value::String(obligations_json.into()),
                     ),
                 ];
+                // Issue #635: the session-kind modifier is written only when
+                // authored, so a kind-less grant persists exactly as before.
+                if !grant.session_kind.is_any() {
+                    props.push((
+                        "session_kind",
+                        grafeo::Value::String(grant.session_kind.as_str().into()),
+                    ));
+                }
                 self.create_edge_direct(actor_node, capability_node, "Grant", &props)?;
             } else {
                 crate::perf::bump_registry_edge_miss();
                 let gql = format!(
                     "MATCH (a:Actor {{name: '{actor}'}}), (c:Capability {{name: '{capability}'}}) \
-                     INSERT (a)-[:Grant {{ effect: '{effect}', when_expr: {when}, obligations: '{obligations}' }}]->(c)",
+                     INSERT (a)-[:Grant {{ effect: '{effect}', when_expr: {when}, obligations: '{obligations}'{kind} }}]->(c)",
                     actor = escape_gql(&grant.actor),
                     capability = escape_gql(&grant.capability),
                     effect = escape_gql(&grant.effect),
                     when = opt_str(&grant.when),
                     obligations = escape_gql(&obligations_json),
+                    kind = if grant.session_kind.is_any() {
+                        String::new()
+                    } else {
+                        format!(", session_kind: '{}'", grant.session_kind.as_str())
+                    },
                 );
                 session.execute(&gql).map_err(|e| {
                     GraphError::Ingest(format!("ingest_actor_policy grant failed: {e}"))

@@ -188,6 +188,7 @@ fn policy_fixture() -> PolicySurface {
             "PreparePayRun".to_string(),
             "ApprovePayRun".to_string(),
         ]],
+        agent_mode: false,
     }
 }
 
@@ -1679,4 +1680,234 @@ fn error_payload_fields_map_enums_classes_and_refuse_collections() {
     assert!(error.contains("PaymentDeclined"), "{error}");
     assert!(error.contains("reasons"), "{error}");
     assert!(error.contains("collection"), "{error}");
+}
+
+// ── API-key authorization modes (issue #635) ────────────────────────────
+
+fn authz(mode: crate::profile::ApiKeyMode, unmodified: &str) -> crate::profile::ApiKeyAuthz {
+    use codegraph_core::types::GrantSessionKind;
+    crate::profile::ApiKeyAuthz {
+        mode,
+        unmodified_grants: match unmodified {
+            "human" => GrantSessionKind::Human,
+            "agent" => GrantSessionKind::Agent,
+            _ => GrantSessionKind::Any,
+        },
+    }
+}
+
+/// `Owner` (human) holds Approve (human-only) + Prepare (unmodified) +
+/// Ingest (agent-only, when-guarded); `Bot` (agent) holds Prepare + an
+/// agent-forbidden Export. `never_both(Prepare, Approve)`.
+async fn kind_policy_engine() -> codegraph_core::mock::MockEngine {
+    use codegraph_core::traits::GraphIngestor;
+    use codegraph_core::types::{
+        ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, GrantEdge, GrantSessionKind,
+        NeverBothGroup,
+    };
+    let actor = |name: &str, kind: &str| ActorNode {
+        name: name.into(),
+        kind: Some(kind.into()),
+        extends: None,
+        block: None,
+    };
+    let cap = |name: &str| CapabilityNode {
+        name: name.into(),
+        class: "PayRunType".into(),
+        block: None,
+    };
+    let grant = |actor: &str, cap: &str, effect: &str, kind, when: Option<&str>| GrantEdge {
+        actor: actor.into(),
+        capability: cap.into(),
+        effect: effect.into(),
+        when: when.map(str::to_string),
+        obligations: vec![],
+        expr_json: None,
+        session_kind: kind,
+    };
+    let engine = codegraph_core::mock::MockEngine::builder().build();
+    engine
+        .ingest_actor_policy(&ActorPolicyModel {
+            actors: vec![actor("Owner", "human"), actor("Bot", "agent")],
+            capabilities: ["Approve", "Prepare", "Ingest", "Export"]
+                .into_iter()
+                .map(cap)
+                .collect(),
+            grants: vec![
+                grant("Owner", "Approve", "permit", GrantSessionKind::Human, None),
+                grant("Owner", "Prepare", "permit", GrantSessionKind::Any, None),
+                grant(
+                    "Owner",
+                    "Ingest",
+                    "permit",
+                    GrantSessionKind::Agent,
+                    Some(r#"status == "Draft""#),
+                ),
+                grant("Bot", "Prepare", "permit", GrantSessionKind::Any, None),
+                grant("Bot", "Export", "permit", GrantSessionKind::Any, None),
+                grant("Bot", "Export", "forbid", GrantSessionKind::Agent, None),
+            ],
+            policy: ActorPolicyNode {
+                blocks: vec![],
+                never_both: vec![NeverBothGroup {
+                    capabilities: vec!["Prepare".into(), "Approve".into()],
+                }],
+                purposes: vec![],
+                delegations: vec![],
+            },
+        })
+        .await
+        .unwrap();
+    engine
+}
+
+fn render_for(surface: &PolicySurface, capability: &str) -> String {
+    let f = fields(&[("status", FieldKind::String, false)]);
+    render_authorize_fn(
+        "op",
+        "op",
+        "PayRunService",
+        &[capability.to_string()],
+        None,
+        "crate::domain::payroll::pay_run::dto_response::PayRunResponse",
+        Some(surface),
+        &f,
+        "PayRunType",
+        true,
+    )
+    .unwrap()
+    .expect("policy surface exists")
+}
+
+#[tokio::test]
+async fn bypass_mode_keeps_the_api_key_early_return_and_filters_human_arms() {
+    use crate::profile::ApiKeyMode;
+    let engine = kind_policy_engine().await;
+    let surface = PolicySurface::from_graph(&engine, authz(ApiKeyMode::Bypass, "any"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!surface.agent_mode);
+    assert!(!surface.roles.contains_key(API_KEY_ROLE));
+    // The agent-only grant never reaches a human role arm.
+    let owner = &surface.roles["owner"];
+    assert!(owner.contains_key("Approve") && owner.contains_key("Prepare"));
+    assert!(!owner.contains_key("Ingest"), "{owner:?}");
+    let rendered = render_for(&surface, "Approve");
+    assert!(rendered.contains(r#"if role == "api_key""#), "{rendered}");
+    assert!(
+        rendered.contains("API-key sessions bypass the policy gates"),
+        "{rendered}"
+    );
+}
+
+#[tokio::test]
+async fn agent_mode_gates_key_sessions_like_a_role() {
+    use crate::profile::ApiKeyMode;
+    let engine = kind_policy_engine().await;
+    let surface = PolicySurface::from_graph(&engine, authz(ApiKeyMode::Agent, "any"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(surface.agent_mode);
+    let key = &surface.roles[API_KEY_ROLE];
+    // Prepare (unmodified) + Ingest (agent) admit agents; Approve (human)
+    // does not; Export is forbidden for the agent actor (forbid wins).
+    assert!(key.contains_key("Prepare") && key.contains_key("Ingest"));
+    assert!(!key.contains_key("Approve") && !key.contains_key("Export"));
+
+    // Human-only capability: the key arm denies by name, no early return.
+    let approve = render_for(&surface, "Approve");
+    assert!(!approve.contains(r#"if role == "api_key""#), "{approve}");
+    assert!(
+        approve
+            .contains(r#""api_key" => Err("capability `Approve` is not granted to agent sessions"#),
+        "{approve}"
+    );
+    assert!(
+        approve.contains("API-key sessions are agent principals"),
+        "{approve}"
+    );
+
+    // Agent grant `when` evaluates over the record for key sessions.
+    let ingest = render_for(&surface, "Ingest");
+    assert!(ingest.contains("\"api_key\" => {"), "{ingest}");
+    assert!(
+        ingest.contains(r#"if !((response.status == "Draft"))"#),
+        "{ingest}"
+    );
+
+    // Separation of duty applies to the key arm only when it holds both
+    // sides — it holds Prepare but not Approve, so Prepare passes.
+    let prepare = render_for(&surface, "Prepare");
+    let key_arm = &prepare[prepare.find("\"api_key\" => {").unwrap()..];
+    let key_arm = &key_arm[..key_arm.find("        }").unwrap()];
+    assert!(key_arm.contains("Ok(())"), "{prepare}");
+}
+
+#[tokio::test]
+async fn agent_mode_separation_of_duty_binds_the_key_arm() {
+    use crate::profile::ApiKeyMode;
+    let engine = kind_policy_engine().await;
+    // Hand the key arm BOTH sides of the never_both pair (Approve is
+    // human-authored in the fixture, so it is added directly).
+    let mut surface = PolicySurface::from_graph(&engine, authz(ApiKeyMode::Agent, "any"))
+        .await
+        .unwrap()
+        .unwrap();
+    surface
+        .roles
+        .get_mut(API_KEY_ROLE)
+        .unwrap()
+        .insert("Approve".into(), vec![None]);
+    let rendered = render_for(&surface, "Prepare");
+    assert!(
+        rendered.contains("separation of duties: role `api_key` holds `Approve`"),
+        "{rendered}"
+    );
+}
+
+#[tokio::test]
+async fn unmodified_grants_default_narrows_only_unmodified_grants() {
+    use crate::profile::ApiKeyMode;
+    let engine = kind_policy_engine().await;
+    // unmodified = human: Prepare (unmodified) leaves the key arm; the
+    // agent-authored Ingest stays.
+    let human = PolicySurface::from_graph(&engine, authz(ApiKeyMode::Agent, "human"))
+        .await
+        .unwrap()
+        .unwrap();
+    let key = &human.roles[API_KEY_ROLE];
+    assert!(!key.contains_key("Prepare") && key.contains_key("Ingest"));
+    assert!(human.roles["owner"].contains_key("Prepare"));
+    // unmodified = agent: Prepare leaves the human arms.
+    let agent = PolicySurface::from_graph(&engine, authz(ApiKeyMode::Agent, "agent"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!agent.roles["owner"].contains_key("Prepare"));
+    assert!(agent.roles["owner"].contains_key("Approve"));
+    assert!(agent.roles[API_KEY_ROLE].contains_key("Prepare"));
+}
+
+#[tokio::test]
+async fn agent_mode_without_a_policy_never_reopens_the_bypass() {
+    use crate::profile::ApiKeyMode;
+    let engine = codegraph_core::mock::MockEngine::builder().build();
+    assert!(
+        PolicySurface::from_graph(&engine, authz(ApiKeyMode::Bypass, "any"))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let surface = PolicySurface::from_graph(&engine, authz(ApiKeyMode::Agent, "any"))
+        .await
+        .unwrap()
+        .expect("agent mode always yields a surface");
+    let rendered = render_for(&surface, "Approve");
+    assert!(!rendered.contains(r#"if role == "api_key""#), "{rendered}");
+    assert!(
+        rendered.contains("not granted to agent sessions"),
+        "{rendered}"
+    );
 }

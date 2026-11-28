@@ -1061,6 +1061,7 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
                 when: None,
                 expr_json: None,
                 obligations: vec![],
+                session_kind: Default::default(),
             },
             GrantEdge {
                 actor: "Admin".to_string(),
@@ -1069,6 +1070,7 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
                 when: Some("admin.verified == true".to_string()),
                 expr_json: None,
                 obligations: vec!["log_access".to_string()],
+                session_kind: Default::default(),
             },
             GrantEdge {
                 actor: "Manager".to_string(),
@@ -1077,6 +1079,7 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
                 when: None,
                 expr_json: None,
                 obligations: vec![],
+                session_kind: Default::default(),
             },
         ],
         policy: ActorPolicyNode {
@@ -1097,6 +1100,7 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
                     when: Some("report.draft == true".to_string()),
                     expr_json: None,
                     obligations: vec!["log_access".to_string()],
+                    session_kind: Default::default(),
                 }],
             }],
         },

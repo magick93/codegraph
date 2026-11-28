@@ -1,8 +1,10 @@
+mod api_key_authz;
 pub(crate) mod capabilities;
 mod plan;
 mod resolve;
 mod types;
 
+pub use api_key_authz::{ApiKeyAuthz, ApiKeyMode};
 pub use capabilities::{CapabilityRegistry, GeneratorCapability, GeneratorKind, GeneratorTarget};
 pub use plan::BuildPlan;
 pub use resolve::{

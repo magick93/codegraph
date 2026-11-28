@@ -987,7 +987,9 @@ the handler over the loaded record (`AppError::forbidden` naming the
 capability/rule). `Owner`→first/`member`→last role mapping mirrors the
 IFML hydration convention; **API-key sessions bypass the policy gates**
 (RLS scopes still apply) so hurl contracts and persona keys keep working
-— documented v1 semantics.
+— documented v1 semantics, and the default `api_key_mode = "bypass"`;
+`api_key_mode = "agent"` gates keys as agent principals (see "API-key
+authorization modes (issue #635)").
 
 - **Module** (`codegraph-generate/src/ddd/service_ops/`): entity-binding
   resolution (capability class → schema title exact/`+Type`; delegation
@@ -5166,8 +5168,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
 - **Format bump discipline + doctor signal (P2) — the canonical
   "what is it now" lookup**: `GRAPH_FORMAT_VERSION` (codegraph-grafeo
   `schema_ddl.rs`) versions codegraph's graph artifact schema. **It is
-  `15` today**, and the committed artifact-kit conformance fixture is
-  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v15.md`.
+  `16` today**, and the committed artifact-kit conformance fixture is
+  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v16.md`.
   Bump it whenever the node/edge/property shape changes. The constant and
   the fixture move TOGETHER in ONE change: bump the constant, rename the
   fixture, update its canonical + `accepted` bodies, and move its
@@ -5181,7 +5183,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   so the bump checklist must list all five (a missed `include_str!` is a
   compile error; a missed doc comment goes stale silently). The
   `format_version_too_new` value is also a LITERAL in the fixture
-  (`formatVersion 16` while the constant is 15), NOT derived from
+  (`formatVersion 17` while the constant is 16), NOT derived from
   `GRAPH_FORMAT_VERSION`; so are the IN-CRATE kit KAT literals
   (`crates/codegraph/src/artifact/kit.rs`
   `tests::kit_case_rejects_canonical_drift` — a `#cfg(test)`
@@ -5205,7 +5207,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   the DD7 declared error vocabulary (`errors_json` on the application +
   module nodes, #665), 13→14 the modeled DTO boundary family (`DddDtoShape`,
   #667), 14→15 the machine kernel mirror (`machine_ir_json` +
-  `machine_provenance_json` on the design, #815) —
+  `machine_provenance_json` on the design, #815), 15→16 grant session
+  kinds (the `Grant` edge's `session_kind` prop, #635) —
   the 2→3
   and 5→6 steps were never written up, so the lineage is only partially
   recorded). `GRAFEO_STORAGE_GENERATION`
@@ -5214,7 +5217,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   format. Both terms ride the inputs hash, so a bump forces a cold
   re-ingest instead of migrating `.graph-cache/` in place. `codegraph
   doctor` prints the cache state explicitly: `PASS graph-cache — warm
-  (inputs hash …, N nodes; graph format v15 / storage gen 2)` when the
+  (inputs hash …, N nodes; graph format v16 / storage gen 2)` when the
   marker matches the current inputs (the numbers are the live constants,
   not prose), or `INFO graph-cache — cold: inputs changed …` / `absent …`
   when the next run will re-ingest.
@@ -6521,6 +6524,106 @@ Cedar-backend philosophy). Postgres only; sqlite is a documented no-op.
 Policy-derived RLS is ADDITIVE with the domains.toml-driven RLS: permissive
 policies OR-combine (only widening); RESTRICTIVE policies from `rls.tera`
 still AND on top.
+
+## API-key authorization modes (issue #635)
+
+API-key sessions used to bypass the actor-policy gates unconditionally
+(documented v1 semantics). The #635 decision brief asked "what is an API
+key?"; instead of carving one answer into every generated app, each open
+question is a strict `profiles.toml` `[features]` key, every accepted value
+is a complete generated mode with its own gates, and the defaults are
+byte-identical to the pre-#635 output:
+
+```toml
+api_key_mode = "bypass"            # "bypass" (default) | "agent"
+unmodified_grants = "any"          # "any" (default) | "human" | "agent"
+session_kind_planes = ["handler"]  # "handler"
+```
+
+- **Config** (`codegraph-generate/src/profile/api_key_authz.rs`,
+  `ApiKeyAuthz` on `BuildPlan.api_key_authz` → `CodegenConfig.api_key_mode`
+  / `.unmodified_grants`; templates read `project.api_key_mode`). Unknown
+  values and non-strings are hard config errors (the `deployment_topology`
+  precedent). RESERVED values parse to a NAMED "not yet supported" error:
+  `api_key_mode = "delegated" | "per_key"` (slice 2 — needs the
+  `api_keys` minter/kind stamp) and `session_kind_planes = ["rls"]`
+  (slice 3 — one policy per (capability, kind)). A mode is selectable only
+  once its gates are green; never a silently partial mode.
+- **The model owns the grant's kind**: pherolang `GrantEntry.sessionKind`
+  (`permit human X` / `permit agent X`, default `any`) ingests as
+  `GrantEdge.session_kind: GrantSessionKind` (serde-defaulted,
+  skip-if-`Any`; Grafeo `Grant.session_kind` prop written only when
+  authored) and rides `Permit.session_kind` out of
+  `resolve_effective_permits`. **A kind-scoped `forbid` is kind-blind**
+  (forbids every kind — fail-closed; kinds on `forbid` stay a sign-off
+  item). **`GRAPH_FORMAT_VERSION` 15 → 16** (a warm cache would read every
+  grant as `any` and fail open).
+- **One admission rule**: `ApiKeyAuthz::admits(authored, session)` applies
+  `unmodified_grants` to kind-less grants only (an authored modifier always
+  wins). Every consumer reads it: the handler's human role arms
+  (`PolicySurface::from_graph` filters to human-admitting permits), the
+  agent arm, the IFML client-side `ROLE_CAPABILITIES` map
+  (`IfmlGraphQuerier::with_unmodified_grants`). With all-`any` models and
+  the default config every surface is unchanged.
+- **`bypass`**: the rendered authorize fn keeps
+  `if role == "api_key" { return Ok(()) }` (handler matrix unmoved).
+- **`agent`** (`ddd/service_ops/policy.rs`): `PolicySurface` gains an
+  `API_KEY_ROLE` (`"api_key"`) entry — the union of every actor's
+  effective permits whose grant admits agent sessions — and `agent_mode`
+  drops the bypass, so the key arm is rendered by the SAME role-arm
+  renderer: capability membership (an unheld capability renders
+  `"api_key" => Err("capability `X` is not granted to agent sessions …")`),
+  `never_both` (the one deliberate tightening — a key arm holding both
+  sides denies), grant `when`s over the loaded record. A policy-less graph
+  still yields an (empty) agent surface: agent mode never re-opens the
+  bypass. The op-level `when` stays first in both modes. The request
+  bundle (`ddd/command.tera` + `ddd/query.tera`, both providers) gains
+  `app.session_kind` (`agent` for the middleware's `role = "api_key"` arm,
+  `human` otherwise) and `db/rbac_roles.tera`'s `role_at_least` passes key
+  sessions on `app.session_kind = 'agent'`, never on the `app.role`
+  literal — all gated on `project.api_key_mode == "agent"`.
+- **Contracts** — `ServiceOpRoute.api_key: ApiKeyGate` (`Unaffected` /
+  `Admitted` / `Denied { reason }` / `Conditional`, from
+  `policy::api_key_gate` over the same surface, mirroring the renderer):
+  the hurl actions contract pins `Denied` as 403 (row + machine stream
+  unmoved) and OMITS `Conditional` (when-only permits — the three-verdict
+  rule); the IFML action planner plans `Denied` as one 403 leg
+  (`ActionActKind::AgentNotGranted` / `AgentSeparationOfDuty`, asserting
+  the handler's own message fragments) and leaves `Conditional` unbuilt.
+  Persona keys ARE API keys, so persona view specs are unaffected (views and
+  entity CRUD are scope/RLS-gated, not actor-policy-gated); only action legs
+  move.
+- **Diagnostics**: run-path `ValidationPass` check `api_key_authz`
+  (Warning, `ValidationOptions.api_key_authz`) — bypass lists the service
+  ops whose grant `when` / `never_both` gates keys skip; agent lists the
+  capabilities no agent-admitting grant holds. `codegraph doctor` prints an
+  `INFO api-key authorization — …` line naming the resolved mode (doctor
+  holds no graph; the policy-aware list is run-path-only).
+- **Gates**: `cargo test -p codegraph-generate --lib -- profile
+  ddd::service_ops rbac_role ifml::e2e_test::api_key_tests` (parse KATs,
+  the mode × grant-kind × `unmodified_grants` surface/render matrix, the
+  role-gate template pins + the committed
+  `codegraph-ops/tests/fixtures/role_at_least_agent.sql` drift pin —
+  re-bless `ROLE_GATE_BLESS=1`), `cargo test -p codegraph-core --lib
+  authorization` (kind-blind forbid, wire omission), `cargo test -p
+  codegraph --test service_ops_tests -- api_key` (agent-mode handler +
+  bundle + role gate + hurl 403 end to end; bypass emits no session kind;
+  both modes' warnings) + `--test init_tests ::
+  doctor_resolves_api_key_modes_and_refuses_reserved_ones`, the compile
+  pins `service_ops_compile_gate :: generated_app_in_api_key_agent_mode_compiles`
+  (ignored, SeaORM monolith) and `worker_wasm_compile_tests ::
+  generated_worker_in_api_key_agent_mode_checks` (ignored, cornucopia
+  native + wasm32), and `cargo test -p codegraph-ops --test authz_contract
+  -- --ignored :: role_gate_follows_the_api_key_mode_in_db` (live: bypass
+  passes the role literal; agent passes `app.session_kind = 'agent'` only;
+  the literal alone and a human member are denied).
+- **Deferred**: `delegated` / `per_key` (slice 2: `created_by =
+  auth.uid()` stamp, an `api_keys.session_kind` column), the `rls` plane
+  (slice 3), a JWT human leg + per-mode run in the live
+  `service_ops_hurl_gate` (needs the Supabase stack), `init` scaffolding a
+  non-bypass default (the next emitted-contract major), session kinds on
+  `forbid`/delegation grants (sign-off), and `policy_rls` reading
+  `session_kind` (today it ignores the modifier, as before #635).
 
 ## Lifecycle hardening phase 2 (Nov 2026)
 

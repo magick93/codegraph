@@ -507,6 +507,7 @@ async fn run_scenarios(target: &PgTarget) -> anyhow::Result<()> {
         deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
         dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
         event_envelope: codegraph::generate::events::EnvelopeVariant::Native,
+        api_key_authz: codegraph::profile::ApiKeyAuthz::default(),
         event_idempotency: true,
         event_archive: true,
         events_producer: false,
