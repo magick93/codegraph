@@ -909,10 +909,6 @@ pub fn payroll_ddd_with_refused_body() -> String {
     )
 }
 
-/// Manager holds InspectPayRun unconditionally, plus the CHILD entity's
-/// `AdjustPayRunLine` (unconditional — child grant-`when` typing is
-/// upstream-blocked with the module's single machine; the capability gate
-/// itself is what the child handler pin exercises).
 // ── Issue #635: authored session-kind modifiers ───────────────────────
 
 /// The payroll policy with authored session-kind modifiers: Owner's
@@ -949,6 +945,10 @@ actors Payroll {
 }
 "#;
 
+/// Manager holds InspectPayRun unconditionally, plus the CHILD entity's
+/// `AdjustPayRunLine` (unconditional — child grant-`when` typing is
+/// upstream-blocked with the module's single machine; the capability gate
+/// itself is what the child handler pin exercises).
 pub const POLICY_ACTOR: &str = r#"
 import "pay_run.mox"
 
