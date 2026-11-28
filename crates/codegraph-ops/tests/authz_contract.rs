@@ -285,6 +285,27 @@ async fn probe(
     user: &str,
     probe_sql: &str,
 ) -> String {
+    probe_session(
+        admin, scratch, mode, org, key, user, "member", "", probe_sql,
+    )
+    .await
+}
+
+/// [`probe`] with the session's `app.role` and any extra session GUCs
+/// (`app.session_kind`, issue #635) spelled by the caller — the request
+/// bundle's shape for an API-key (`role = 'api_key'`) or JWT session.
+#[allow(clippy::too_many_arguments)]
+async fn probe_session(
+    admin: &PgTarget,
+    scratch: &ScratchDb,
+    mode: &Mode,
+    org: &str,
+    key: &(String, String),
+    user: &str,
+    role: &str,
+    session_kind: &str,
+    probe_sql: &str,
+) -> String {
     let mut target = PgTarget {
         db: scratch.db.clone(),
         role: "probe".into(),
@@ -306,7 +327,8 @@ async fn probe(
            PERFORM set_config('app.current_api_key', '{}', true);\n\
            PERFORM set_config('app.current_api_key_id', '{}', true);\n\
            PERFORM set_config('app.user_id', '{}', true);\n\
-           PERFORM set_config('app.role', 'member', true);\n\
+           PERFORM set_config('app.role', '{}', true);\n\
+           PERFORM set_config('app.session_kind', '{}', true);\n\
            CREATE TEMP TABLE IF NOT EXISTS probe_result(state text, detail text);\n\
            DELETE FROM probe_result;\n\
            BEGIN\n\
@@ -323,6 +345,8 @@ async fn probe(
         key.1.replace('\'', "''"),
         key.0.replace('\'', "''"),
         user,
+        role.replace('\'', "''"),
+        session_kind.replace('\'', "''"),
         probe_sql,
     );
     psql_query(&target, &sql)
@@ -624,6 +648,90 @@ async fn role_denial_raises_forbidden(admin: PgTarget) {
     scratch.drop_best_effort().await;
 }
 
+/// Issue #635: the DB role gate's API-key pass-through per
+/// `api_key_mode`. Bypass (the committed review fixture's band) passes on
+/// the `'api_key'` role literal; agent mode (the fixture function rendered
+/// from `db/rbac_roles.tera`, held byte-equal by the codegraph-generate
+/// `rbac_role_gate_keys_on_session_kind_in_agent_mode` KAT) passes on
+/// `app.session_kind = 'agent'` ONLY — the role literal alone no longer
+/// passes, and a human member is still denied.
+async fn role_gate_follows_the_api_key_mode(admin: PgTarget) {
+    if skip_if_no_psql() {
+        return;
+    }
+    let _guard = DB_LOCK.lock().await;
+    let (scratch, key_full_a, _, _, _, _) = setup(&admin).await;
+    let fixture_owner = PgTarget {
+        db: scratch.db.clone(),
+        role: "fixture".into(),
+        ..admin.clone()
+    };
+    psql_exec(
+        &fixture_owner,
+        &format!(
+            "INSERT INTO recruiting.candidate (id, platform_organization_id, candidate_id, family_name, given_name) \
+             VALUES ('cccccccc-0000-4000-8000-000000000002', '{ORG_A}', 'C-002', 'NZ', 'Kind');"
+        ),
+    )
+    .await
+    .expect("insert candidate fixture row");
+    let delete = "DELETE FROM recruiting.candidate \
+                  WHERE id = 'cccccccc-0000-4000-8000-000000000002' RETURNING id";
+    let run = |role: &'static str, kind: &'static str| {
+        let admin = admin.clone();
+        let scratch = &scratch;
+        let key = key_full_a.clone();
+        async move {
+            probe_session(
+                &admin,
+                scratch,
+                &Mode::AppUserPool,
+                ORG_A,
+                &key,
+                USER_A,
+                role,
+                kind,
+                delete,
+            )
+            .await
+        }
+    };
+
+    // bypass (the review band): the role literal passes.
+    assert_ok(
+        &run("api_key", "").await,
+        "cccccccc-0000-4000-8000-000000000002",
+        "bypass: api-key session passes the role gate",
+    );
+
+    // agent: install the template-rendered gate.
+    psql_exec(
+        &fixture_owner,
+        include_str!("fixtures/role_at_least_agent.sql"),
+    )
+    .await
+    .expect("install the agent-mode role gate");
+    assert_ok(
+        &run("api_key", "agent").await,
+        "cccccccc-0000-4000-8000-000000000002",
+        "agent: app.session_kind = 'agent' passes the role gate",
+    );
+    assert_raised(
+        &run("api_key", "").await,
+        "P0403",
+        "ROLE_FORBIDDEN",
+        "agent: the 'api_key' role literal alone no longer passes",
+    );
+    assert_raised(
+        &run("member", "human").await,
+        "P0403",
+        "ROLE_FORBIDDEN",
+        "agent: a human member is still denied the delete",
+    );
+
+    scratch.drop_best_effort().await;
+}
+
 // ─── Positive paths: in-scope access keeps working ┈────────────────────────
 
 async fn in_scope_access_still_works(admin: PgTarget) {
@@ -738,4 +846,10 @@ async fn role_denial_raises_forbidden_in_db() {
 #[ignore = "requires a running Postgres (set DATABASE_URL or default localhost:5432)"]
 async fn in_scope_access_still_works_both_modes() {
     in_scope_access_still_works(admin_target()).await;
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres (set DATABASE_URL or default localhost:5432)"]
+async fn role_gate_follows_the_api_key_mode_in_db() {
+    role_gate_follows_the_api_key_mode(admin_target()).await;
 }

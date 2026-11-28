@@ -52,6 +52,11 @@ pub struct BodyRenderContext {
     /// resolver the query plane uses — never a second inference. `None`
     /// (ux off, plan-less callers) ⇒ no route takes the sort argument.
     pub ux: Option<codegraph_config::UxRules>,
+    /// API-key authorization modes (issue #635): `api_key_mode` selects
+    /// whether key sessions bypass the actor-policy gates or authorize as
+    /// agent principals; `unmodified_grants` is what a kind-less grant
+    /// admits. Default = today's bypass, byte-identical.
+    pub api_key_authz: crate::profile::ApiKeyAuthz,
 }
 
 impl Default for BodyRenderContext {
@@ -65,6 +70,7 @@ impl Default for BodyRenderContext {
             workers_topology: false,
             boundary_cache: None,
             ux: None,
+            api_key_authz: crate::profile::ApiKeyAuthz::default(),
         }
     }
 }
@@ -79,6 +85,7 @@ impl BodyRenderContext {
             workers_topology: project.is_workers_topology(),
             boundary_cache: None,
             ux: project.ux.ux.clone(),
+            api_key_authz: project.api_key_authz(),
         }
     }
 
@@ -264,7 +271,7 @@ pub async fn routes_for_entity(
         .await
         .map_err(|e| e.to_string())?;
     let fields = fields_for(&props);
-    let surface = PolicySurface::from_graph(db)
+    let surface = PolicySurface::from_graph(db, body.api_key_authz)
         .await
         .map_err(|e| e.to_string())?;
     let Some(schema) = db
@@ -573,6 +580,7 @@ pub async fn routes_for_entity(
                     execution,
                     record_load,
                     authorize_async: !injected.is_empty(),
+                    api_key: super::policy::api_key_gate(surface.as_ref(), &op.capabilities),
                     injected_guard,
                     invariant_block: None,
                     // The create arm's two post-pass blocks (the handler
@@ -1917,6 +1925,7 @@ async fn child_op_routes(
                     execution,
                     record_load,
                     authorize_async: false,
+                    api_key: super::policy::api_key_gate(surface, &op.capabilities),
                     injected_guard: None,
                     invariant_block: None,
                     // The create arm's two post-pass blocks (the handler

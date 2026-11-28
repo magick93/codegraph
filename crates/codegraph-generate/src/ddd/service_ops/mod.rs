@@ -99,12 +99,12 @@ pub use projection::projection_shape_candidate_public;
 pub(crate) use routes::bind_entity;
 pub use routes::{BodyRenderContext, routes_for_entity};
 pub use types::{
-    BoundaryPayloadPlan, ChildAction, ChildParentLoad, ExecutionKind, ExecutionRenderFacts,
-    FreshFixtureGuard, InjectedGuard, ServiceOpRoute, ServiceOpState, ServiceOpTransition,
-    StateName, TriggerName, WireKey,
+    ApiKeyGate, BoundaryPayloadPlan, ChildAction, ChildParentLoad, ExecutionKind,
+    ExecutionRenderFacts, FreshFixtureGuard, InjectedGuard, ServiceOpRoute, ServiceOpState,
+    ServiceOpTransition, StateName, TriggerName, WireKey,
 };
 pub use validation::{
-    OpRef, PROTECTED_CHILD_OP_REASON, PROTECTED_OP_REASON, body_refusals,
+    OpRef, PROTECTED_CHILD_OP_REASON, PROTECTED_OP_REASON, api_key_authz_warnings, body_refusals,
     child_parent_load_refusals, dead_surface_warnings, dead_trigger_message, guard_refusals,
     ifml_dead_triggers, op_binds_action, protected_binding, throws_refusals,
     transition_binding_errors, transition_binding_warnings,
@@ -116,7 +116,7 @@ pub(crate) use types::{FieldInfo, FieldKind, fields_for};
 pub(crate) use when_lower::{lower_invariant, rust_string_literal};
 
 #[cfg(test)]
-pub(crate) use policy::{PolicySurface, render_authorize_fn};
+pub(crate) use policy::{API_KEY_ROLE, PolicySurface, render_authorize_fn};
 #[cfg(test)]
 pub(crate) use when_lower::{
     InjectedScope, lower_when_scoped, lower_when_to_rust, lower_when_to_rust_with_states,

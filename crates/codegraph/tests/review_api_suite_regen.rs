@@ -283,6 +283,8 @@ async fn regenerate_fixture() -> Result<Vec<PathBuf>, String> {
             ui_live_queries: plan.ui_live_queries,
             testid_module: plan.testid_module,
             structural_gates: plan.structural_gates,
+            api_key_mode: plan.api_key_authz.mode,
+            unmodified_grants: plan.api_key_authz.unmodified_grants,
             event_envelope: plan.event_envelope.as_str().to_string(),
             event_idempotency: plan.event_idempotency,
             event_archive: plan.event_archive,

@@ -1593,6 +1593,40 @@ fn check_union_integrity(
     (hard, soft)
 }
 
+/// The resolved-profile PASS line plus the API-key authorization INFO line.
+fn report_profiles_pass(plan: &crate::profile::BuildPlan) {
+    println!(
+        "PASS profiles.toml — {} entity, {} domain, {} global generator(s)",
+        plan.entity_generators.len(),
+        plan.domain_generators.len(),
+        plan.global_generators.len()
+    );
+    report_api_key_authz(plan);
+}
+
+/// The resolved API-key authorization mode (issue #635), as an INFO line.
+/// Doctor holds no graph, so the policy-aware consequence (the ops whose
+/// gates keys skip / the capabilities no key reaches) is the run path's
+/// `api_key_authz` Warning; doctor names the mode and what it means.
+fn report_api_key_authz(plan: &crate::profile::BuildPlan) {
+    let authz = plan.api_key_authz;
+    let meaning = match authz.mode {
+        crate::profile::ApiKeyMode::Bypass => {
+            "API-key sessions skip the actor-policy capability / never_both / grant-when \
+             gates (scope + tenancy RLS and op-level `when` still apply)"
+        }
+        crate::profile::ApiKeyMode::Agent => {
+            "API-key sessions are agent principals: agent-admitting grants authorize \
+             them, human-only grants deny them (403)"
+        }
+    };
+    println!(
+        "INFO api-key authorization — api_key_mode = \"{}\", unmodified_grants = \"{}\": {meaning}",
+        authz.mode.as_str(),
+        authz.unmodified_grants.as_str()
+    );
+}
+
 /// Profile/target vs topology cross-check (pherolang #49): a
 /// `cloudflareWorkers` profile needs the Workers deployment topology and
 /// vice versa — a deploy file and a profiles.toml that disagree describe
@@ -1806,12 +1840,7 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
             },
         ) {
             Ok(plan) => {
-                println!(
-                    "PASS profiles.toml — {} entity, {} domain, {} global generator(s)",
-                    plan.entity_generators.len(),
-                    plan.domain_generators.len(),
-                    plan.global_generators.len()
-                );
+                report_profiles_pass(&plan);
                 build_plan = Some(plan);
             }
             Err(e) => {

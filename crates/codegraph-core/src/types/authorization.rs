@@ -23,6 +23,40 @@ pub struct CapabilityNode {
     pub block: Option<String>,
 }
 
+/// Which session kinds a grant entry applies to (pherolang
+/// `GrantEntry.sessionKind`, issue #635): `permit human X` / `permit agent X`
+/// / unmodified (`Any`). The model owns the kind; how a session maps onto a
+/// kind is the generated app's `api_key_mode` (codegraph-generate
+/// `profile::ApiKeyAuthz`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrantSessionKind {
+    /// `human` — human sessions only.
+    Human,
+    /// `agent` — automation sessions only.
+    Agent,
+    /// No modifier — every session kind (the default, omitted on the wire).
+    #[default]
+    Any,
+}
+
+impl GrantSessionKind {
+    /// Whether this is the default `Any` (skipped when serializing, so a
+    /// kind-less grant serializes exactly as before issue #635).
+    pub fn is_any(&self) -> bool {
+        matches!(self, Self::Any)
+    }
+
+    /// The modifier spelling (`human` / `agent` / `any`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Human => "human",
+            Self::Agent => "agent",
+            Self::Any => "any",
+        }
+    }
+}
+
 /// A grant edge: `actor` permits or forbids `capability`, optionally gated by
 /// a `when` expression, with obligations that must be discharged when the
 /// grant fires.
@@ -33,6 +67,10 @@ pub struct GrantEdge {
     pub effect: String,
     pub when: Option<String>,
     pub obligations: Vec<String>,
+    /// The session-kind modifier as authored (issue #635). `Any` = no
+    /// modifier; read-compat default for pre-#635 payloads.
+    #[serde(default, skip_serializing_if = "GrantSessionKind::is_any")]
+    pub session_kind: GrantSessionKind,
     /// Canonical AST JSON of `when` (issue #278), produced at ingest by
     /// parsing the source with phero-expr; `None` for unconditional grants
     /// and when the source does not parse. Purely additive: legacy
@@ -93,6 +131,11 @@ pub struct Permit {
     pub effect: String,
     pub when: Option<String>,
     pub obligations: Vec<String>,
+    /// The authored session-kind modifier of the grant this permit came
+    /// from (issue #635). Forbids are kind-blind: a kind-scoped `forbid`
+    /// still removes every permit of its capability (fail-closed).
+    #[serde(default, skip_serializing_if = "GrantSessionKind::is_any")]
+    pub session_kind: GrantSessionKind,
 }
 
 /// Resolve the effective grants for `actor` across its `extends` chain.
@@ -104,7 +147,9 @@ pub struct Permit {
 ///   child and parent grants both survive, exact duplicates collapse).
 /// - Forbid wins: if any grant in the chain forbids a capability, all permit
 ///   grants for that capability are dropped and only the forbid entries are
-///   returned.
+///   returned. A forbid's session-kind modifier is ignored here: a
+///   kind-scoped forbid forbids every kind (fail-closed, issue #635 —
+///   kinds on `forbid` are a recorded sign-off item).
 /// - The result is sorted by (capability, effect) for determinism.
 pub fn resolve_effective_permits(
     actors: &[ActorNode],
@@ -138,7 +183,14 @@ pub fn resolve_effective_permits(
         .collect();
     collected.retain(|g| g.effect != "permit" || !forbidden.contains(&g.capability));
 
-    let mut seen: HashSet<(String, String, Option<String>, Vec<String>)> = HashSet::new();
+    type SeenKey = (
+        String,
+        String,
+        Option<String>,
+        Vec<String>,
+        GrantSessionKind,
+    );
+    let mut seen: HashSet<SeenKey> = HashSet::new();
     let mut permits: Vec<Permit> = Vec::new();
     for g in collected {
         if seen.insert((
@@ -146,12 +198,14 @@ pub fn resolve_effective_permits(
             g.effect.clone(),
             g.when.clone(),
             g.obligations.clone(),
+            g.session_kind,
         )) {
             permits.push(Permit {
                 capability: g.capability,
                 effect: g.effect,
                 when: g.when,
                 obligations: g.obligations,
+                session_kind: g.session_kind,
             });
         }
     }
@@ -184,6 +238,7 @@ mod tests {
             when: None,
             expr_json: None,
             obligations: vec![],
+            session_kind: GrantSessionKind::Any,
         }
     }
 
@@ -243,6 +298,37 @@ mod tests {
         assert_eq!(permits.len(), 1);
         assert_eq!(permits[0].when.as_deref(), Some("admin.verified == true"));
         assert_eq!(permits[0].obligations, vec!["log_access".to_string()]);
+    }
+
+    #[test]
+    fn session_kind_rides_the_permit_and_kind_scoped_forbid_is_kind_blind() {
+        let actors = vec![actor("Admin", None)];
+        let mut human = grant("Admin", "approve_expense", "permit");
+        human.session_kind = GrantSessionKind::Human;
+        let mut agent = grant("Admin", "view_report", "permit");
+        agent.session_kind = GrantSessionKind::Agent;
+        let permits = resolve_effective_permits(&actors, &[human.clone(), agent], "Admin");
+        assert_eq!(permits[0].session_kind, GrantSessionKind::Human);
+        assert_eq!(permits[1].session_kind, GrantSessionKind::Agent);
+
+        // `forbid agent approve_expense` removes the human permit too.
+        let mut forbid = grant("Admin", "approve_expense", "forbid");
+        forbid.session_kind = GrantSessionKind::Agent;
+        let permits = resolve_effective_permits(&actors, &[human, forbid], "Admin");
+        assert_eq!(permits.len(), 1);
+        assert_eq!(permits[0].effect, "forbid");
+    }
+
+    #[test]
+    fn any_session_kind_is_not_serialized() {
+        let json = serde_json::to_string(&grant("A", "c", "permit")).unwrap();
+        assert!(!json.contains("session_kind"), "{json}");
+        let mut g = grant("A", "c", "permit");
+        g.session_kind = GrantSessionKind::Agent;
+        let json = serde_json::to_string(&g).unwrap();
+        assert!(json.contains(r#""session_kind":"agent""#), "{json}");
+        let back: GrantEdge = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, g);
     }
 
     #[test]

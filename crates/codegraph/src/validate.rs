@@ -27,6 +27,9 @@ pub struct ValidationOptions {
     /// resolves through the same dialect the events generator uses.
     pub database_target: codegraph_generate::db::dialect::DatabaseTarget,
     pub events_producer: bool,
+    /// API-key authorization modes (issue #635) — the `api_key_authz`
+    /// Warning check reads them.
+    pub api_key_authz: codegraph_generate::profile::ApiKeyAuthz,
 }
 
 pub struct ValidationPass;
@@ -98,6 +101,7 @@ impl ValidationPass {
             r22,
             r23,
             r24,
+            r25,
         ) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
@@ -129,6 +133,7 @@ impl ValidationPass {
                 options.database_target,
             ),
             Self::check_sole_identity_fk_collisions(db),
+            Self::check_api_key_authz(db, config, options.api_key_authz),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -155,7 +160,31 @@ impl ValidationPass {
         issues.extend(r22);
         issues.extend(r23);
         issues.extend(r24);
+        issues.extend(r25);
         issues
+    }
+
+    /// `api_key_authz` (Warning, issue #635): under `api_key_mode =
+    /// "bypass"` the service ops whose grant `when` / `never_both` gates
+    /// API-key sessions skip; under `"agent"` the capabilities no
+    /// agent-admitting grant holds. Advisory — the mode is the consumer's
+    /// choice, the warning makes its consequence visible.
+    async fn check_api_key_authz(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        authz: codegraph_generate::profile::ApiKeyAuthz,
+    ) -> Vec<ValidationIssue> {
+        codegraph_generate::ddd::service_ops::api_key_authz_warnings(db, config, authz)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Warning,
+                entity: "(api-key authorization)".to_string(),
+                check: "api_key_authz",
+                message,
+            })
+            .collect()
     }
 
     /// `sole_identity_fk_collision` (Warning, issue #821): a class with

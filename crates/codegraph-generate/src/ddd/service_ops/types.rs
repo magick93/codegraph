@@ -419,6 +419,33 @@ pub struct ExecutionRenderFacts {
     pub ux_sort_fields: bool,
 }
 
+/// How an API-key session fares at a route's actor-policy gate (issue
+/// #635). The hurl contract (whose requests carry `{{api_key}}`) pins its
+/// action legs by it — the three-verdict rule, never a guessed status.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiKeyGate {
+    /// `api_key_mode = "bypass"`, or the op declares no capability: the
+    /// key passes the capability gate (the op-level `when` still applies).
+    #[default]
+    Unaffected,
+    /// Agent mode: the key arm holds one of the op's capabilities
+    /// unconditionally.
+    Admitted,
+    /// Agent mode: the key arm provably denies — no agent-admitting grant
+    /// holds a capability, or a `never_both` conflict binds the arm.
+    Denied { reason: String },
+    /// Agent mode: the key arm holds the capability only through grant
+    /// `when` conditions — the fresh-fixture verdict is undecidable.
+    Conditional,
+}
+
+impl ApiKeyGate {
+    pub fn is_unaffected(&self) -> bool {
+        matches!(self, Self::Unaffected)
+    }
+}
+
 /// One service operation lowered to a route on one entity.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ServiceOpRoute {
@@ -454,6 +481,12 @@ pub struct ServiceOpRoute {
     /// `(role, &response)` shape — byte-identical flag-off output.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub authorize_async: bool,
+    /// How an API-key session fares at this route's authorization gate
+    /// (issue #635), decided from the SAME policy surface the authorize fn
+    /// renders from. `Unaffected` under `api_key_mode = "bypass"` (and for
+    /// capability-free ops) — byte-identical contracts.
+    #[serde(default, skip_serializing_if = "ApiKeyGate::is_unaffected")]
+    pub api_key: ApiKeyGate,
     /// The op's injected-scope `when` guard, resolved at generation time
     /// (issue #663). `None` for own-record-only guards — the hurl
     /// contract's state planner pins the conservative denial leg when a

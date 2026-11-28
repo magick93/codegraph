@@ -43,7 +43,7 @@ pub use api::{
 pub use atproto::{AtprotoNamespaceNode, CollectionNode, LexiconNode, RepositoryNode};
 pub use authorization::{
     ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, DelegationRecord, GrantEdge,
-    NeverBothGroup, Permit, resolve_effective_permits,
+    GrantSessionKind, NeverBothGroup, Permit, resolve_effective_permits,
 };
 pub use chart::{ChartDefinitionNode, ChartKind, ChartPropertyBinding};
 pub use codelist::{CodeList, EnumValue};

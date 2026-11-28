@@ -66,6 +66,12 @@ fn write_invariant_profiles(dir: &Path) -> std::path::PathBuf {
 }
 
 fn write_profiles_inner(dir: &Path, with_rules: bool) -> std::path::PathBuf {
+    write_profiles_with(dir, with_rules, "")
+}
+
+/// [`write_profiles_inner`] plus extra `[features]` lines (issue #635: the
+/// agent-mode leg injects `api_key_mode = "agent"`).
+fn write_profiles_with(dir: &Path, with_rules: bool, extra_features: &str) -> std::path::PathBuf {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
     let type_contracts = workspace_root.join("crates/codegraph-type-contracts");
@@ -85,7 +91,7 @@ fn write_profiles_inner(dir: &Path, with_rules: bool) -> std::path::PathBuf {
     );
     text = text.replace(
         "[profiles.default.features]\n",
-        "[profiles.default.features]\ndependency_strategy = \"path\"\n",
+        &format!("[profiles.default.features]\ndependency_strategy = \"path\"\n{extra_features}"),
     );
     if with_rules {
         // The workspace profile declares `rosetta_backend = false` — flip
@@ -800,4 +806,110 @@ async fn generated_app_with_machine_read_shapes_compiles() {
 
     codegraph::driver::check_generated_output(&output)
         .expect("the generated app with both machine read-model shapes must compile");
+}
+
+/// Issue #635: the generated app compiles in EVERY accepted API-key mode,
+/// table-driven. Unlike the legs above, the actor policy reaches the graph
+/// (policies ride `.ifml` imports only — the `.ifml` shim carries both
+/// policy files and declares no UI framework, so no IFML UI emits), so the
+/// human role arms, the `never_both` denial arms and — in agent mode — the
+/// `"api_key"` arm are all rendered from real grants and compiled, with the
+/// `app.session_kind` bind in both session bundles and the kind-keyed role
+/// gate. A new accepted mode value adds a row here.
+#[tokio::test]
+#[ignore = "slow: cargo check over the generated app per mode; needs the full dep stack"]
+async fn generated_app_compiles_in_every_api_key_mode() {
+    struct Row {
+        label: &'static str,
+        features: &'static str,
+        /// Use the kind-bearing policy (`permit human` / `permit agent`).
+        kind_policy: bool,
+        /// Markers the generated handler must carry before the build spend.
+        handler_markers: &'static [&'static str],
+    }
+    let rows = [
+        Row {
+            label: "bypass",
+            features: "",
+            kind_policy: false,
+            handler_markers: &[r#"if role == "api_key""#, r#""owner" => {"#],
+        },
+        Row {
+            label: "agent × unmodified any",
+            features: "api_key_mode = \"agent\"\n",
+            kind_policy: false,
+            handler_markers: &[
+                r#""api_key" => {"#,
+                "separation of duties: role `api_key` holds",
+            ],
+        },
+        Row {
+            label: "agent × unmodified human, kind-bearing policy",
+            features: "api_key_mode = \"agent\"\nunmodified_grants = \"human\"\n",
+            kind_policy: true,
+            handler_markers: &[
+                r#""api_key" => {"#,
+                "is not granted to agent sessions",
+                r#""owner" => {"#,
+            ],
+        },
+    ];
+    for row in &rows {
+        let fixture = write_fixture_in("service_ops_mode_gate", PAYROLL_DDD);
+        if row.kind_policy {
+            fs::write(&fixture.actor, fixture::KIND_POLICY_ACTOR).unwrap();
+        }
+        let fixture_root = fixture.config.parent().unwrap().to_path_buf();
+        let shim = fixture_root.join("policy_shim.ifml");
+        fs::write(
+            &shim,
+            "import \"policy.actor\";\nimport \"policy_b.actor\";\n\ndomain \"payroll\" { schema \"payroll\"; }\n",
+        )
+        .unwrap();
+        let profiles_path = write_profiles_with(&fixture_root, false, row.features);
+        let out_dir = gate_tempdir();
+        let output = out_dir.path().join("app");
+        fs::create_dir_all(&output).unwrap();
+
+        codegraph::driver::run(codegraph::driver::RunArgs {
+            schemas: None,
+            classifier: None,
+            config_path: &fixture.config,
+            output: &output,
+            extension_points_path: None,
+            integration_manifests: &[],
+            profile_name: "default",
+            variant: None,
+            profiles_config_path: Some(profiles_path),
+            no_post_gen: true,
+            template_dir: &[],
+            ifml_files: std::slice::from_ref(&shim),
+            openapi_files: &[],
+            mox_files: std::slice::from_ref(&fixture.mox),
+            rosetta_files: &[],
+            ddd_files: std::slice::from_ref(&fixture.ddd),
+            evt_files: &[],
+            deploy_files: &[],
+            ifml_framework: &[],
+            ifml_components: None,
+            ifml_design_system: None,
+            codegraph_rev: None,
+            check: false,
+            ux_rules: None,
+        })
+        .await
+        .unwrap_or_else(|e| panic!("{}: generation must succeed: {e}", row.label));
+
+        let handler =
+            fs::read_to_string(output.join("src/api/payroll/pay_run_handler.rs")).unwrap();
+        for marker in row.handler_markers {
+            assert!(
+                handler.contains(marker),
+                "{}: the handler must carry `{marker}` before the build spend",
+                row.label
+            );
+        }
+        codegraph::driver::check_generated_output(&output)
+            .unwrap_or_else(|e| panic!("{}: the generated app must compile: {e}", row.label));
+    }
 }

@@ -116,6 +116,37 @@ pub(super) fn state_aware_legs(
     let mut delete_legs = Vec::new();
     let mut exercised: Vec<(String, String, ServiceOpTransition)> = Vec::new();
     for op in ops {
+        // API-key authorization modes (issue #635): the contract's
+        // requests carry `{{api_key}}`, so under `api_key_mode = "agent"`
+        // the key arm's verdict decides the leg BEFORE any execution leg —
+        // a provable denial pins 403 (the row and the machine stream do
+        // not move); a permit reachable only through grant `when`s is
+        // undecidable on a fresh fixture and the leg is omitted (never a
+        // guessed status). `Unaffected` (bypass, the default) changes
+        // nothing.
+        match &op.api_key {
+            crate::ddd::service_ops::ApiKeyGate::Unaffected
+            | crate::ddd::service_ops::ApiKeyGate::Admitted => {}
+            crate::ddd::service_ops::ApiKeyGate::Denied { reason } => {
+                legs.push(OpLeg {
+                    op_name: op.op_name.clone(),
+                    service: op.service.clone(),
+                    snake: op.snake.clone(),
+                    expect: 403,
+                    seam: false,
+                    seam_reason: String::new(),
+                    wrong_state: false,
+                    body: String::new(),
+                    note: format!(
+                        "api_key_mode = \"agent\": the contract's API key is an agent \
+                         session and the policy denies it ({reason})"
+                    ),
+                    ..Default::default()
+                });
+                continue;
+            }
+            crate::ddd::service_ops::ApiKeyGate::Conditional => continue,
+        }
         if matches!(op.execution, ExecutionKind::Delete) {
             delete_legs.push(OpLeg {
                 op_name: op.op_name.clone(),

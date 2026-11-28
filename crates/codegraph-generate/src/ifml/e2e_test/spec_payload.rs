@@ -330,6 +330,13 @@ pub enum ActionActKind {
     /// 403 FORBIDDEN: the op-level `when` guard denies (authorize runs
     /// before execution, so API-key sessions still hit it).
     Forbidden,
+    /// 403 FORBIDDEN under `api_key_mode = "agent"` (issue #635): the
+    /// spec's API key is an agent session no agent-admitting grant holds
+    /// the op's capability for.
+    AgentNotGranted,
+    /// 403 FORBIDDEN under `api_key_mode = "agent"` (issue #635): the agent
+    /// arm holds both sides of a `never_both` group.
+    AgentSeparationOfDuty,
     /// 404 NOT_FOUND: a bogus parent id under a collection-level child
     /// `add` (issue #692) — the parent load-or-404 is the route's
     /// existence contract.
@@ -345,7 +352,7 @@ impl ActionActKind {
         match self {
             Self::Ok => "200",
             Self::Conflict => "409",
-            Self::Forbidden => "403",
+            Self::Forbidden | Self::AgentNotGranted | Self::AgentSeparationOfDuty => "403",
             Self::NotFound => "404",
             Self::NotImplemented => "501",
         }
@@ -364,6 +371,9 @@ impl ActionActKind {
             // ("operation `approve`: `when` condition not met (...)") — a
             // fragment on either side of the quotes only.
             Self::Forbidden => Some("condition not met"),
+            // The handler's agent-arm messages (`ddd/service_ops/policy.rs`).
+            Self::AgentNotGranted => Some("not granted to agent sessions"),
+            Self::AgentSeparationOfDuty => Some("separation of duties"),
             Self::NotFound => None,
             Self::NotImplemented => Some("no executable lowering"),
         }

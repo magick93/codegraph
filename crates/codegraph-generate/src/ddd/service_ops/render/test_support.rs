@@ -48,6 +48,7 @@ pub(super) fn route(
         execution,
         record_load,
         authorize_async: false,
+        api_key: Default::default(),
         injected_guard: None,
         invariant_block: None,
         create_guard_block: String::new(),

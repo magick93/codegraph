@@ -192,8 +192,17 @@ impl<'a> IfmlGraphQuerier<'a> {
             Default::default();
         for actor in &actors {
             let entry = merged.entry(actor.name.clone()).or_default();
+            let authz = crate::profile::ApiKeyAuthz {
+                unmodified_grants: self.unmodified_grants,
+                ..Default::default()
+            };
             for permit in resolve_effective_permits(&actors, &grants, &actor.name) {
-                if permit.effect == "permit" {
+                if permit.effect == "permit"
+                    && authz.admits(
+                        permit.session_kind,
+                        codegraph_core::types::GrantSessionKind::Human,
+                    )
+                {
                     entry.insert(permit.capability);
                 }
             }
@@ -312,11 +321,26 @@ impl<'a> IfmlGraphQuerier<'a> {
 /// Implementation that queries the Grafeo graph
 pub struct IfmlGraphQuerier<'a> {
     db: &'a dyn GraphQuerier,
+    /// `unmodified_grants` (issue #635): what a kind-less grant admits. The
+    /// client-side role→capability map is a HUMAN session's surface, so it
+    /// carries only permits admitting human sessions — matching the
+    /// handler's human role arms.
+    unmodified_grants: codegraph_core::types::GrantSessionKind,
 }
 
 impl<'a> IfmlGraphQuerier<'a> {
     pub fn new(db: &'a dyn GraphQuerier) -> Self {
-        Self { db }
+        Self {
+            db,
+            unmodified_grants: codegraph_core::types::GrantSessionKind::Any,
+        }
+    }
+
+    /// Thread the build's `unmodified_grants` (issue #635).
+    #[must_use]
+    pub fn with_unmodified_grants(mut self, kind: codegraph_core::types::GrantSessionKind) -> Self {
+        self.unmodified_grants = kind;
+        self
     }
     /// Assemble one container subtree (params, components, events, flags
     /// plus nested containers) from the adjacency map. Traversal is an
@@ -847,6 +871,7 @@ mod tests {
                         when: None,
                         expr_json: None,
                         obligations: vec![],
+                        session_kind: Default::default(),
                     },
                     GrantEdge {
                         actor: "Admin".to_string(),
@@ -855,6 +880,7 @@ mod tests {
                         when: None,
                         expr_json: None,
                         obligations: vec![],
+                        session_kind: Default::default(),
                     },
                     GrantEdge {
                         actor: "Manager".to_string(),
@@ -863,6 +889,7 @@ mod tests {
                         when: None,
                         expr_json: None,
                         obligations: vec![],
+                        session_kind: Default::default(),
                     },
                 ],
                 policy: ActorPolicyNode {

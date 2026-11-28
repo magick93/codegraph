@@ -23,4 +23,6 @@ pub use spec_payload::{
     ViewTestSpec, WorkflowTest,
 };
 #[cfg(test)]
+mod api_key_tests;
+#[cfg(test)]
 mod tests;

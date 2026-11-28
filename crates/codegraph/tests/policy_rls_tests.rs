@@ -81,6 +81,7 @@ fn fixture_policy() -> ActorPolicyModel {
         when: when.map(|w| w.into()),
         expr_json: None,
         obligations: vec![],
+        session_kind: Default::default(),
     };
     let grants = vec![
         grant(

@@ -6,7 +6,9 @@ use tera::Tera;
 
 use crate::db::dialect::DatabaseTarget;
 use crate::emdash;
-use crate::profile::{DependencyStrategy, DeploymentTopology, PersistenceProvider};
+use crate::profile::{
+    ApiKeyAuthz, ApiKeyMode, DependencyStrategy, DeploymentTopology, PersistenceProvider,
+};
 
 // =============================================================================
 // Project-level configuration for template rendering.
@@ -219,6 +221,14 @@ pub struct CodegenConfig {
     /// Default false = zero behavior.
     #[serde(default)]
     pub structural_gates: bool,
+    /// API-key authorization mode (issue #635): `"bypass"` (default =
+    /// today's documented v1 semantics, byte-identical) or `"agent"` (key
+    /// sessions are agent principals). Threaded from `BuildPlan.api_key_authz`;
+    /// templates read `project.api_key_mode`.
+    pub api_key_mode: ApiKeyMode,
+    /// Which session kind a grant with no `human`/`agent` modifier admits
+    /// (issue #635; default `"any"`). Templates read `project.unmodified_grants`.
+    pub unmodified_grants: codegraph_core::types::GrantSessionKind,
     /// Import prefix for structured wrapper types in generated re-exports.
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
@@ -239,6 +249,8 @@ impl Default for CodegenConfig {
             ui_live_queries: false,
             testid_module: false,
             structural_gates: false,
+            api_key_mode: ApiKeyMode::Bypass,
+            unmodified_grants: codegraph_core::types::GrantSessionKind::Any,
             event_envelope: "native".into(),
             event_idempotency: false,
             event_archive: false,
@@ -411,6 +423,14 @@ fn default_emdash_site_e2e_base() -> String {
 }
 
 impl ProjectConfig {
+    /// The API-key authorization configuration of this build (issue #635).
+    pub fn api_key_authz(&self) -> ApiKeyAuthz {
+        ApiKeyAuthz {
+            mode: self.codegen.api_key_mode,
+            unmodified_grants: self.codegen.unmodified_grants,
+        }
+    }
+
     /// True when entity/repository code generation targets the Cornucopia backend.
     pub fn is_cornucopia(&self) -> bool {
         matches!(
@@ -517,6 +537,8 @@ mod tests {
             ("ui_live_queries", serde_json::json!(false)),
             ("testid_module", serde_json::json!(false)),
             ("structural_gates", serde_json::json!(false)),
+            ("api_key_mode", serde_json::json!("bypass")),
+            ("unmodified_grants", serde_json::json!("any")),
             ("event_envelope", serde_json::json!("native")),
             ("event_idempotency", serde_json::json!(false)),
             ("event_archive", serde_json::json!(false)),

@@ -713,6 +713,8 @@ fn resolve_run_profile(
                 ifml_tanstack_forms: plan.ifml_tanstack_forms,
                 testid_module: plan.testid_module,
                 structural_gates: plan.structural_gates,
+                api_key_mode: plan.api_key_authz.mode,
+                unmodified_grants: plan.api_key_authz.unmodified_grants,
                 event_envelope: plan.event_envelope.as_str().to_string(),
                 event_idempotency: plan.event_idempotency,
                 event_archive: plan.event_archive,
@@ -1338,6 +1340,9 @@ async fn run_validation_gates(
         build_plan
             .map(|plan| plan.database_target())
             .unwrap_or_default(),
+        build_plan
+            .map(|plan| plan.api_key_authz)
+            .unwrap_or_default(),
     )
     .await?;
 
@@ -1779,6 +1784,8 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         project_config.codegen.ifml_tanstack_forms = plan.ifml_tanstack_forms;
         project_config.codegen.testid_module = plan.testid_module;
         project_config.codegen.structural_gates = plan.structural_gates;
+        project_config.codegen.api_key_mode = plan.api_key_authz.mode;
+        project_config.codegen.unmodified_grants = plan.api_key_authz.unmodified_grants;
         project_config.codegen.event_envelope = plan.event_envelope.as_str().to_string();
         project_config.codegen.event_idempotency = plan.event_idempotency;
         project_config.codegen.event_archive = plan.event_archive;
@@ -1913,6 +1920,7 @@ pub async fn generate(
         false,
         false,
         codegraph_generate::db::dialect::DatabaseTarget::default(),
+        codegraph_generate::profile::ApiKeyAuthz::default(),
     )
     .await?;
     let ifml_component_mappings =
@@ -2127,6 +2135,7 @@ async fn run_validation(
     workers_topology: bool,
     events_producer: bool,
     database_target: codegraph_generate::db::dialect::DatabaseTarget,
+    api_key_authz: codegraph_generate::profile::ApiKeyAuthz,
 ) -> Result<()> {
     let issues = crate::validate::ValidationPass::run_with_options(
         querier,
@@ -2135,6 +2144,7 @@ async fn run_validation(
             workers_topology,
             events_producer,
             database_target,
+            api_key_authz,
         },
     )
     .await;

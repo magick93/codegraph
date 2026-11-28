@@ -709,3 +709,117 @@ pub async fn dead_surface_warnings(
     }
     Ok(warnings)
 }
+
+/// API-key authorization diagnostics (issue #635), Warning severity on the
+/// run path — never fatal. One aggregate line per finding class:
+///
+/// - `api_key_mode = "bypass"`: the service ops carrying a grant `when`
+///   or a `never_both` conflict on some role arm — the gates API-key
+///   sessions skip under the documented v1 semantics.
+/// - `api_key_mode = "agent"`: the capabilities no agent-admitting grant
+///   holds — every op gated by one answers 403 to every API key.
+///
+/// Silent when the graph carries no actor policy / no capability-gated
+/// service op (the bypass is then moot).
+pub async fn api_key_authz_warnings(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    authz: crate::profile::ApiKeyAuthz,
+) -> Result<Vec<String>, GraphError> {
+    let Some(surface) = super::policy::PolicySurface::from_graph(db, authz).await? else {
+        return Ok(Vec::new());
+    };
+    let models = db.get_ddd_models().await?;
+    let type_suffix = config.defaults.type_suffix.clone();
+    let mut titles: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for model in &models {
+        for service in &model.services {
+            for op in &service.operations {
+                if op.capabilities.is_empty() || op.is_protected {
+                    continue;
+                }
+                if let Some(title) = bind_entity(model, op, db, &type_suffix).await {
+                    titles.insert(title);
+                }
+            }
+        }
+    }
+    let body = BodyRenderContext {
+        api_key_authz: authz,
+        ..Default::default()
+    };
+    let mut skipped: Vec<String> = Vec::new();
+    let mut unreachable: std::collections::BTreeSet<String> = Default::default();
+    for title in titles {
+        let Ok(Some(schema)) = db.get_schema(&title).await else {
+            continue;
+        };
+        let Some(domain) = schema.domain.clone() else {
+            continue;
+        };
+        if !config.domains.contains_key(domain.as_str()) {
+            continue;
+        }
+        // A lowering refusal is reported by its own check.
+        let Ok(routes) = routes_for_entity(db, config, &domain, &title, &body).await else {
+            continue;
+        };
+        for route in routes.iter().filter(|r| !r.capabilities.is_empty()) {
+            match authz.mode {
+                crate::profile::ApiKeyMode::Bypass => {
+                    // Mirrors the renderer: a `never_both` conflict binds
+                    // a role arm only when that arm holds BOTH sides.
+                    let conflicts = surface.sod_conflicts(&route.capabilities);
+                    let sod = surface.roles.values().any(|permits| {
+                        route.capabilities.iter().any(|c| permits.contains_key(c))
+                            && conflicts.iter().any(|c| permits.contains_key(c))
+                    });
+                    let when_gated = surface.roles.values().any(|permits| {
+                        route.capabilities.iter().any(|c| {
+                            permits
+                                .get(c)
+                                .is_some_and(|whens| !whens.iter().any(Option::is_none))
+                        })
+                    });
+                    if sod || when_gated {
+                        skipped.push(format!("{}::{}", route.service, route.op_name));
+                    }
+                }
+                crate::profile::ApiKeyMode::Agent => {
+                    if let super::ApiKeyGate::Denied { reason } = &route.api_key
+                        && !reason.starts_with("separation of duties")
+                    {
+                        unreachable.extend(route.capabilities.iter().cloned());
+                    }
+                }
+            }
+        }
+    }
+    skipped.sort();
+    skipped.dedup();
+    let mut warnings = Vec::new();
+    if !skipped.is_empty() {
+        warnings.push(format!(
+            "api_key_mode = \"bypass\": API-key sessions skip the grant `when` / \
+             `never_both` gates of {} service op(s) ({}) — the documented v1 \
+             semantics; set api_key_mode = \"agent\" in profiles.toml [features] to \
+             enforce them on keys (issue #635)",
+            skipped.len(),
+            skipped.join(", ")
+        ));
+    }
+    if !unreachable.is_empty() {
+        warnings.push(format!(
+            "api_key_mode = \"agent\": no agent-admitting grant holds {} — every \
+             service op gated by {} answers 403 to API-key sessions (grant it \
+             without a `human` modifier, or `permit agent …`; issue #635)",
+            unreachable
+                .iter()
+                .map(|c| format!("`{c}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            if unreachable.len() == 1 { "it" } else { "them" }
+        ));
+    }
+    Ok(warnings)
+}

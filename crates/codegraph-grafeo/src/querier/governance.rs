@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use codegraph_core::error::GraphError;
 use codegraph_core::types::{
     ActorNode, ActorPolicyNode, CapabilityNode, ConditionNode, DelegationRecord,
-    ErrorDefinitionNode, FunctionNode, GrantEdge, MembershipNode, MoxDerivedFeatureNode,
-    MoxOperationNode, MoxVocabularyNode, NeverBothGroup, PermissionNode, Permit, PipelineNode,
-    PolicyNode, RegulatoryEdgeKind, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
-    RuleNode, RuleRefRecord, SecurityIdentityNode, TenantNode, resolve_effective_permits,
+    ErrorDefinitionNode, FunctionNode, GrantEdge, GrantSessionKind, MembershipNode,
+    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NeverBothGroup, PermissionNode,
+    Permit, PipelineNode, PolicyNode, RegulatoryEdgeKind, RegulatoryNode, RegulatoryRefRecord,
+    RelationshipNode, RuleNode, RuleRefRecord, SecurityIdentityNode, TenantNode,
+    resolve_effective_permits,
 };
 
 use super::query::{query_gql, query_many, query_many_params, query_one, query_one_params};
@@ -275,7 +276,7 @@ impl GrafeoEngine {
         query_many(
             self,
             "MATCH (a:Actor)-[g:Grant]->(c:Capability) \
-               RETURN a.name, c.name, g.effect, g.when_expr, g.obligations \
+               RETURN a.name, c.name, g.effect, g.when_expr, g.obligations, g.session_kind \
                ORDER BY a.name, c.name",
             |reader, row| {
                 let obligations_json = reader.get_opt_string(row, "g.obligations")?;
@@ -289,6 +290,9 @@ impl GrafeoEngine {
                     when: reader.get_opt_string(row, "g.when_expr")?,
                     expr_json: None,
                     obligations,
+                    session_kind: parse_session_kind(
+                        reader.get_opt_string(row, "g.session_kind")?.as_deref(),
+                    )?,
                 })
             },
         )
@@ -611,4 +615,18 @@ fn mox_derived_feature_from_row(
         type_ref: reader.get_string(row, &col("type_ref"))?,
         expr: reader.get_opt_string(row, &col("expr"))?,
     })
+}
+
+/// Read a persisted grant `session_kind` prop (issue #635). Absent = `Any`
+/// (kind-less grants never write the prop); an unknown spelling is a hard
+/// error, never a silent `Any` (which would widen the grant).
+fn parse_session_kind(raw: Option<&str>) -> Result<GrantSessionKind, GraphError> {
+    match raw {
+        None | Some("any") => Ok(GrantSessionKind::Any),
+        Some("human") => Ok(GrantSessionKind::Human),
+        Some("agent") => Ok(GrantSessionKind::Agent),
+        Some(other) => Err(GraphError::Query(format!(
+            "grant session_kind \"{other}\" is not one of human | agent | any"
+        ))),
+    }
 }

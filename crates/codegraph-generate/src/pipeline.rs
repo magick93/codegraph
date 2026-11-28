@@ -1054,7 +1054,8 @@ pub async fn run_ifml_generators(
     let cached_db = CachingQuerier::new(db);
     let db: &dyn GraphQuerier = &cached_db;
 
-    let querier = ifml::IfmlGraphQuerier::new(db);
+    let querier =
+        ifml::IfmlGraphQuerier::new(db).with_unmodified_grants(project.codegen.unmodified_grants);
     let model = querier.get_ifml_model().await.map_err(Error::Graph)?;
     if model.view_containers.is_empty() {
         return Ok(report::GenerationReport::new());

@@ -1301,6 +1301,7 @@ impl IfmlE2eTestGenerator {
                     // deferral) — the monolith default.
                     workers_topology: false,
                     ux: None,
+                    api_key_authz: self.api_key_authz,
                 },
             )
             .await
@@ -1538,6 +1539,25 @@ pub(super) async fn plan_action_legs(
     route: &ServiceOpRoute,
 ) -> Vec<(super::spec_payload::ActionActKind, Option<(String, String)>)> {
     use super::spec_payload::ActionActKind;
+
+    // API-key authorization modes (issue #635): the spec's session is an
+    // API key (the playwright Bearer or a persona key), so under
+    // `api_key_mode = "agent"` the key arm's verdict decides first — a
+    // provable denial is the ONE leg (nothing executes past authorize), a
+    // permit reachable only through grant `when`s stays unbuilt.
+    match &route.api_key {
+        crate::ddd::service_ops::ApiKeyGate::Unaffected
+        | crate::ddd::service_ops::ApiKeyGate::Admitted => {}
+        crate::ddd::service_ops::ApiKeyGate::Denied { reason } => {
+            let kind = if reason.starts_with("separation of duties") {
+                ActionActKind::AgentSeparationOfDuty
+            } else {
+                ActionActKind::AgentNotGranted
+            };
+            return vec![(kind, None)];
+        }
+        crate::ddd::service_ops::ApiKeyGate::Conditional => return Vec::new(),
+    }
 
     match &route.execution {
         ExecutionKind::Seam { .. } => {

@@ -5,6 +5,7 @@ use crate::db::dialect::DatabaseTarget;
 use crate::error::{Error, Result};
 use crate::events::EnvelopeVariant;
 
+use super::api_key_authz::ApiKeyAuthz;
 use super::capabilities::{CapabilityRegistry, GeneratorKind};
 use super::resolve::{
     IfmlFrameworkTarget, ResolvedProfile, ResolvedSection, default_framework_target,
@@ -66,6 +67,11 @@ pub struct BuildPlan {
     /// domain-event triggers, with the drains + webhook POST speaking both
     /// shapes. Unknown values are a hard configuration error.
     pub event_envelope: EnvelopeVariant,
+    /// API-key authorization modes (issue #635): `api_key_mode`,
+    /// `unmodified_grants`, `session_kind_planes`. Default = today's
+    /// bypass semantics, byte-identical. Unknown / reserved values are
+    /// hard configuration errors.
+    pub api_key_authz: ApiKeyAuthz,
     /// Generated consumer idempotency (issue #612): when true, the
     /// drain's dispatch path keys each delivery on (pgmq msg_id,
     /// consumer) through `platform.event_consumption` — an at-least-once
@@ -289,6 +295,9 @@ impl BuildPlan {
             None => EnvelopeVariant::default(),
         };
 
+        // API-key authorization modes (issue #635).
+        let api_key_authz = ApiKeyAuthz::from_features(&profile.features)?;
+
         // Parse event_idempotency (issue #612) and event_archive (issue
         // #615) from features (default: false = byte-identical). Same
         // strictness as ux_rules: a non-bool value is a parse error
@@ -470,6 +479,7 @@ impl BuildPlan {
             deployment_topology,
             dependency_strategy,
             event_envelope,
+            api_key_authz,
             event_idempotency,
             event_archive,
             events_producer,
@@ -541,6 +551,7 @@ impl BuildPlan {
             deployment_topology: DeploymentTopology::default(),
             dependency_strategy: DependencyStrategy::default(),
             event_envelope: EnvelopeVariant::default(),
+            api_key_authz: ApiKeyAuthz::default(),
             event_idempotency: false,
             event_archive: false,
             events_producer: false,
